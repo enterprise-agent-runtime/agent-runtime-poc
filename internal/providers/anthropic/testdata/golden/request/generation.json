@@ -1,0 +1,21 @@
+{
+  "max_tokens": 100,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "u",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-x",
+  "stop_sequences": [
+    "END"
+  ],
+  "stream": true,
+  "temperature": 0.2,
+  "top_p": 0.9
+}

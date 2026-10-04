@@ -1,0 +1,33 @@
+{
+  "max_tokens": 8192,
+  "messages": [
+    {
+      "content": [
+        {
+          "source": {
+            "data": "iVBORw0KGgo=",
+            "media_type": "image/png",
+            "type": "base64"
+          },
+          "type": "image"
+        },
+        {
+          "text": "[image omitted: unsupported type]",
+          "type": "text"
+        },
+        {
+          "source": {
+            "data": "notes",
+            "media_type": "text/plain",
+            "type": "text"
+          },
+          "title": "README",
+          "type": "document"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-x",
+  "stream": true
+}

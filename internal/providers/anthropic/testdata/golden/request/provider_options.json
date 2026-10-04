@@ -1,0 +1,19 @@
+{
+  "max_tokens": 8192,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "u",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "metadata": {
+    "x": 1
+  },
+  "model": "claude-sonnet-x",
+  "stream": true
+}

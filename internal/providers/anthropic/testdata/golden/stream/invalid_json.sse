@@ -1,0 +1,7 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_07","model":"claude-sonnet-x","usage":{"input_tokens":5,"output_tokens":1}}}
+
+data: {not json
+
+data: {still not json
+
