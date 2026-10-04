@@ -1,0 +1,7 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8]; node [shape=record];
+  e1 [label="{event 41|type: model.call|hash: 9c1…|prev: 7a0…}"]; e2 [label="{event 42|type: policy.decision|hash: 4e8…|prev: 9c1…}"]; e3 [label="{event 43|type: tool.exec|hash: b31…|prev: 4e8…}"]; e4 [label="{event 44|type: artifact.created|hash: 02f…|prev: b31…}"];
+  cp [label="checkpoint (every N events / session end)\nsigned digest of last hash\n(local key; org key when control plane exists)", shape=box, fillcolor="#FFF8E7"];
+  art [label="{Artifact code-diff:1a2b|derived_from: plan:88, research:12|produced_by: execution 7|model: gpt-x @ openai (T3)|routing_decision: event 41}", fillcolor="#EAF7EA"];
+  e1 -> e2 -> e3 -> e4 -> cp; e4 -> art [style=dashed];
+}

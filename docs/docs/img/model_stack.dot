@@ -1,0 +1,12 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  a [label="Agent (manifest: required capabilities, allow/deny lists)"];
+  api [label="Canonical Model API\nModelRequest → stream of events (text, tool_use, reasoning-opaque, usage, error)", fillcolor="#DCE6F2", width=6.2];
+  r [label="Model Router\ninputs: task class · data classification · required capabilities · cost/latency budget · availability\noutput: (provider, model) + routing_decision event", fillcolor="#FFF8E7", width=6.2];
+  subgraph cluster_ax { label="Provider definition = protocol × auth mode × hosting/trust tier"; style="rounded,filled"; fillcolor="#EEF3F9"; color="#9DB0C4";
+    p1 [label="Protocol adapters\nanthropic-messages · openai-chat\nopenai-responses · gemini\nbedrock-converse · ollama-native"];
+    p2 [label="Auth modes\napi_key · cloud_iam (Entra/SigV4/ADC)\ngateway (SSO/mTLS) · none (local)\nharness_subscription (vendor SDK)"];
+    p3 [label="Hosting / trust tier\nT0 local · T1 private-hosted\nT2 enterprise cloud · T3 vendor API\nT4 consumer subscription harness"]; }
+  e1 [label="Anthropic API", fillcolor="#F0F0F0"]; e2 [label="OpenAI / Azure Foundry", fillcolor="#F0F0F0"]; e3 [label="Bedrock / Vertex", fillcolor="#F0F0F0"]; e4 [label="vLLM / Ollama / llama.cpp\n/ LM Studio (OpenAI-compatible)", fillcolor="#F0F0F0"]; e5 [label="Enterprise LLM gateway", fillcolor="#F0F0F0"]; e6 [label="Copilot SDK / Codex SDK\n(vendor agent engines)", fillcolor="#F0F0F0"];
+  a -> api -> r; r -> p1; r -> p2; r -> p3; p1 -> e1; p1 -> e2; p1 -> e3; p1 -> e4; p1 -> e5; p2 -> e6 [label="external harness\nadapter kind"];
+}
