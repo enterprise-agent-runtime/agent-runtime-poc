@@ -294,20 +294,29 @@ func Assemble(evs []StreamEvent) (Response, error) {
 }
 
 // ParseToolInput applies the argument rule of design A11 §6.3: empty means
-// {}; a valid JSON object is returned compacted; anything else is returned
-// as raw text with a nil Input. JSON is never repaired.
+// {}; a valid JSON object is returned in canonical form (compact, object
+// keys sorted, numbers kept verbatim, no HTML escaping); anything else is
+// returned as raw text with a nil Input. JSON is never repaired.
+//
+// The canonical form makes the same proposal byte-identical across
+// providers that order keys differently (TestNeutrality_*), and keeps
+// request hashes stable for recorded transcripts (CLAUDE.md §8.2).
 func ParseToolInput(s string) (json.RawMessage, string) {
 	t := strings.TrimSpace(s)
 	if t == "" {
 		return json.RawMessage(`{}`), ""
 	}
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(t), &probe); err != nil || probe == nil {
+	dec := json.NewDecoder(strings.NewReader(t))
+	dec.UseNumber()
+	var v map[string]any
+	if err := dec.Decode(&v); err != nil || v == nil || dec.More() {
 		return nil, s
 	}
 	var buf bytes.Buffer
-	if err := json.Compact(&buf, []byte(t)); err != nil {
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		return nil, s
 	}
-	return json.RawMessage(buf.Bytes()), ""
+	return json.RawMessage(bytes.TrimRight(buf.Bytes(), "\n")), ""
 }

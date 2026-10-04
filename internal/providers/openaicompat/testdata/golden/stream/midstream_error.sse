@@ -1,0 +1,4 @@
+data: {"id":"c7","model":"m","choices":[{"index":0,"delta":{"content":"part"},"finish_reason":null}]}
+
+data: {"error":{"message":"server busy","type":"server_error"}}
+

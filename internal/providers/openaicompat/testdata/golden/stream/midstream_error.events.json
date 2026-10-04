@@ -1,0 +1,27 @@
+[
+  {
+    "index": 0,
+    "model": "m",
+    "provider": "ollama",
+    "request_id": "c7",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "text": "part",
+    "type": "text_delta"
+  },
+  {
+    "error": {
+      "code": "provider_unavailable",
+      "details": {
+        "body": "{\"message\":\"server busy\",\"type\":\"server_error\"}",
+        "provider_error_type": "server_error"
+      },
+      "message": "the provider is unavailable",
+      "retryable": true
+    },
+    "index": 0,
+    "type": "error"
+  }
+]

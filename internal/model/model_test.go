@@ -187,6 +187,10 @@ func TestParseToolInput(t *testing.T) {
 		{`"str"`, "", `"str"`},
 		{`{"a":`, "", `{"a":`},
 		{`null`, "", `null`},
+		{`{"b":1,"a":{"d":2,"c":1}}`, `{"a":{"c":1,"d":2},"b":1}`, ""},                         // keys sorted at every level
+		{`{"n":1.50,"big":12345678901234567890}`, `{"big":12345678901234567890,"n":1.50}`, ""}, // numbers verbatim
+		{`{"html":"<a>&</a>"}`, `{"html":"<a>&</a>"}`, ""},                                     // no HTML escaping
+		{`{"a":1} {"b":2}`, "", `{"a":1} {"b":2}`},                                             // trailing value is not an object
 	}
 	for _, c := range cases {
 		in, raw := ParseToolInput(c.in)

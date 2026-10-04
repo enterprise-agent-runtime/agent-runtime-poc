@@ -106,6 +106,29 @@ func TestModel_TruncationLowersContext(t *testing.T) {
 	}
 }
 
+// TestModel_TruncationWithoutUsageKeepsWarningOnly guards a bug found while
+// probing a fake stock Ollama: with no reported usage, the "effective"
+// window was computed from our own token estimate of the prompt we sent.
+func TestModel_TruncationWithoutUsageKeepsWarningOnly(t *testing.T) {
+	gen := func(ctx context.Context, req model.ModelRequest) (model.Stream, error) {
+		s, err := behaviour{nativeTools: true, truncateTo: 2100}.gen(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		evs := s.(*model.SliceStream).Events
+		for i := range evs {
+			if evs[i].Usage != nil {
+				evs[i].Usage.Estimated = true
+			}
+		}
+		return s, nil
+	}
+	mp := Model(context.Background(), gen, "m", Options{Tier: model.T0, DeclaredCtx: 32768})
+	if mp.MaxContextEffective != nil || len(mp.Warnings) == 0 {
+		t.Fatalf("probe = %+v", mp)
+	}
+}
+
 func TestFirstError(t *testing.T) {
 	if FirstError(nil) != nil {
 		t.Fatal("nil error produced a probe error")

@@ -5,3 +5,5 @@
 *.bundle binary
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
+# SSE fixtures exercise CRLF and bare-CR line endings; never normalize them.
+*.sse -text

@@ -1,0 +1,27 @@
+[
+  {
+    "index": 0,
+    "model": "m",
+    "provider": "ollama",
+    "request_id": "c10",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "text": "I can",
+    "type": "text_delta"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "input_tokens": 5,
+      "output_tokens": 2
+    }
+  },
+  {
+    "index": 0,
+    "stop_reason": "content_filter",
+    "type": "message_end"
+  }
+]

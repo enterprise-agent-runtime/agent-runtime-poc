@@ -121,8 +121,10 @@ func Model(ctx context.Context, gen Generate, modelID string, o Options) model.M
 		if err == nil && (r.Usage.Estimated || r.Usage.InputTokens >= est*8/10) && strings.Contains(r.Text(), word) {
 			// passes: context as declared
 		} else if err == nil {
-			eff := (r.Usage.InputTokens / 1024) * 1024
-			if eff > 0 {
+			// Only a reported prompt_tokens can size the effective window; an
+			// estimate of our own request would just echo what we sent. Without
+			// usage the warning stands and context metadata (num_ctx) applies.
+			if eff := (r.Usage.InputTokens / 1024) * 1024; eff > 0 && !r.Usage.Estimated {
 				mp.MaxContextEffective = &eff
 			}
 			mp.Warnings = append(mp.Warnings, "server truncates prompts; configure the context length (Ollama OLLAMA_CONTEXT_LENGTH or num_ctx, vLLM --max-model-len)")
