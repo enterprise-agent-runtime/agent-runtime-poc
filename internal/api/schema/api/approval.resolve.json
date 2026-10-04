@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/approval.resolve.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "approval_id",
+        "decision"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ]
+        },
+        "scope": {
+          "$ref": "../common.json#/$defs/approvalScope"
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "NEW (ID-05): answer to a kind question approval; redacted before persistence"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "answer"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "const": "approve"
+              }
+            },
+            "not": {
+              "required": [
+                "scope"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "const": "reject"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "scope"
+                  ]
+                },
+                {
+                  "required": [
+                    "answer"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "approval_id",
+        "decision",
+        "scope",
+        "grant_expires_at"
+      ],
+      "properties": {
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ]
+        },
+        "kind": {
+          "$ref": "../common.json#/$defs/approvalKind",
+          "description": "NEW"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/approvalScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grant_expires_at": {
+          "$ref": "types.json#/$defs/nullableTimestamp"
+        }
+      }
+    }
+  }
+}

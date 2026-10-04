@@ -1,0 +1,405 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/artifacts/record.json",
+  "title": "Warden artifact record v1",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "schema",
+    "content_hash",
+    "size_bytes",
+    "media_type",
+    "uri",
+    "summary",
+    "partial",
+    "version",
+    "supersedes",
+    "classification",
+    "metadata",
+    "provenance"
+  ],
+  "properties": {
+    "id": {
+      "$ref": "../common.json#/$defs/artifactId"
+    },
+    "type": {
+      "$ref": "../common.json#/$defs/artifactType"
+    },
+    "schema": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://schemas\\.warden\\.dev/poc/artifacts/[a-z-]+\\.json$"
+    },
+    "content_hash": {
+      "$ref": "../common.json#/$defs/sha256"
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "media_type": {
+      "enum": [
+        "application/json",
+        "text/x-diff"
+      ]
+    },
+    "uri": {
+      "type": "string",
+      "pattern": "^blob://sha256/[0-9a-f]{64}$"
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "partial": {
+      "type": "boolean"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "supersedes": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/artifactId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "classification": {
+      "$ref": "../common.json#/$defs/classification"
+    },
+    "metadata": {
+      "anyOf": [
+        {
+          "$ref": "code-diff.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "edited_by": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/localUser"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "code-diff"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "media_type": {
+            "const": "text/x-diff"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "media_type": {
+            "const": "application/json"
+          },
+          "metadata": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "version": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "supersedes": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "supersedes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "workflow_run_id",
+        "task_id",
+        "execution_id",
+        "agent",
+        "runtime_version",
+        "model",
+        "inputs",
+        "tool_calls",
+        "policy_decisions",
+        "approvals",
+        "worktree",
+        "created_at",
+        "created_by"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "workflow_run_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/runId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/executionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "version",
+                "digest"
+              ],
+              "properties": {
+                "name": {
+                  "enum": [
+                    "coder",
+                    "verifier"
+                  ]
+                },
+                "version": {
+                  "type": "string"
+                },
+                "digest": {
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/sha256"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "runtime_version": {
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "id",
+                "provider",
+                "tier",
+                "routing_event"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "../common.json#/$defs/modelId"
+                },
+                "provider": {
+                  "$ref": "../common.json#/$defs/catalogId"
+                },
+                "tier": {
+                  "$ref": "../common.json#/$defs/tier"
+                },
+                "routing_event": {
+                  "$ref": "../common.json#/$defs/eventId"
+                }
+              }
+            }
+          ]
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/artifactId"
+          },
+          "uniqueItems": true
+        },
+        "tool_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "policy_decisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "approvals": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/approvalId"
+          },
+          "uniqueItems": true
+        },
+        "worktree": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "branch",
+                "base",
+                "head"
+              ],
+              "properties": {
+                "branch": {
+                  "type": "string"
+                },
+                "base": {
+                  "$ref": "../common.json#/$defs/gitCommit"
+                },
+                "head": {
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/gitCommit"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "created_by": {
+          "enum": [
+            "agent",
+            "runtime",
+            "user"
+          ]
+        },
+        "model_call_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/modelCallId"
+          }
+        },
+        "routing_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/routingId"
+          }
+        },
+        "tool_call_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/callId"
+          },
+          "maxItems": 1000
+        },
+        "tool_call_ids_truncated": {
+          "type": "boolean"
+        },
+        "event_range": {
+          "type": "object",
+          "required": [
+            "first_seq",
+            "last_seq"
+          ],
+          "properties": {
+            "first_seq": {
+              "$ref": "../common.json#/$defs/seq"
+            },
+            "last_seq": {
+              "$ref": "../common.json#/$defs/seq"
+            }
+          }
+        },
+        "taint": {
+          "type": "array",
+          "description": "NEW (A12, A08 taint): untrusted inputs that influenced this artifact",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "untrusted_external",
+                  "harness_output",
+                  "repository_content"
+                ]
+              },
+              "ref": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "call_id, path or harness id"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

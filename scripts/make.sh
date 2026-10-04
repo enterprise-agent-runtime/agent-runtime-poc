@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 
 STATICCHECK_VERSION=v0.8.1 # honnef.co/go/tools 2026.2.1; a tool, not a module dependency
 VERSION=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}
-COMMIT=${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}
+COMMIT=${COMMIT:-$(git rev-parse --short=7 HEAD 2>/dev/null || echo 0000000)}
 LDFLAGS="-s -w -X warden.dev/warden/internal/buildinfo.Version=${VERSION} -X warden.dev/warden/internal/buildinfo.Commit=${COMMIT}"
 BIN=${BIN:-bin}
 

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/policy.reload.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "confirm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "confirm": {
+          "$ref": "types.json#/$defs/confirmTrue"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "rules_count",
+        "errors"
+      ],
+      "properties": {
+        "rules_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "message"
+            ],
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "rule_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "NEW: false when errors kept the previous policy"
+        }
+      }
+    }
+  }
+}

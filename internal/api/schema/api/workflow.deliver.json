@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/workflow.deliver.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "action"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "action": {
+          "$ref": "../common.json#/$defs/deliveryAction"
+        },
+        "branch_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+          "not": {
+            "pattern": "(^/|/$|\\.\\.|//|\\.lock$|^-)"
+          },
+          "description": "branch published into the user's repository by commit or apply_branch; default warden/<ulid>"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "remote": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,100}$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^(/|[A-Za-z]:[/\\\\])",
+          "maxLength": 4096
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "NEW: required true for apply_branch and commit"
+        },
+        "client_request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "description": "NEW"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "done",
+            "approval_pending"
+          ]
+        },
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId"
+        },
+        "commit": {
+          "$ref": "../common.json#/$defs/gitCommit"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "patch_path": {
+          "type": "string"
+        },
+        "call_id": {
+          "$ref": "../common.json#/$defs/callId",
+          "description": "NEW: the host tool call, for event correlation"
+        },
+        "gate_resolved": {
+          "type": "boolean",
+          "description": "NEW: true when this call first accepted a pending G2 (ID-01)"
+        },
+        "delivered_event_id": {
+          "$ref": "../common.json#/$defs/eventId",
+          "description": "NEW: the workflow.delivered event (status done)"
+        }
+      }
+    }
+  }
+}

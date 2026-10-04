@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/provider.add.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "spec",
+        "confirm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "spec": {
+          "oneOf": [
+            {
+              "$ref": "types.json#/$defs/providerSpec"
+            },
+            {
+              "$ref": "types.json#/$defs/harnessSpec"
+            }
+          ]
+        },
+        "secret": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          }
+        },
+        "secret_files": {
+          "type": "object",
+          "required": [
+            "cert",
+            "key"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "cert": {
+              "type": "string",
+              "pattern": "^(/|[A-Za-z]:[/\\\\])"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^(/|[A-Za-z]:[/\\\\])"
+            }
+          }
+        },
+        "confirm": {
+          "$ref": "types.json#/$defs/confirmTrue"
+        },
+        "test": {
+          "type": "boolean",
+          "default": true,
+          "description": "NEW: run provider.test after adding"
+        }
+      },
+      "not": {
+        "required": [
+          "secret",
+          "secret_files"
+        ]
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "provider_id",
+        "test"
+      ],
+      "properties": {
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "test": {
+          "anyOf": [
+            {
+              "$ref": "types.json#/$defs/providerTest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

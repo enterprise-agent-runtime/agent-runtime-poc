@@ -8,7 +8,7 @@ import "runtime"
 // Set with -ldflags "-X warden.dev/warden/internal/buildinfo.Version=…".
 var (
 	Version = "dev"
-	Commit  = "unknown"
+	Commit  = "0000000" // seven hex digits: system.version requires a commit-shaped value
 )
 
 // GoVersion is the toolchain the binary was built with.

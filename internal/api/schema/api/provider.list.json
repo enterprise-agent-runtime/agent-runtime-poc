@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/provider.list.json",
+  "$defs": {
+    "params": {
+      "$ref": "types.json#/$defs/empty"
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "providers",
+        "harnesses"
+      ],
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "types.json#/$defs/providerView"
+          }
+        },
+        "harnesses": {
+          "type": "array",
+          "items": {
+            "$ref": "types.json#/$defs/harnessView"
+          }
+        },
+        "mode": {
+          "enum": [
+            "personal",
+            "shared"
+          ],
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

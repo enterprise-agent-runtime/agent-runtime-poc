@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/artifact.read.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "$ref": "../common.json#/$defs/callId"
+            }
+          ],
+          "description": "art_…: artifact content; call_… (NEW): the tool call's full redacted output (tool.exec.end.output_ref)"
+        },
+        "range": {
+          "type": "object",
+          "required": [
+            "offset",
+            "length"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "length": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4194304
+            }
+          }
+        },
+        "file": {
+          "$ref": "../common.json#/$defs/relPath",
+          "description": "code-diff only: that file's patch"
+        },
+        "side": {
+          "enum": [
+            "base",
+            "head"
+          ],
+          "description": "ID-13, code-diff with file only: the full file content at the diff's base_commit or head_commit (side-by-side view)"
+        }
+      },
+      "dependentRequired": {
+        "side": [
+          "file"
+        ]
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "content",
+        "encoding",
+        "total_size",
+        "eof"
+      ],
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "encoding": {
+          "enum": [
+            "utf-8",
+            "base64"
+          ]
+        },
+        "total_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eof": {
+          "type": "boolean"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "NEW"
+        },
+        "next_offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "NEW: offset for the next call (adjusted to a UTF-8 boundary)"
+        },
+        "media_type": {
+          "type": "string",
+          "description": "NEW"
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "NEW"
+        },
+        "side": {
+          "enum": [
+            "base",
+            "head",
+            null
+          ],
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

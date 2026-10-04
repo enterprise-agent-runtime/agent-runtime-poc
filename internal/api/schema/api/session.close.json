@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/session.close.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "cancel_active": {
+          "type": "boolean",
+          "default": false,
+          "description": "NEW: cancel an active run first"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "checkpoint"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "checkpoint": {
+          "$ref": "types.json#/$defs/checkpointRef"
+        },
+        "anchor_event_id": {
+          "$ref": "../common.json#/$defs/eventId",
+          "description": "NEW: sys-chain anchor"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/workspace.setClassification.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "classification"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "workspace_id": {
+          "$ref": "../common.json#/$defs/workspaceId"
+        },
+        "classification": {
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "restricted"
+          ]
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "classification",
+        "affected_sessions"
+      ],
+      "properties": {
+        "workspace_id": {
+          "$ref": "../common.json#/$defs/workspaceId"
+        },
+        "classification": {
+          "$ref": "../common.json#/$defs/classification"
+        },
+        "previous": {
+          "$ref": "../common.json#/$defs/classification",
+          "description": "NEW"
+        },
+        "affected_sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/sessionId"
+          }
+        },
+        "paused_task_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/taskId"
+          },
+          "description": "NEW: tasks whose current model became inadmissible (tightening)"
+        }
+      }
+    }
+  }
+}

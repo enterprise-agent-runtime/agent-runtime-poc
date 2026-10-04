@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/session.open.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "pattern": "^(/|[A-Za-z]:[/\\\\])",
+          "maxLength": 4096,
+          "description": "absolute path inside a git work tree"
+        },
+        "classification": {
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "restricted"
+          ],
+          "description": "honored only when the workspace is created"
+        },
+        "new_session": {
+          "type": "boolean",
+          "default": false,
+          "description": "NEW: always create a new session even if one is open"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "workspace_id",
+        "classification",
+        "sandbox_level",
+        "branch",
+        "capabilities_summary",
+        "resumed"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "workspace_id": {
+          "$ref": "../common.json#/$defs/workspaceId"
+        },
+        "workspace_root": {
+          "type": "string",
+          "description": "NEW: canonical repository top level"
+        },
+        "classification": {
+          "$ref": "../common.json#/$defs/classification"
+        },
+        "sandbox_level": {
+          "$ref": "../common.json#/$defs/sandboxLevel"
+        },
+        "sandbox_backend": {
+          "$ref": "../common.json#/$defs/sandboxBackend",
+          "description": "NEW"
+        },
+        "branch": {
+          "type": "string",
+          "pattern": "^warden/[0-9a-hjkmnp-tv-z]{26}$"
+        },
+        "base_commit": {
+          "$ref": "../common.json#/$defs/gitCommit",
+          "description": "NEW"
+        },
+        "capabilities_summary": {
+          "$ref": "types.json#/$defs/capabilitiesSummary"
+        },
+        "resumed": {
+          "type": "boolean"
+        },
+        "pin_model": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW"
+        },
+        "active_run_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/runId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW"
+        },
+        "uncommitted": {
+          "$ref": "../events/payloads.json#/$defs/uncommitted",
+          "description": "ID-13, A14 §3: changes left untouched in the user's working tree (counts and a sample)"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "dirty_worktree",
+              "detached_head"
+            ]
+          },
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

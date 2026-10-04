@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/session.request.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "text"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768
+        },
+        "pin_model": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "omitted: keep the session pin; null: clear it; id: set it (persists for the session)"
+        },
+        "kind": {
+          "enum": [
+            "change",
+            "readonly"
+          ],
+          "default": "change"
+        },
+        "interactive": {
+          "type": "boolean",
+          "default": true,
+          "description": "NEW: false = non-interactive, approval_required resolves to deny (INV-8)"
+        },
+        "client_request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._:-]+$",
+          "description": "NEW idempotency key"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "run_id"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "replayed": {
+          "type": "boolean",
+          "description": "NEW: true when client_request_id matched an existing run"
+        },
+        "pin_model": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW: effective session pin"
+        }
+      }
+    }
+  }
+}

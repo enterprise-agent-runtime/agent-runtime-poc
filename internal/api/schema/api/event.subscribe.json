@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/event.subscribe.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/sessionId"
+            },
+            {
+              "const": "*"
+            }
+          ]
+        },
+        "after_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "replay events with seq > after_seq; omit for live only"
+        },
+        "types": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]+(\\.[a-z]+){0,3}(\\.\\*)?$"
+          }
+        },
+        "deltas": {
+          "type": "boolean",
+          "description": "NEW: deliver stream.delta; default true for a session, false for \"*\""
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "subscription_id",
+        "head_seq"
+      ],
+      "properties": {
+        "subscription_id": {
+          "$ref": "../common.json#/$defs/subscriptionId"
+        },
+        "head_seq": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
