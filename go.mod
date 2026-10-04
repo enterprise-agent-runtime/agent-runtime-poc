@@ -3,6 +3,7 @@ module warden.dev/warden
 go 1.26.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/zalando/go-keyring v0.2.8
 	modernc.org/sqlite v1.60.1
 )
