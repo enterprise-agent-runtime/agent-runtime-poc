@@ -141,3 +141,14 @@ var sanitize = strings.NewReplacer(" ", "_", "\\", "_", "/", "_", ":", "_")
 
 // ErrDaemonRunning is returned by Listen when another daemon owns the endpoint.
 var ErrDaemonRunning = errors.New("another wardend is already running for this home")
+
+// ExeName appends the executable suffix of this OS (".exe" on Windows).
+func ExeName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
+// Arch names the CPU architecture.
+func Arch() string { return runtime.GOARCH }

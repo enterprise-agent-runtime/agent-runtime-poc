@@ -517,3 +517,20 @@ func TestShutdown(t *testing.T) {
 		t.Fatal("shutdown not requested")
 	}
 }
+
+// TestProviderAdd_DiscoversLocalModels: "warden provider add ollama"
+// lists the server's models through the daemon (D-015).
+func TestProviderAdd_DiscoversLocalModels(t *testing.T) {
+	e := newEnv(t, func(d *Deps) {
+		d.Discover = func(context.Context, model.ProviderConfig) ([]string, error) {
+			return []string{"qwen2.5-coder:32b", "qwen2.5-coder:7b", "bad name with spaces"}, nil
+		}
+	})
+	c := e.dial(nil)
+	call(t, c, "provider.add", map[string]any{"confirm": true, "test": false,
+		"spec": map[string]any{"id": "ollama", "protocol": "openai-compatible", "base_url": "http://127.0.0.1:11434/v1", "auth": map[string]any{"mode": "none"}, "tier": "T0"}})
+	pv := call(t, c, "provider.list", nil)["providers"].([]any)[0].(map[string]any)
+	if fmt.Sprint(pv["models"]) != "[ollama/qwen2.5-coder:32b ollama/qwen2.5-coder:7b]" {
+		t.Fatalf("models = %v", pv["models"])
+	}
+}

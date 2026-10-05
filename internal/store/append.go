@@ -348,7 +348,10 @@ func (t *txn) checkpoint(on, of, trigger string) (Envelope, error) {
 			p.UnsignedReason = &r
 		}
 	} else {
-		r := "key_missing"
+		r := t.s.unsignedReason
+		if r == "" {
+			r = "key_missing"
+		}
 		p.UnsignedReason = &r
 	}
 	return t.append(Input{Type: "chain.checkpoint", Chain: on, Actor: Runtime("store", t.s.opts.RuntimeVersion), Payload: p})

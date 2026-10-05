@@ -189,3 +189,23 @@ func TestOpen_RequiresDir(t *testing.T) {
 		t.Fatal("archived key not loaded")
 	}
 }
+
+// TestSetSigner_LateKey: checkpoints written while the keychain is locked
+// carry unsigned_reason keychain_locked; after SetSigner they are signed.
+func TestSetSigner_LateKey(t *testing.T) {
+	s := openTest(t, func(o *Options) { o.Signer = nil })
+	s.SetSigner(nil, "keychain_locked")
+	openSession(t, s, ses)
+	e, _ := s.Checkpoint(ctx, ses, "export")
+	if !strings.Contains(string(e.Payload), `"unsigned_reason":"keychain_locked"`) {
+		t.Fatalf("payload = %s", e.Payload)
+	}
+	s.SetSigner(storetest.NewSigner(""), "")
+	e, _ = s.Checkpoint(ctx, ses, "export")
+	if !strings.Contains(string(e.Payload), `"signature":"`) || strings.Contains(string(e.Payload), "keychain_locked") {
+		t.Fatalf("payload = %s", e.Payload)
+	}
+	if r, _ := s.Verify(ctx, ses, false); !r.OK || len(r.Violations) != 1 || r.Violations[0].Kind != "checkpoint_unsigned" {
+		t.Fatalf("report = %+v", r)
+	}
+}

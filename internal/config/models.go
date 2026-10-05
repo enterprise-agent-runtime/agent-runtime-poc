@@ -378,3 +378,17 @@ func (c *Catalog) ProviderConfig(id string) (model.ProviderConfig, error) {
 	}
 	return pc, nil
 }
+
+// ModelsFor returns the models of a provider in a model list.
+func ModelsFor(ms []Model, providerID string) []Model {
+	var out []Model
+	for _, m := range ms {
+		if m.Provider == providerID {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// ValidModelID reports whether id matches the catalog model id pattern.
+func ValidModelID(id string) bool { return reModelID.MatchString(id) }

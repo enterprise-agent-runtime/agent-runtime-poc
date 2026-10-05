@@ -230,6 +230,9 @@ func (s *Server) providerAdd(ctx context.Context, c *conn, req *jrpc2.Request, r
 			keep = append(keep, config.Model{ID: m.ID, Provider: prov.ID, Model: m.Model, Capabilities: m.Capabilities, Pricing: m.Pricing, QualityPrior: m.QualityPrior})
 		}
 	}
+	if len(sp.Models) == 0 && len(config.ModelsFor(keep, prov.ID)) == 0 && prov.Protocol == model.ProtocolOpenAICompat && s.d.Discover != nil {
+		keep = append(keep, s.discover(ctx, prov)...)
+	}
 	next.Models = keep
 	err := next.Save(s.d.CatalogPath)
 	if err == nil {
@@ -567,6 +570,31 @@ func joinTiers(ts []string) string {
 			out += ", "
 		}
 		out += t
+	}
+	return out
+}
+
+// discover turns an endpoint's model list into catalog entries with a
+// conservative declared ceiling; provider.test then lowers it to what the
+// models really do (A11 §9.3, D-015). Failures leave the provider without
+// models; the user can still add them in models.yaml.
+func (s *Server) discover(ctx context.Context, prov config.Provider) []config.Model {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	pc := model.ProviderConfig{ID: prov.ID, Protocol: prov.Protocol, BaseURL: prov.BaseURL, Tier: model.Tier(prov.Tier), Auth: authOf(prov)}
+	names, err := s.d.Discover(ctx, pc)
+	if err != nil {
+		return nil
+	}
+	var out []config.Model
+	for _, n := range names {
+		id := prov.ID + "/" + n
+		if !config.ValidModelID(id) || len(out) >= 50 {
+			continue
+		}
+		out = append(out, config.Model{ID: id, Provider: prov.ID, Model: n,
+			Capabilities: config.Capabilities{ToolCalling: "native", StructuredOutput: true, Streaming: true, MaxContext: 32768},
+			QualityPrior: map[string]float64{"plan": 0.5, "implement": 0.5, "verify": 0.5, "summarize": 0.5}})
 	}
 	return out
 }

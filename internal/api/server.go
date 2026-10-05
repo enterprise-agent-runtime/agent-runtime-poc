@@ -45,14 +45,17 @@ const (
 
 // Deps are the daemon's components, wired by cmd/wardend.
 type Deps struct {
-	Layout       platform.Layout
-	Store        *store.Store
-	Broker       *secrets.Broker
-	File         *secrets.File // non-nil when the encrypted-file backend is active
-	Catalog      *config.Catalog
-	CatalogPath  string
-	Cache        *config.ProbeCache
-	NewProvider  func(model.ProviderConfig) (model.Provider, error)
+	Layout      platform.Layout
+	Store       *store.Store
+	Broker      *secrets.Broker
+	File        *secrets.File // non-nil when the encrypted-file backend is active
+	Catalog     *config.Catalog
+	CatalogPath string
+	Cache       *config.ProbeCache
+	NewProvider func(model.ProviderConfig) (model.Provider, error)
+	// Discover lists an openai-compatible endpoint's models when a provider
+	// is added without any (D-015); nil disables discovery.
+	Discover     func(context.Context, model.ProviderConfig) ([]string, error)
 	Token        string
 	Mode         string // personal | shared
 	DefaultLevel string

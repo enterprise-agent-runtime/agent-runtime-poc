@@ -474,3 +474,15 @@ func (c *Client) contextMeta(ctx context.Context, wireModel string) int {
 	}
 	return 0
 }
+
+// ListModels returns the model names an endpoint lists (GET {base_url}/models);
+// the daemon uses it when a provider is added without models (discovery
+// for local servers such as Ollama, docs/DECISIONS-poc.md D-015).
+func ListModels(ctx context.Context, cfg model.ProviderConfig, creds model.CredentialSource) ([]string, error) {
+	p, err := New(cfg, creds, nil)
+	if err != nil {
+		return nil, err
+	}
+	names, _, err := p.(*Client).listModels(ctx)
+	return names, err
+}

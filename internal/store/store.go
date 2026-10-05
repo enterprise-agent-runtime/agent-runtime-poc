@@ -97,6 +97,8 @@ type Store struct {
 	schemaV  int
 	dbPath   string
 	blobsDir string
+
+	unsignedReason string // used while no signer is set
 }
 
 type eventType struct {
@@ -378,4 +380,18 @@ func versionLess(a, b string) bool {
 		}
 	}
 	return len(pa) < len(pb)
+}
+
+// SetSigner installs the checkpoint signer after start, e.g. once a locked
+// encrypted-file secrets backend has been unlocked (secrets.unlock).
+// unsignedReason is recorded on checkpoints written while sg is nil
+// ("keychain_locked" or "key_missing").
+func (s *Store) SetSigner(sg Signer, unsignedReason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.opts.Signer = sg
+	s.unsignedReason = unsignedReason
+	if sg != nil {
+		s.keys[sg.KeyID()] = sg.PublicKey()
+	}
 }
