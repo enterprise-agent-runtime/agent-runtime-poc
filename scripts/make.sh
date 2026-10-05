@@ -16,11 +16,13 @@ BIN=${BIN:-bin}
 step() { printf '\n== %s\n' "$*"; }
 
 lint() {
+	# Every command ends in "|| return 1": a function run inside "lint && unit"
+	# executes with set -e suspended, so failures must be propagated by hand.
 	step "gofmt"
 	local dirs unformatted
-	dirs=$(go list -f '{{.Dir}}' ./...)
+	dirs=$(go list -f '{{.Dir}}' ./...) || return 1
 	# shellcheck disable=SC2086
-	unformatted=$(gofmt -l $dirs internal/archtest/testdata)
+	unformatted=$(gofmt -l $dirs internal/archtest/testdata spikes) || return 1
 	if [ -n "$unformatted" ]; then
 		echo "gofmt needed on:"; echo "$unformatted"; return 1
 	fi
@@ -28,36 +30,42 @@ lint() {
 	# Windows-only or Linux-only break is caught before CI (CLAUDE.md §3).
 	for goos in linux darwin windows; do
 		step "go vet (GOOS=$goos)"
-		GOOS=$goos CGO_ENABLED=0 go vet ./...
+		GOOS=$goos CGO_ENABLED=0 go vet ./... || return 1
 	done
-	step "staticcheck"
-	go run "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}" ./...
+	# Install staticcheck for the host once, then analyse for every target OS.
+	local tools
+	tools="$(pwd)/bin/tools"
+	GOBIN="$tools" GOOS= GOARCH= go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}" || return 1
+	for goos in linux darwin windows; do
+		step "staticcheck (GOOS=$goos)"
+		GOOS=$goos CGO_ENABLED=0 "$tools/staticcheck" ./... || return 1
+	done
 	step "import rules and OS confinement"
-	scripts/lint-imports.sh
+	scripts/lint-imports.sh || return 1
 	step "INV-H exec rule and INV-J listener rule"
-	scripts/lint-exec.sh
+	scripts/lint-exec.sh || return 1
 	step "API schemas and YAML examples"
 	local schema_pkgs=()
 	for d in internal/api internal/config; do [ -d "$d" ] && schema_pkgs+=("./$d/...")
 	done
 	if [ ${#schema_pkgs[@]} -gt 0 ]; then
-		go test -count=1 -run 'TestSchema' "${schema_pkgs[@]}"
+		go test -count=1 -run 'TestSchema' "${schema_pkgs[@]}" || return 1
 	fi
 }
 
 unit() {
 	step "go test ./..."
 	if [ "${RACE:-0}" = 1 ]; then
-		go test -race -count=1 ./...
+		go test -race -count=1 ./... || return 1
 	else
-		go test -count=1 ./...
+		go test -count=1 ./... || return 1
 	fi
 }
 
 ui_test() {
 	if [ -f apps/desktop/package.json ]; then
 		step "UI component tests"
-		(cd apps/desktop && npm ci && npm test)
+		(cd apps/desktop && npm ci && npm test) || return 1
 	else
 		step "UI component tests: apps/desktop not present yet (M6)"
 	fi

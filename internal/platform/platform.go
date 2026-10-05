@@ -8,8 +8,6 @@
 package platform
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -126,18 +124,6 @@ func Username() string {
 
 // LocalUser is the envelope user field, "local:<os-user>".
 func LocalUser() string { return "local:" + Username() }
-
-// homeSuffix distinguishes endpoints of overridden homes, so a test daemon
-// never collides with the user's real one.
-func homeSuffix(home string) string {
-	if os.Getenv(EnvHome) == "" {
-		return ""
-	}
-	h := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(home))))
-	return "-" + hex.EncodeToString(h[:])[:8]
-}
-
-var sanitize = strings.NewReplacer(" ", "_", "\\", "_", "/", "_", ":", "_")
 
 // ErrDaemonRunning is returned by Listen when another daemon owns the endpoint.
 var ErrDaemonRunning = errors.New("another wardend is already running for this home")
