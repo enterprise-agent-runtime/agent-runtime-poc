@@ -122,7 +122,9 @@ func (b *Broker) resolve(ctx context.Context, ref, consumer, purpose string) ([]
 		return nil, err
 	}
 	if err := Authorize(r, consumer); err != nil {
-		b.report(ctx, Access{Ref: ref, Consumer: consumer, Purpose: purpose, Cache: "miss", Result: result(err)}, true)
+		// A refused binding is a programming error, not a keychain read:
+		// it is logged, and no secret.access is recorded (A04 result enum).
+		slog.Warn("secret reference refused", "ref", ref, "consumer", consumer)
 		return nil, err
 	}
 	b.mu.Lock()
@@ -258,7 +260,11 @@ func (b *Broker) Put(ctx context.Context, ref string, value []byte) error {
 		return err
 	}
 	b.Flush()
-	back, err := b.resolve(ctx, ref, "provider_add", "provider_add_verify")
+	consumer := "adapter:" + r.ID
+	if r.Kind == "harness" {
+		consumer = "harness:" + r.ID
+	}
+	back, err := b.resolve(ctx, ref, consumer, "provider_add_verify")
 	if err != nil {
 		return fmt.Errorf("stored secret could not be read back: %w", err)
 	}

@@ -270,12 +270,13 @@ func TestBroker_HeadersCacheAndEvents(t *testing.T) {
 	if out, _ := b.Redactor().Redact("leak " + key); strings.Contains(out, key) {
 		t.Fatal("resolved key not redacted")
 	}
-	// Borrowing another provider's key is refused and reported.
+	// Borrowing another provider's key is refused, without a keychain read.
+	before := len(ev.l)
 	if _, err := b.Credential(ctx, "secret://providers/anthropic/api_key", "adapter:ollama"); !errors.Is(err, ErrNotPermitted) {
 		t.Fatalf("borrow: %v", err)
 	}
-	if last := ev.l[len(ev.l)-1]; last.Result != "not_permitted" || last.Backend != "memory" {
-		t.Fatalf("last event = %+v", last)
+	if len(ev.l) != before || ev.l[0].Backend != "memory" {
+		t.Fatalf("events after refusal = %+v", ev.l[before:])
 	}
 	for _, a := range ev.l {
 		b, _ := json.Marshal(a)

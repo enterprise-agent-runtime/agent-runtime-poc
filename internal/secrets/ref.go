@@ -75,8 +75,6 @@ func Authorize(r Ref, consumer string) error {
 		return nil
 	case consumer == "checkpoint" && r.Kind == "checkpoint_key":
 		return nil
-	case consumer == "provider_add" && (r.Kind == "provider" || r.Kind == "harness"):
-		return nil // read-back after provider.add
 	}
 	return fmt.Errorf("%w: %s may not resolve %s", ErrNotPermitted, consumer, r)
 }
