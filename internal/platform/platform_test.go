@@ -103,6 +103,8 @@ func TestDial_NoDaemon(t *testing.T) {
 	}
 }
 
+// TestWriteOwnerOnly prints what was read back on failure: on Windows the
+// SDDL of the DACL, so a CI failure is diagnosable from the log alone.
 func TestWriteOwnerOnly(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "run", "token")
 	if err := WriteOwnerOnly(p, []byte("tok")); err != nil {
@@ -114,7 +116,18 @@ func TestWriteOwnerOnly(t *testing.T) {
 	b, _ := os.ReadFile(p)
 	ok, err := OwnerOnly(p)
 	if string(b) != "tok2" || err != nil || !ok {
-		t.Fatalf("content %q owner-only %v %v", b, ok, err)
+		t.Fatalf("content %q owner-only %v %v; read back %s", b, ok, err, ownerOnlyDetail(p))
+	}
+}
+
+// TestOwnerOnly_MissingFileIsError: a file that cannot be read is an error,
+// never a quiet "not owner-only", so a caller cannot mistake a vanished or
+// unreadable token for one with loose permissions (mutation audit of FX-3:
+// on Windows ownerOnlyFor could swallow the read error with every test green).
+func TestOwnerOnly_MissingFileIsError(t *testing.T) {
+	ok, err := OwnerOnly(filepath.Join(t.TempDir(), "missing"))
+	if err == nil || ok {
+		t.Fatalf("OwnerOnly(missing) = %v, %v; want false and an error", ok, err)
 	}
 }
 

@@ -40,3 +40,12 @@ func OwnerOnly(path string) (bool, error) {
 	}
 	return fi.Mode().Perm()&0o077 == 0, nil
 }
+
+// ownerOnlyDetail renders the file's permission bits for failure messages.
+func ownerOnlyDetail(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "<" + err.Error() + ">"
+	}
+	return fi.Mode().Perm().String()
+}
