@@ -83,13 +83,15 @@ func TestBwrapUsable(t *testing.T) {
 		{"bubblewrap 0.6.0\n", nil, "0.6.0", true},
 		{"bubblewrap 0.5.9\n", nil, "0.5.9", false},
 		{"  bubblewrap 0.11.0  \n", nil, "0.11.0", true},
-		{"bubblewrap 0.9.0\n", errors.New("exit status 1"), "0.9.0", false},
+		// When bwrap --version fails only usability is checked: no caller
+		// reads the version then (review of 2fab6a3), so ver is not pinned.
+		{"bubblewrap 0.9.0\n", errors.New("exit status 1"), "", false},
 		{"", errors.New("not found"), "", false},
 		{"", nil, "", false},
 	}
 	for _, c := range cases {
 		ver, ok := bwrapUsable(c.out, c.err)
-		if ver != c.ver || ok != c.want {
+		if ok != c.want || (c.err == nil && ver != c.ver) {
 			t.Errorf("bwrapUsable(%q, %v) = %q, %v; want %q, %v", c.out, c.err, ver, ok, c.ver, c.want)
 		}
 	}
