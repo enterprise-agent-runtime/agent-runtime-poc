@@ -70,29 +70,72 @@ func WriteOwnerOnly(path string, data []byte) error {
 }
 
 // OwnerOnly reports whether the file's DACL is the protected owner-only
-// DACL written by WriteOwnerOnly.
+// DACL written by WriteOwnerOnly: one FILE_ALL_ACCESS grant to the current
+// user and nothing else. The DACL is parsed, not compared as SDDL text,
+// because Windows abbreviates well-known SIDs when rendering SDDL (the RID-500
+// administrator reads back as "LA"; CLAUDE.md §4 IPC, DECISIONS D-011).
 func OwnerOnly(path string) (bool, error) {
-	p, err := syscall.UTF16PtrFromString(path)
+	sid, err := currentUserSID()
 	if err != nil {
 		return false, err
+	}
+	return ownerOnlyFor(path, sid)
+}
+
+// ownerOnlyFor is OwnerOnly for an explicit binary SID.
+func ownerOnlyFor(path string, sid []byte) (bool, error) {
+	sd, err := fileDACL(path)
+	if err != nil {
+		return false, err
+	}
+	return ownerOnlyDACL(sd, sid), nil
+}
+
+// currentUserSID returns the binary SID of the process token's user.
+func currentUserSID() ([]byte, error) {
+	tok, err := syscall.OpenCurrentProcessToken()
+	if err != nil {
+		return nil, err
+	}
+	defer tok.Close()
+	tu, err := tok.GetTokenUser()
+	if err != nil {
+		return nil, err
+	}
+	n := syscall.GetLengthSid(tu.User.Sid)
+	// Copy: the SID points into the token information buffer.
+	return append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(tu.User.Sid)), n)...), nil
+}
+
+// fileDACL reads the file's DACL as a self-relative security descriptor.
+func fileDACL(path string) ([]byte, error) {
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
 	}
 	var need uint32
 	_, _, _ = procGetFileSecurityW.Call(uintptr(unsafe.Pointer(p)), daclSecurityInformation, 0, 0, uintptr(unsafe.Pointer(&need)))
 	if need == 0 {
-		return false, syscall.EINVAL
+		return nil, syscall.EINVAL
 	}
 	buf := make([]byte, need)
 	r, _, e := procGetFileSecurityW.Call(uintptr(unsafe.Pointer(p)), daclSecurityInformation, uintptr(unsafe.Pointer(&buf[0])), uintptr(need), uintptr(unsafe.Pointer(&need)))
 	if r == 0 {
-		return false, e
+		return nil, e
 	}
-	sddl, err := winio.SecurityDescriptorToSddl(buf)
+	return buf, nil
+}
+
+// ownerOnlyDetail renders the file's DACL as SDDL for failure messages only;
+// SDDL text is not canonical and is never compared.
+func ownerOnlyDetail(path string) string {
+	sd, err := fileDACL(path)
 	if err != nil {
-		return false, err
+		return "<" + err.Error() + ">"
 	}
-	want, err := fileSDDL()
+	s, err := winio.SecurityDescriptorToSddl(sd)
 	if err != nil {
-		return false, err
+		return "<" + err.Error() + ">"
 	}
-	return sddl == want, nil
+	return s
 }
