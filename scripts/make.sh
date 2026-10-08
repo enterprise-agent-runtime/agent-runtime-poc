@@ -84,7 +84,7 @@ build() {
 # says nothing about the new content and no stamp is written.
 stamp() {
 	local after
-	after=$(scripts/tree-hash.sh) || return 1
+	after=$(bash scripts/tree-hash.sh) || return 1
 	if [ "$1" = "$after" ]; then
 		echo "$after" >"$(git rev-parse --git-path warden-check-ok)"
 		step "make check passed on tree ${after:0:12}"
@@ -100,7 +100,7 @@ not_yet() {
 
 case "${1:-check}" in
 check)
-	before=$(scripts/tree-hash.sh 2>/dev/null || echo none)
+	before=$(bash scripts/tree-hash.sh 2>/dev/null || echo none)
 	lint && unit && ui_test && stamp "$before"
 	;;
 lint) lint ;;
