@@ -44,6 +44,8 @@ lint() {
 	scripts/lint-imports.sh || return 1
 	step "INV-H exec rule and INV-J listener rule"
 	scripts/lint-exec.sh || return 1
+	step "Claude Code guard hooks"
+	bash .claude/hooks/test-hooks.sh || return 1
 	step "API schemas and YAML examples"
 	local schema_pkgs=()
 	for d in internal/api internal/config; do [ -d "$d" ] && schema_pkgs+=("./$d/...")
@@ -77,13 +79,30 @@ build() {
 	CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o "$BIN/" ./cmd/...
 }
 
+# stamp records that `make check` passed on the working tree whose id was
+# taken before the run. If files changed while the checks ran, the result
+# says nothing about the new content and no stamp is written.
+stamp() {
+	local after
+	after=$(scripts/tree-hash.sh) || return 1
+	if [ "$1" = "$after" ]; then
+		echo "$after" >"$(git rev-parse --git-path warden-check-ok)"
+		step "make check passed on tree ${after:0:12}"
+	else
+		step "files changed during make check; no commit stamp written"
+	fi
+}
+
 not_yet() {
 	echo "make $1: lands in $2 (see docs/PROGRESS.md)" >&2
 	return 2
 }
 
 case "${1:-check}" in
-check) lint && unit && ui_test ;;
+check)
+	before=$(scripts/tree-hash.sh 2>/dev/null || echo none)
+	lint && unit && ui_test && stamp "$before"
+	;;
 lint) lint ;;
 test) unit ;;
 ui-test) ui_test ;;

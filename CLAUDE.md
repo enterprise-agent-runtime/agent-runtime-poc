@@ -276,3 +276,12 @@ Rules that make this work:
 - **One checkout per writer.** Parallel tasks run in separate `git worktree`s, and two agents never commit in the same checkout. Run `git branch --show-current` before every commit.
 - **The owner decides** three things: the questions §10 says to ask, conflicts marked "needs owner", and merges. Agents stop and report rather than guess.
 - **Explain the why.** The owner is building depth in architecture, security, testing and operations through this project. When a choice is non-obvious, plans, reviews and reports name the concept behind it in a sentence or two.
+- **Guards, not reminders.** `.claude/settings.json` runs `.claude/hooks/guard-bash.sh` and `guard-edit.sh` before every command and edit. Each rule names the incident that motivated it. The guards refuse:
+  - pushes to `main`/`master`, bare pushes from them, and force pushes;
+  - `--no-verify`;
+  - commits on `main`/`master`;
+  - commits whose working tree has not passed `make check` (`make check` records the tree it passed on; Markdown-only changes are exempt);
+  - `warden`/`wardend` runs without `WARDEN_HOME`;
+  - edits to `docs/docs/`, `docs/design/`, `docs/WRD-*` and `docs/PROMPT-*`.
+
+  `.claude/hooks/test-hooks.sh` tests every rule in both directions and runs in `make check`. A blocked command means the work is not done yet; fix the cause rather than working around the guard.
