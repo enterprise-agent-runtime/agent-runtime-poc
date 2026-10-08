@@ -130,7 +130,10 @@ func testSD(control uint16, aces ...[]byte) []byte {
 }
 
 // nullDACLSD is "DACL present" with a zero offset: a NULL DACL, which grants
-// everyone everything.
+// everyone everything. The explicit `off == 0` check in ownerOnlyDACL is
+// defence in depth: deleting it leaves this case rejected anyway (read at
+// offset 0, the "ACE" SID overlaps OffsetDacl, which is 0, so validSID
+// fails), so no test can kill that mutant. Checked by hand in review of FX-3.
 func nullDACLSD() []byte {
 	b := make([]byte, sdHeaderSize)
 	b[0] = 1
