@@ -61,10 +61,15 @@ func TestL2Check_StatusFollowsBlocking(t *testing.T) {
 		ping   func(context.Context) (string, string, error)
 		usable bool
 		hint   string
+		detail string // must appear in Detail: what was seen, so the user knows why
 	}{
-		{"reachable linux", func(context.Context) (string, string, error) { return "27.0.1", "linux", nil }, true, ""},
-		{"reachable windows", func(context.Context) (string, string, error) { return "27.0.1", "windows", nil }, false, "Switch Docker Desktop to Linux containers"},
-		{"unreachable", func(context.Context) (string, string, error) { return "", "", errors.New("connection refused") }, false, "Start Docker Desktop"},
+		{"reachable linux", func(context.Context) (string, string, error) { return "27.0.1", "linux", nil }, true, "", "27.0.1"},
+		{"reachable windows", func(context.Context) (string, string, error) { return "27.0.1", "windows", nil }, false, "Switch Docker Desktop to Linux containers", "Linux containers are required"},
+		// Only "linux" is usable; an engine that reports no OS type is not
+		// (mutation audit of FX-2: os == "windows" in place of os != "linux"
+		// survived the two real OS types).
+		{"reachable, OS type empty", func(context.Context) (string, string, error) { return "27.0.1", "", nil }, false, "Switch Docker Desktop to Linux containers", "Linux containers are required"},
+		{"unreachable", func(context.Context) (string, string, error) { return "", "", errors.New("connection refused") }, false, "Start Docker Desktop", "connection refused"},
 	}
 	for _, e := range engines {
 		for _, level := range []string{"L1", "L2"} {
@@ -85,6 +90,11 @@ func TestL2Check_StatusFollowsBlocking(t *testing.T) {
 				}
 				if c.Status != want {
 					t.Errorf("status = %s, want %s (detail %q)", c.Status, want, c.Detail)
+				}
+				// Mutation audit of FX-2: dropping the engine error or the
+				// Linux-containers note from Detail survived every other check.
+				if !strings.Contains(c.Detail, e.detail) {
+					t.Errorf("detail %q lacks %q", c.Detail, e.detail)
 				}
 				if e.usable {
 					if c.FixHint != nil {

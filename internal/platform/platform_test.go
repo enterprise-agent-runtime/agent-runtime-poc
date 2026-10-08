@@ -120,6 +120,17 @@ func TestWriteOwnerOnly(t *testing.T) {
 	}
 }
 
+// TestOwnerOnly_MissingFileIsError: a file that cannot be read is an error,
+// never a quiet "not owner-only", so a caller cannot mistake a vanished or
+// unreadable token for one with loose permissions (mutation audit of FX-3:
+// on Windows ownerOnlyFor could swallow the read error with every test green).
+func TestOwnerOnly_MissingFileIsError(t *testing.T) {
+	ok, err := OwnerOnly(filepath.Join(t.TempDir(), "missing"))
+	if err == nil || ok {
+		t.Fatalf("OwnerOnly(missing) = %v, %v; want false and an error", ok, err)
+	}
+}
+
 func TestReadSecretLine_NonTerminal(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
