@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -41,7 +43,61 @@ func TestProbe_ReportsEveryCheckHonestly(t *testing.T) {
 			t.Fatalf("checks = %+v", checks)
 		}
 		if l2.Status != "ok" && (l2.Status == "fail") != (level == "L2") {
-			t.Errorf("level %s: unreachable engine status %s", level, l2.Status)
+			t.Errorf("level %s: engine not usable, status %s", level, l2.Status)
+		}
+	}
+}
+
+// TestL2Check_StatusFollowsBlocking guards the bug CI hit on windows-latest:
+// the runner's Docker engine answered with Windows containers, and l2Check
+// reported "fail" at L1 although L2 was not blocking, while an unreachable
+// engine was correctly downgraded to "warn". Any unusable engine must be
+// "fail" exactly when L2 blocks (default_level L2, always so on Windows) and
+// "warn" otherwise (CONFLICTS C-02, design A05 §8.1).
+func TestL2Check_StatusFollowsBlocking(t *testing.T) {
+	engines := []struct {
+		name   string
+		ping   func(context.Context) (string, string, error)
+		usable bool
+		hint   string
+	}{
+		{"reachable linux", func(context.Context) (string, string, error) { return "27.0.1", "linux", nil }, true, ""},
+		{"reachable windows", func(context.Context) (string, string, error) { return "27.0.1", "windows", nil }, false, "Switch Docker Desktop to Linux containers"},
+		{"unreachable", func(context.Context) (string, string, error) { return "", "", errors.New("connection refused") }, false, "Start Docker Desktop"},
+	}
+	for _, e := range engines {
+		for _, level := range []string{"L1", "L2"} {
+			t.Run(e.name+"/"+level, func(t *testing.T) {
+				c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, e.ping)
+				if c.ID != "sandbox.l2" {
+					t.Fatalf("id %q", c.ID)
+				}
+				if c.Blocking != (level == "L2") {
+					t.Errorf("blocking = %v", c.Blocking)
+				}
+				want := "ok"
+				if !e.usable {
+					want = "warn"
+					if level == "L2" {
+						want = "fail"
+					}
+				}
+				if c.Status != want {
+					t.Errorf("status = %s, want %s (detail %q)", c.Status, want, c.Detail)
+				}
+				if e.usable {
+					if c.FixHint != nil {
+						t.Errorf("unexpected hint %q", *c.FixHint)
+					}
+					if c.Data["os_type"] != "linux" {
+						t.Errorf("data = %v", c.Data)
+					}
+					return
+				}
+				if c.FixHint == nil || !strings.Contains(*c.FixHint, e.hint) {
+					t.Errorf("hint = %v, want containing %q", c.FixHint, e.hint)
+				}
+			})
 		}
 	}
 }

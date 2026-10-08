@@ -42,18 +42,27 @@ func Probe(ctx context.Context, o Options) []Check {
 	return checks
 }
 
-// l2Check pings the Docker engine. L2 is first-class on every OS and the
-// only level on Windows, so it is blocking there and whenever L2 is the
-// configured default (CONFLICTS C-02).
+// l2Check pings the Docker engine. L2 is first-class on every OS. It is
+// blocking exactly when L2 is the configured default; on Windows that is
+// always the case, because the platform default level there is L2 and L2 is
+// the only level offered (CONFLICTS C-02).
 func l2Check(ctx context.Context, o Options) Check {
+	return l2CheckWith(ctx, o, dockerPing)
+}
+
+// l2CheckWith is l2Check with the engine ping injected. An unusable engine
+// (unreachable, or not serving Linux containers) is "fail" when L2 is
+// blocking and "warn" otherwise (design A05 §8.1).
+func l2CheckWith(ctx context.Context, o Options, ping func(context.Context) (ver, osType string, err error)) Check {
 	blocking := o.DefaultLevel == "L2"
 	c := Check{ID: "sandbox.l2", Group: "sandbox", Title: "L2 container sandbox (Docker engine)", Blocking: blocking}
-	ver, os, err := dockerPing(ctx)
+	ver, os, err := ping(ctx)
+	unusable := "warn"
+	if blocking {
+		unusable = "fail"
+	}
 	if err != nil {
-		c.Status = "warn"
-		if blocking {
-			c.Status = "fail"
-		}
+		c.Status = unusable
 		c.Detail = "Docker engine not reachable: " + err.Error()
 		c.FixHint = hint("Start Docker Desktop (Windows, with the WSL2 backend) or Docker Engine (Linux), then run warden doctor again.")
 		return c
@@ -61,7 +70,7 @@ func l2Check(ctx context.Context, o Options) Check {
 	c.Status, c.Detail = "ok", fmt.Sprintf("Docker engine %s reachable (%s containers)", ver, os)
 	c.Data = map[string]any{"version": ver, "os_type": os}
 	if os != "linux" {
-		c.Status = "fail"
+		c.Status = unusable
 		c.Detail += "; Linux containers are required"
 		c.FixHint = hint("Switch Docker Desktop to Linux containers (WSL2 backend).")
 	}
