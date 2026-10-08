@@ -46,6 +46,37 @@ Legend: `[x]` done and tested · `[~]` done with a recorded limitation · `[ ]` 
 - [~] Windows verification — `make check` green; `wardend` starts and listens on `\\.\pipe\warden-<user>`; `warden doctor` works; `warden provider test ollama` runs but fails because Ollama is absent
 - [!] Copilot spike executed — Copilot CLI not installed
 
+### CI fixes for PR #1 (first CI run 37365637550, 2026-10-05)
+
+The first CI run on PR #1 had three failing tests, and none was a race, a panic or a compile error. The runs:
+
+| Job | Result |
+|---|---|
+| `go test -race (linux)` | failed: bug 1 |
+| `make check (windows-latest)` | failed: bugs 2 and 3 |
+| `make check (ubuntu-latest)` | never ran ("job was not acquired by Runner"); would hit bug 1 |
+| `make check (macos-latest)` | passed |
+
+Planned by the `planner` agent. Each task is one commit, test first, delivered through `/deliver` (CLAUDE.md §15). Ids are `FX-n` so they don't collide with the demo tasks T1–T6.
+
+- [ ] **FX-1** `sandbox: the userns check names its fix when bubblewrap is unavailable` (design A05 §8.1)
+  - Lift the L1 verdict into a pure `l1Checks(Options, l1Inputs)`.
+  - Test first: `TestL1Checks_EveryNonOkCheckHasHint` (linux, L1). It covers {bwrap missing, too old, empty sandbox fails, ok} × {L1, L2}.
+  - Records decision D-028.
+- [ ] **FX-2** `sandbox: the sandbox.l2 status follows blocking for every unusable engine` (CLAUDE.md §4, C-02)
+  - Inject the ping into `l2CheckWith`.
+  - Test first: `TestL2Check_StatusFollowsBlocking` (all OSes, L1). It covers {reachable linux, reachable windows-containers, unreachable} × {L1, L2}.
+  - Records decision D-026.
+- [ ] **FX-3** `platform: the owner-only check compares the DACL structurally, not as SDDL text` (CLAUDE.md §4 IPC, D-011)
+  - Add a pure, bounds-checked descriptor parser `ownerOnlyDACL`.
+  - Test first: `TestOwnerOnlyDACL` (all OSes, hostile inputs) and `TestOwnerOnly_AbbreviatedSID` (windows, BUILTIN\Administrators renders as `BA`).
+  - Adds no new dependency (`syscall` only). Records decision D-027.
+- [ ] **FX-4** Re-run CI on PR #1, including the Ubuntu job that never got a runner, and record the results here.
+- Proposed, not scheduled: a Windows test that the named pipe's DACL is owner-only. CLAUDE.md §8.7 M1 asks for "platform transport tests on 3 OSes"; it depends on FX-3.
+- Owner questions:
+  - Keep `TestProbe_ReportsEveryCheckHonestly` in `make check` (planner recommends yes for M1), or move it to `integration`?
+  - Pin the CI image to `ubuntu-24.04` before ubuntu-latest moves to 26 on 2026-10-19? This belongs with the M2 integration job.
+
 ## Sessions
 
 ### Session 1 — 2026-10-04 / 2026-10-05 (Session 0 + M1)
