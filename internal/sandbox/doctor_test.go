@@ -24,7 +24,8 @@ func TestVersionAtLeast(t *testing.T) {
 
 // TestProbe_ReportsEveryCheckHonestly: whatever the machine has, Probe
 // returns the backend and L2 checks with a definite status, and an
-// unreachable engine is a failure exactly when L2 is the default.
+// unusable engine (unreachable, or not serving Linux containers) is a
+// failure exactly when L2 is the default.
 func TestProbe_ReportsEveryCheckHonestly(t *testing.T) {
 	for _, level := range []string{"L1", "L2"} {
 		checks := Probe(context.Background(), Options{DefaultLevel: level})
