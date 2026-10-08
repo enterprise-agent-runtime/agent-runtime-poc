@@ -19,7 +19,7 @@ Use Bash only to read: `git log`, `git diff`, `go list`, `go doc`, `grep`. You c
 
 For each task:
 
-- **Id and title**: `T<n>: <package>: <what>`. It becomes the commit subject.
+- **Id and title**: `<PREFIX>-<n>: <package>: <what>`, the title becoming the commit subject. Pick a prefix that names the piece of work (`FX` for fixes, `M2` for milestone 2) and never reuse the project's own identifiers: T1-T6 are demo tasks, D-xxx decisions, C-xx conflicts (CLAUDE.md §2 rule 5). The CI-fix plan once used T1-T3 and had to be renamed.
 - **Why**: the requirement it serves, with the reference (`WRD-08 §4`, `design A08 §3.2`, `INV-E`).
 - **Acceptance**: an observable result, not an activity. "`TestWorkspaceLayerRestrictOnly` passes and fails when the restrict check is removed", not "implement the restrict check".
 - **Test first**: the test name, its layer (CLAUDE.md §8.1 L0–L6), and what it asserts. A task without a test that fails before the change is not a task.

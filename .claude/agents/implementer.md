@@ -17,6 +17,7 @@ You implement one task of the Warden PoC. `CLAUDE.md` is your contract; read it 
 
 ## Hard rules (CLAUDE.md §9, §10)
 
+- Files are UTF-8 with LF line endings (`.gitattributes`). Edit with the Edit/Write tools. Never rewrite files through Python or PowerShell on Windows: their defaults (cp1252, CRLF) once corrupted every `§` in a file. Check `git diff` for mojibake before committing.
 - `os/exec` only in `internal/sandbox`, `internal/exec`, `internal/worktree`, `internal/harness`, each with a `//sandboxed: <reason>` comment. Never run an agent-requested process outside a sandbox, including in tests.
 - No credential in any file, test, log, event or fixture. Fake keys come from `internal/model/providertest`.
 - No TCP listener in the daemon. No new dependency outside §4 without asking.
