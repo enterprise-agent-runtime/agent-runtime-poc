@@ -80,7 +80,7 @@ Planned by the `planner` agent. Each task is one commit, test first, delivered t
   - Review found the fuzz property wrong for a DACL offset inside the 20-byte header, so `sd.go` now rejects `off < 20` (`1f737a7`); `TestBwrapUsable` no longer pins the version on error rows (`f61cc96`). Re-review approve; fuzz 15 s, ~4M execs, clean.
   - Coverage: `internal/sandbox` Windows 82.7%, Linux 90.2% (unchanged; changed functions 100%); `internal/platform` Windows 65.4% -> 66.8%, Linux 58.9% -> 59.9%.
   - Windows `bash scripts/make.sh check`: exit 0, 23 packages ok after the FX-3 merge; for `821aa4d`: see FX-4.
-- [ ] **FX-4** Re-run CI on PR #1, including the Ubuntu job that never got a runner, and record the results here. Pending: CI run after push.
+- [x] **FX-4** CI run 37825777402 on `395b623` (PR #1), 2026-10-08: `go test -race (linux)` pass, `make check (ubuntu-latest)` pass (the job that never got a runner on the first run), `make check (macos-latest)` pass, `make check (windows-latest)` pass. PR #1 is green on all four jobs.
 - Review follow-ups (proposed, not scheduled; owner decides):
   - M2: L2 sandbox creation must check the engine itself (ping, `Os == linux`) and refuse; doctor is not the gate (CWE-636).
   - The CLI prints doctor `Detail` raw: strip control characters and validate the Docker `Version`/`Os` shapes (CWE-150).
