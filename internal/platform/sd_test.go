@@ -27,7 +27,8 @@ func TestOwnerOnlyDACL(t *testing.T) {
 		{"owner only", testSD(seDACLPresent|seDACLProtected, allowed(user)), user, true},
 		{"RID 500 owner", testSD(seDACLPresent|seDACLProtected, allowed(admin)), admin, true},
 		{"not protected", testSD(seDACLPresent, allowed(user)), user, false},
-		{"DACL absent", testSD(seDACLProtected), user, false},
+		{"DACL absent", testSD(seDACLProtected), user, false}, // offset 0; the present bit is guarded below
+
 		{"NULL DACL", nullDACLSD(), user, false},
 		{"two ACEs", testSD(seDACLPresent|seDACLProtected, allowed(user), allowed(user)), user, false},
 		{"no ACE", testSD(seDACLPresent | seDACLProtected), user, false},
@@ -74,6 +75,12 @@ func TestOwnerOnlyDACL(t *testing.T) {
 		"AceSize below header":   lie(ace+2, 4, 2),
 		"SID subauth count lies": lie(ace+8, 0x0F01, 2), // revision 1, 15 subauthorities
 		"not self-relative":      lie(2, seDACLPresent|seDACLProtected, 2),
+		// A valid owner-only ACL at a real offset, but SE_DACL_PRESENT clear:
+		// Windows then treats the descriptor as having no DACL, which grants
+		// everyone full access. "DACL absent" above has offset 0 and so is
+		// rejected by the offset check first; this case alone guards the
+		// present-bit check (review of 0c98a32).
+		"present bit clear, valid ACL": lie(2, seDACLProtected|seSelfRelative, 2),
 	} {
 		if ownerOnlyDACL(b, user) {
 			t.Errorf("%s: accepted", name)
