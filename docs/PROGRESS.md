@@ -59,20 +59,38 @@ The first CI run on PR #1 had three failing tests, and none was a race, a panic 
 
 Planned by the `planner` agent. Each task is one commit, test first, delivered through `/deliver` (CLAUDE.md §15). Ids are `FX-n` so they don't collide with the demo tasks T1–T6.
 
-- [ ] **FX-1** `sandbox: the userns check names its fix when bubblewrap is unavailable` (design A05 §8.1)
+- [x] **FX-1** `sandbox: the userns check names its fix when bubblewrap is unavailable` (design A05 §8.1) - `4c69f91`, merged `26d312d`
+  - Evidence: the test failed before the fix with `sandbox.userns is fail without a fix hint`; reverting the hint reproduces the CI error `doctor_test.go:36`. WSL2 `go test -race ./internal/sandbox/...` passes with bwrap present and hidden. Reviewer approve, security reviewer no findings.
   - Lift the L1 verdict into a pure `l1Checks(Options, l1Inputs)`.
   - Test first: `TestL1Checks_EveryNonOkCheckHasHint` (linux, L1). It covers {bwrap missing, too old, empty sandbox fails, ok} × {L1, L2}.
   - Records decision D-028.
-- [ ] **FX-2** `sandbox: the sandbox.l2 status follows blocking for every unusable engine` (CLAUDE.md §4, C-02)
+- [x] **FX-2** `sandbox: the sandbox.l2 status follows blocking for every unusable engine` (CLAUDE.md §4, C-02) - `c2b3f62` + `a7d0d1b`, merged `9fa4315`
+  - Evidence: `TestL2Check_StatusFollowsBlocking` failed first with `reachable_windows/L1: status = fail, want warn`. Reviewer approve with one minor (stale test comment, fixed in `a7d0d1b`); security reviewer no blocking findings.
   - Inject the ping into `l2CheckWith`.
   - Test first: `TestL2Check_StatusFollowsBlocking` (all OSes, L1). It covers {reachable linux, reachable windows-containers, unreachable} × {L1, L2}.
   - Records decision D-026.
-- [ ] **FX-3** `platform: the owner-only check compares the DACL structurally, not as SDDL text` (CLAUDE.md §4 IPC, D-011)
+- [x] **FX-3** `platform: the owner-only check compares the DACL structurally, not as SDDL text` (CLAUDE.md §4 IPC, D-011) - `0c98a32`, `f0f4670`, `fe4ebe9`, merged `be4fd4b`
+  - Evidence: `TestOwnerOnly_AbbreviatedSID` fails with the old string compare (`DACL read back D:P(A;;FA;;;BA)`). Reviewer major finding (the "DACL absent" row did not isolate SE_DACL_PRESENT) fixed in `f0f4670` with a "present bit clear, valid ACL" row, proved to bite. Security reviewer: parser sound, fuzzed ~5.9M execs without a panic.
   - Add a pure, bounds-checked descriptor parser `ownerOnlyDACL`.
   - Test first: `TestOwnerOnlyDACL` (all OSes, hostile inputs) and `TestOwnerOnly_AbbreviatedSID` (windows, BUILTIN\Administrators renders as `BA`).
   - Adds no new dependency (`syscall` only). Records decision D-027.
-- [ ] **FX-4** Re-run CI on PR #1, including the Ubuntu job that never got a runner, and record the results here.
-- Proposed, not scheduled: a Windows test that the named pipe's DACL is owner-only. CLAUDE.md §8.7 M1 asks for "platform transport tests on 3 OSes"; it depends on FX-3.
+- [x] **Test audit of FX-1..FX-3** (`2fab6a3`, then `1f737a7` + `f61cc96` after review, merged `821aa4d`)
+  - 66 mutants: 38 killed by existing tests, 28 survived; 23 now killed, 5 equivalent (documented).
+  - Added `FuzzOwnerOnlyDACL`, `TestValidSID`, `TestBwrapUsable`, `TestL1Checks_ReportsWhatItSaw`, `TestOwnerOnly_MissingFileIsError` and more table rows.
+  - Review found the fuzz property wrong for a DACL offset inside the 20-byte header, so `sd.go` now rejects `off < 20` (`1f737a7`); `TestBwrapUsable` no longer pins the version on error rows (`f61cc96`). Re-review approve; fuzz 15 s, ~4M execs, clean.
+  - Coverage: `internal/sandbox` Windows 82.7%, Linux 90.2% (unchanged; changed functions 100%); `internal/platform` Windows 65.4% -> 66.8%, Linux 58.9% -> 59.9%.
+  - Windows `bash scripts/make.sh check`: exit 0, 23 packages ok after the FX-3 merge; for `821aa4d`: see FX-4.
+- [ ] **FX-4** Re-run CI on PR #1, including the Ubuntu job that never got a runner, and record the results here. Pending: CI run after push.
+- Review follow-ups (proposed, not scheduled; owner decides):
+  - M2: L2 sandbox creation must check the engine itself (ping, `Os == linux`) and refuse; doctor is not the gate (CWE-636).
+  - The CLI prints doctor `Detail` raw: strip control characters and validate the Docker `Version`/`Os` shapes (CWE-150).
+  - Config loading (C-06): normalise `sandbox.default_level` against `platform.SandboxLevels()` (CWE-178).
+  - Windows owner-only: also verify the file OWNER equals the token user, and write the owner (`O:<sid>`) (CWE-283).
+  - Windows `WriteOwnerOnly`: the token bytes exist before the DACL is set; create with the DACL at `CreateFile` time, use a random `O_EXCL` temp name, and set protected owner-only DACLs on the home and run directories in `Ensure` (CWE-367/377/276).
+  - Production callers of `OwnerOnly`: wardend after writing the token; the client before sending it.
+  - Named pipe: the client does not verify who serves `\.\pipe\warden-<user>` before sending the token (pipe squatting); needs its own security review.
+  - A Windows test that the named pipe's DACL is owner-only (CLAUDE.md §8.7 M1 "platform transport tests on 3 OSes"); depends on FX-3.
+  - `ubuntu-latest` moves to 26 on 2026-10-19: decide pinning with the M2 integration job.
 - Owner questions:
   - Keep `TestProbe_ReportsEveryCheckHonestly` in `make check` (planner recommends yes for M1), or move it to `integration`?
   - Pin the CI image to `ubuntu-24.04` before ubuntu-latest moves to 26 on 2026-10-19? This belongs with the M2 integration job.
