@@ -17,6 +17,10 @@ func TestOwnerOnlyDACL(t *testing.T) {
 	admin := testSID(5, 21, 1111, 2222, 3333, 500) // RID 500, rendered "LA"
 	other := testSID(5, 21, 1111, 2222, 3333, 1002)
 	allowed := func(sid []byte) []byte { return testACE(0, 0, fileAllAccess, sid) }
+	// An ACE whose AceSize covers four bytes of padding after the SID: the
+	// SID is compared by its declared length, not to the end of the ACE.
+	padded := append(allowed(user), 0, 0, 0, 0)
+	binary.LittleEndian.PutUint16(padded[2:], uint16(len(padded)))
 
 	cases := []struct {
 		name string
@@ -39,6 +43,13 @@ func TestOwnerOnlyDACL(t *testing.T) {
 		{"SID prefix only", testSD(seDACLPresent|seDACLProtected, allowed(user)), user[:len(user)-4], false},
 		{"empty SID", testSD(seDACLPresent|seDACLProtected, allowed(user)), nil, false},
 		{"empty SD", nil, user, false},
+
+		// Added by the mutation audit of FX-3; each row kills a mutant the
+		// rows above let through.
+		{"ACE padded after SID", testSD(seDACLPresent|seDACLProtected, padded), user, true},                                  // SID compared to the ACE's end
+		{"inherit-only ACE", testSD(seDACLPresent|seDACLProtected, testACE(0, 0x08, fileAllAccess, user)), user, false},      // grants nothing on the file itself; kills a flags check narrowed to INHERITED_ACE
+		{"DACL inside the header", headerOverlapSD(user), user, false},                                                       // review of 2fab6a3: offset 10, the ACL reuses header bytes
+		{"mask superset", testSD(seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess|0x10000000, user)), user, false}, // WriteOwnerOnly writes exactly FA; kills mask&FA == FA
 	}
 	for _, c := range cases {
 		if got := ownerOnlyDACL(c.sd, c.sid); got != c.want {
@@ -81,11 +92,90 @@ func TestOwnerOnlyDACL(t *testing.T) {
 		// rejected by the offset check first; this case alone guards the
 		// present-bit check (review of 0c98a32).
 		"present bit clear, valid ACL": lie(2, seDACLProtected|seSelfRelative, 2),
+		// Mutation audit of FX-3. AceCount 0 with a valid ACE in the bytes is
+		// an empty DACL to Windows (no access for anyone), not owner-only;
+		// kills "AceCount > 1". An AclSize leaving a partial ACE header kills
+		// the removal of the ACE header length check (it panics instead). An
+		// AceSize that ends inside the SID must not be read past; kills the
+		// removal of ace = ace[:aceSize].
+		"AceCount 0, ACE present":     lie(acl+4, 0, 2),
+		"AclSize cuts ACE header":     lie(acl+2, aclHeaderSize+2, 2),
+		"AceSize ends inside the SID": lie(ace+2, uint32(len(good)-ace-4), 2),
 	} {
 		if ownerOnlyDACL(b, user) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+}
+
+// TestValidSID pins the SID shape check the owner-only parser relies on for
+// both the caller's SID and the one in the ACE (mutation audit of FX-3:
+// dropping the revision, subauthority or length check left TestOwnerOnlyDACL
+// green, because a mismatched SID is rejected by the final comparison too).
+func TestValidSID(t *testing.T) {
+	user := testSID(5, 21, 1111, 2222, 3333, 1001)
+	rev := func(r byte) []byte { b := append([]byte(nil), user...); b[0] = r; return b }
+	cases := []struct {
+		name string
+		b    []byte
+		want bool
+	}{
+		{"user SID", user, true},
+		{"trailing bytes", append(append([]byte(nil), user...), 0, 0, 0, 0), true}, // ACE padding
+		{"one subauthority", testSID(5, 18), true},                                 // S-1-5-18, the shortest real SID shape
+		{"revision 0", rev(0), false},
+		{"revision 2", rev(2), false},
+		{"no subauthorities", testSID(5), false},
+		{"one byte short", user[:len(user)-1], false},
+		{"header only", user[:sidHeaderSize], false},
+		{"shorter than header", user[:sidHeaderSize-1], false},
+		{"nil", nil, false},
+	}
+	for _, c := range cases {
+		if got := validSID(c.b); got != c.want {
+			t.Errorf("%s: validSID = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// FuzzOwnerOnlyDACL: the security descriptor comes from the OS, but the
+// parser must hold for any bytes. Property: it never panics, and it never
+// accepts unless the descriptor is self-relative with a present, protected
+// DACL and contains the exact owner-only ACE body (type 0, flags 0, mask
+// FILE_ALL_ACCESS, followed by the caller's SID). The seeds run as part of
+// every go test; explore further with
+// go test -run '^$' -fuzz FuzzOwnerOnlyDACL ./internal/platform/
+func FuzzOwnerOnlyDACL(f *testing.F) {
+	user := testSID(5, 21, 1111, 2222, 3333, 1001)
+	good := testSD(seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user))
+	f.Add(good, user)
+	f.Add(good[:len(good)-1], user)
+	f.Add(testSD(seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user), testACE(0, 0, fileAllAccess, user)), user)
+	f.Add(testSD(seDACLPresent, testACE(0, 0, fileAllAccess, user)), user)
+	f.Add(nullDACLSD(), user)
+	f.Add([]byte{}, []byte{})
+	f.Add(headerOverlapSD(user), user) // review of 2fab6a3
+	f.Fuzz(func(t *testing.T, sd, sid []byte) {
+		if !ownerOnlyDACL(sd, sid) {
+			return
+		}
+		control := binary.LittleEndian.Uint16(sd[2:])
+		if control&(seSelfRelative|seDACLPresent|seDACLProtected) != seSelfRelative|seDACLPresent|seDACLProtected {
+			t.Fatalf("accepted with control %#04x", control)
+		}
+		// Follow the parser: the DACL starts after the header, and its first
+		// ACE is ACCESS_ALLOWED without flags, with body FA || sid.
+		off := uint64(binary.LittleEndian.Uint32(sd[16:]))
+		ace := off + aclHeaderSize
+		body := binary.LittleEndian.AppendUint32(nil, fileAllAccess)
+		body = append(body, sid...)
+		if off < sdHeaderSize || ace+aceHeaderSize+uint64(len(body)) > uint64(len(sd)) {
+			t.Fatalf("accepted with DACL offset %d outside the descriptor body: sd %x", off, sd)
+		}
+		if sd[ace] != accessAllowedACEType || sd[ace+1] != 0 || string(sd[ace+aceHeaderSize:ace+aceHeaderSize+uint64(len(body))]) != string(body) {
+			t.Fatalf("accepted without an owner-only ACE for the SID at offset %d: sd %x sid %x", ace, sd, sid)
+		}
+	})
 }
 
 // testSID builds a binary SID S-1-<auth>-<sub...>.
@@ -129,11 +219,33 @@ func testSD(control uint16, aces ...[]byte) []byte {
 	return b
 }
 
+// headerOverlapSD places the DACL at offset 10, inside the 20-byte header:
+// the ACL's Sbz2 is the low half of OffsetDacl and the ACE's type and flags
+// are its zero high bytes, so a parser that only bounds-checks the end of
+// the buffer reads a well-formed owner-only ACE out of it. The kernel never
+// returns such a descriptor; the parser must still refuse it.
+func headerOverlapSD(sid []byte) []byte {
+	const off = 10
+	aceSize := aceHeaderSize + 4 + len(sid)
+	b := make([]byte, off+aclHeaderSize+aceSize)
+	b[0] = 1
+	binary.LittleEndian.PutUint16(b[2:], seDACLPresent|seDACLProtected|seSelfRelative)
+	b[off] = 2                                                              // AclRevision
+	binary.LittleEndian.PutUint16(b[off+2:], uint16(aclHeaderSize+aceSize)) // AclSize
+	binary.LittleEndian.PutUint16(b[off+4:], 1)                             // AceCount
+	binary.LittleEndian.PutUint32(b[16:], off)                              // OffsetDacl; also Sbz2 and the ACE's type/flags
+	ace := off + aclHeaderSize
+	binary.LittleEndian.PutUint16(b[ace+2:], uint16(aceSize))
+	binary.LittleEndian.PutUint32(b[ace+4:], fileAllAccess)
+	copy(b[ace+8:], sid)
+	return b
+}
+
 // nullDACLSD is "DACL present" with a zero offset: a NULL DACL, which grants
-// everyone everything. The explicit `off == 0` check in ownerOnlyDACL is
-// defence in depth: deleting it leaves this case rejected anyway (read at
-// offset 0, the "ACE" SID overlaps OffsetDacl, which is 0, so validSID
-// fails), so no test can kill that mutant. Checked by hand in review of FX-3.
+// everyone everything. ownerOnlyDACL rejects it with `off < sdHeaderSize`,
+// which since the review of 2fab6a3 covers offset 0 and every other offset
+// inside the header; headerOverlapSD is the case that kills a mutant
+// narrowing it back to `off == 0`.
 func nullDACLSD() []byte {
 	b := make([]byte, sdHeaderSize)
 	b[0] = 1

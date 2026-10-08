@@ -37,7 +37,9 @@ func ownerOnlyDACL(sd, sid []byte) bool {
 		return false
 	}
 	off := uint64(binary.LittleEndian.Uint32(sd[16:]))
-	if off == 0 || off+aclHeaderSize > uint64(len(sd)) { // offset 0 is a NULL DACL: everyone, everything
+	// Offset 0 is a NULL DACL (everyone, everything); any other offset below
+	// the header would read the ACL out of the header's own fields.
+	if off < sdHeaderSize || off+aclHeaderSize > uint64(len(sd)) {
 		return false
 	}
 	acl := sd[off:]
