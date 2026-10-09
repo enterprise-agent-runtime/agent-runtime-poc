@@ -23,7 +23,7 @@ Warden is an enterprise AI agent runtime: a secure execution and governance laye
 |---|---|---|
 | Specification | `WRD-00` … `WRD-16` (+ `img/`) | What the product is; invariants; scope (WRD-16) |
 | Design | the Claude Design output (system design A-series: A01–A18; UI/UX B-series: B01–B09; possibly other names) | How to build it: diagrams, schemas, DDL, API contracts, components, screens |
-| Working files you own | `docs/INDEX.md`, `docs/CONFLICTS.md`, `docs/DECISIONS-poc.md`, `docs/PROGRESS.md`, `docs/POC-REPORT.md` | Inventory, conflicts, decisions, progress |
+| Working files you own | `docs/INDEX.md`, `docs/CONFLICTS.md`, `docs/DECISIONS-poc.md`, `docs/PROGRESS.md`, `docs/POC-REPORT.md`, `docs/GLOSSARY.md`, `docs/WORKING-WITH-CLAUDE-CODE.md`, `docs/reports/` | Inventory, conflicts, decisions, progress; the concepts glossary, the way of working, dated session reports. Every document about this work lives in this repository (or, for the specification and design, in agent-platform-docs); claude.ai pages are only views of these files |
 
 Precedence rules:
 1. **Scope and invariants**: this file and WRD-16. No design document can add scope or weaken an invariant.
