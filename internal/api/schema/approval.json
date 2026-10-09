@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/approval.json",
+  "title": "Warden approval record v1 (WRD-08 §7; gates per WRD-07 §7)",
+  "type": "object",
+  "required": [
+    "approval_id",
+    "kind",
+    "session_id",
+    "workspace_id",
+    "run_id",
+    "task_id",
+    "task_key",
+    "decision_id",
+    "call_id",
+    "pattern",
+    "risk_class",
+    "scope_max",
+    "scopes_allowed",
+    "reason",
+    "rule_ids",
+    "display",
+    "status",
+    "decision",
+    "scope",
+    "approver",
+    "requested_at",
+    "expires_at",
+    "resolved_at",
+    "grant_expires_at",
+    "revoked_at"
+  ],
+  "properties": {
+    "approval_id": {
+      "$ref": "common.json#/$defs/approvalId"
+    },
+    "kind": {
+      "$ref": "common.json#/$defs/approvalKind"
+    },
+    "session_id": {
+      "$ref": "common.json#/$defs/sessionId"
+    },
+    "workspace_id": {
+      "$ref": "common.json#/$defs/workspaceId"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/runId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/taskId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "task_key": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/taskKey"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "decision_id": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/decisionId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "call_id": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/callId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pattern": {
+      "$ref": "#/$defs/pattern"
+    },
+    "risk_class": {
+      "$ref": "common.json#/$defs/riskClass"
+    },
+    "scope_max": {
+      "$ref": "common.json#/$defs/approvalScope"
+    },
+    "scopes_allowed": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/approvalScope"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "rule_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/ruleId"
+      }
+    },
+    "display": {
+      "type": "object",
+      "required": [
+        "what",
+        "who",
+        "why"
+      ],
+      "properties": {
+        "what": {
+          "type": "string"
+        },
+        "who": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        },
+        "taint_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "question": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "granted",
+        "consumed",
+        "answered",
+        "rejected",
+        "expired",
+        "cancelled",
+        "revoked"
+      ]
+    },
+    "answer": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 4000,
+      "description": "NEW (ID-05): redacted answer, kind question only"
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/approvalDecision"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "scope": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/approvalScope"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "approver": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/localUser"
+        },
+        {
+          "const": "runtime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "requested_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "common.json#/$defs/timestamp"
+    },
+    "resolved_at": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "grant_expires_at": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "revoked_at": {
+      "anyOf": [
+        {
+          "$ref": "common.json#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "pattern": {
+      "type": "object",
+      "required": [
+        "tool",
+        "operation",
+        "resource_pattern"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "enum": [
+            "fs",
+            "proc",
+            "git",
+            "proxy",
+            "harness",
+            "approval",
+            "workflow"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "pattern": "^[a-z_]+$"
+        },
+        "resource_pattern": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 8192,
+          "pattern": "^(profile|argv|dest|path|branch|push|harness|gate|question):.+$",
+          "description": "A08 §5.3 string forms, e.g. profile:install, dest:registry.npmjs.org:443, push:origin/warden/01jax…; gate:<gate_key>; question:<sha256 of the question>"
+        }
+      }
+    }
+  }
+}

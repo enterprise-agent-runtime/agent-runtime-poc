@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/policy.explain.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "tool",
+            "operation",
+            "resource"
+          ]
+        },
+        {
+          "required": [
+            "approval_id"
+          ]
+        }
+      ],
+      "properties": {
+        "tool": {
+          "$ref": "../common.json#/$defs/policyTool"
+        },
+        "operation": {
+          "type": "string",
+          "pattern": "^[a-z_]+$"
+        },
+        "resource": {
+          "$ref": "types.json#/$defs/actionResource"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "task_key": {
+          "$ref": "../common.json#/$defs/taskKey",
+          "description": "NEW: evaluate in the context (capabilities, egress allowlist) of this task of the active run"
+        },
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId",
+          "description": "NEW: explain the action of this pending approval (tool, operation, resource and context are taken from it)"
+        }
+      }
+    },
+    "result": {
+      "$ref": "types.json#/$defs/decisionPreview"
+    }
+  }
+}

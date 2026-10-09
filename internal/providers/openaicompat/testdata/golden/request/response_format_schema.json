@@ -1,0 +1,28 @@
+{
+  "messages": [
+    {
+      "content": "u",
+      "role": "user"
+    }
+  ],
+  "model": "qwen2.5-coder:32b",
+  "response_format": {
+    "json_schema": {
+      "name": "warden_output",
+      "schema": {
+        "properties": {
+          "answer": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "strict": true
+    },
+    "type": "json_schema"
+  },
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  }
+}

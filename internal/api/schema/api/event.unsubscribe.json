@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/event.unsubscribe.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "subscription_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "subscription_id": {
+          "$ref": "../common.json#/$defs/subscriptionId"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "existed": {
+          "type": "boolean",
+          "description": "NEW: false if the subscription had already ended (gap, earlier unsubscribe)"
+        }
+      }
+    }
+  }
+}

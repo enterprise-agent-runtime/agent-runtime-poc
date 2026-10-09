@@ -1,0 +1,33 @@
+[
+  {
+    "index": 0,
+    "model": "claude-sonnet-x",
+    "provider": "anthropic",
+    "request_id": "req_test",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "opaque": "eyJzaWduYXR1cmUiOiJzaWc9PSIsInRoaW5raW5nIjoiTGV0IG1lIHRoaW5rIiwidHlwZSI6InRoaW5raW5nIn0=",
+    "provider": "anthropic",
+    "type": "reasoning_delta"
+  },
+  {
+    "index": 1,
+    "text": "Done.",
+    "type": "text_delta"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "input_tokens": 5,
+      "output_tokens": 9
+    }
+  },
+  {
+    "index": 0,
+    "stop_reason": "content_filter",
+    "type": "message_end"
+  }
+]

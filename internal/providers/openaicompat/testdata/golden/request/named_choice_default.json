@@ -1,0 +1,40 @@
+{
+  "messages": [
+    {
+      "content": "u",
+      "role": "user"
+    }
+  ],
+  "model": "qwen2.5-coder:32b",
+  "parallel_tool_calls": false,
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "tool_choice": {
+    "function": {
+      "name": "fs__read"
+    },
+    "type": "function"
+  },
+  "tools": [
+    {
+      "function": {
+        "description": "Read a file.",
+        "name": "fs__read",
+        "parameters": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

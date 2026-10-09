@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/artifacts/code-diff.json",
+  "title": "code-diff metadata v1 (content blob is the unified diff, media text/x-diff)",
+  "type": "object",
+  "required": [
+    "files",
+    "stats",
+    "base_commit",
+    "head_commit",
+    "summary",
+    "cumulative"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "old_path",
+          "status",
+          "binary",
+          "additions",
+          "deletions",
+          "patch",
+          "hunks"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "$ref": "../common.json#/$defs/relPath"
+          },
+          "old_path": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/relPath"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "added",
+              "modified",
+              "deleted",
+              "renamed"
+            ]
+          },
+          "binary": {
+            "type": "boolean"
+          },
+          "additions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deletions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "patch": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "hash",
+                  "size"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "hash": {
+                    "$ref": "../common.json#/$defs/sha256"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            ]
+          },
+          "hunks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "index",
+                "old_start",
+                "old_lines",
+                "new_start",
+                "new_lines",
+                "header",
+                "provenance"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "old_start": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "old_lines": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "new_start": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "new_lines": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "header": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "provenance": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "task_key",
+                        "task_id",
+                        "execution_id",
+                        "step",
+                        "call_id",
+                        "tool",
+                        "model_call_id",
+                        "attribution",
+                        "contributors"
+                      ],
+                      "additionalProperties": false,
+                      "description": "ID-11 hunk provenance",
+                      "properties": {
+                        "task_key": {
+                          "$ref": "../common.json#/$defs/taskKey"
+                        },
+                        "task_id": {
+                          "$ref": "../common.json#/$defs/taskId"
+                        },
+                        "execution_id": {
+                          "anyOf": [
+                            {
+                              "$ref": "../common.json#/$defs/executionId"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "step": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 1
+                        },
+                        "call_id": {
+                          "anyOf": [
+                            {
+                              "$ref": "../common.json#/$defs/callId"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "tool": {
+                          "enum": [
+                            "fs.write",
+                            "fs.patch",
+                            "harness",
+                            null
+                          ]
+                        },
+                        "model_call_id": {
+                          "anyOf": [
+                            {
+                              "$ref": "../common.json#/$defs/modelCallId"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "attribution": {
+                          "enum": [
+                            "call",
+                            "task"
+                          ],
+                          "description": "call: from the attrib log; task: from checkpoint commits only"
+                        },
+                        "contributors": {
+                          "type": "array",
+                          "maxItems": 20,
+                          "description": "other calls that wrote lines of this hunk, newest first",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "call_id",
+                              "step",
+                              "lines"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "call_id": {
+                                "$ref": "../common.json#/$defs/callId"
+                              },
+                              "step": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "lines": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "files_changed",
+        "additions",
+        "deletions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "files_changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "additions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deletions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "base_commit": {
+      "$ref": "../common.json#/$defs/gitCommit"
+    },
+    "head_commit": {
+      "$ref": "../common.json#/$defs/gitCommit"
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "cumulative": {
+      "type": "boolean",
+      "description": "true: diff from the session base commit (CF-26); always true in the PoC"
+    }
+  }
+}

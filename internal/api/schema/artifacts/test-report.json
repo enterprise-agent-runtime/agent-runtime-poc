@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/artifacts/test-report.json",
+  "title": "test-report v1 (WRD-16 §7.4; analysis carries the failure analysis, CF-25)",
+  "type": "object",
+  "required": [
+    "profile",
+    "exit_code",
+    "passed",
+    "failed",
+    "skipped",
+    "failures",
+    "duration_ms",
+    "analysis"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "profile": {
+      "type": "string",
+      "enum": [
+        "node-test",
+        "go-test",
+        "python-test"
+      ]
+    },
+    "runner": {
+      "enum": [
+        "vitest-json",
+        "go-test-json",
+        "pytest-json-report",
+        "junit-xml"
+      ]
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "passed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skipped": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failures": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "message"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "file": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/relPath"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excerpt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4000
+          }
+        }
+      }
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "analysis": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "build": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "profile",
+            "exit_code",
+            "duration_ms",
+            "output_excerpt"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "profile": {
+              "enum": [
+                "node-build",
+                "go-build"
+              ]
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output_excerpt": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        }
+      ]
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail"
+      ],
+      "description": "Computed by the runtime: pass iff build is null or build.exit_code == 0, and failed == 0 and exit_code == 0"
+    }
+  }
+}

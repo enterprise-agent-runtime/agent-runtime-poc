@@ -1,0 +1,58 @@
+[
+  {
+    "index": 0,
+    "model": "claude-sonnet-x",
+    "provider": "anthropic",
+    "request_id": "req_test",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "text": "Reading the file.",
+    "type": "text_delta"
+  },
+  {
+    "id": "toolu_01",
+    "index": 1,
+    "name": "fs__read",
+    "type": "tool_use_start"
+  },
+  {
+    "index": 1,
+    "partial_json": "{\"pa",
+    "type": "tool_use_delta"
+  },
+  {
+    "index": 1,
+    "partial_json": "th\": \"src/app.ts\"}",
+    "type": "tool_use_delta"
+  },
+  {
+    "index": 1,
+    "type": "tool_use_end"
+  },
+  {
+    "id": "toolu_02",
+    "index": 2,
+    "name": "fs__list",
+    "type": "tool_use_start"
+  },
+  {
+    "index": 2,
+    "type": "tool_use_end"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "cached_input_tokens": 30,
+      "input_tokens": 150,
+      "output_tokens": 42
+    }
+  },
+  {
+    "index": 0,
+    "stop_reason": "tool_use",
+    "type": "message_end"
+  }
+]

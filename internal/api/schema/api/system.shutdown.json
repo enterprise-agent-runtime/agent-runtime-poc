@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/system.shutdown.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "confirm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "confirm": {
+          "$ref": "types.json#/$defs/confirmTrue"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "interrupted_task_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/taskId"
+          },
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

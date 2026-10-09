@@ -1,0 +1,22 @@
+{
+  "max_tokens": 8192,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "Add an endpoint.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-x",
+  "stream": true,
+  "system": [
+    {
+      "text": "You are the coder.",
+      "type": "text"
+    }
+  ]
+}

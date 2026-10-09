@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/workflow.get.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "run_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        }
+      }
+    },
+    "result": {
+      "$ref": "types.json#/$defs/run"
+    }
+  }
+}

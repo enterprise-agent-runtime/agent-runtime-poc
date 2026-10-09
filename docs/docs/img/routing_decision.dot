@@ -1,0 +1,12 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  s [label="Task needs a model\n(class, required capabilities, data classification)", fillcolor="#DCE6F2"];
+  c1 [label="Max provider tier allowed for this data?\nrestricted → T0/T1 · confidential → ≤T2 (T3 if org contract)\ninternal → ≤T3 · public → any", shape=diamond, fillcolor="#FFF8E7"];
+  c2 [label="Filter: agent allow/deny lists\n∩ required capabilities (tool calling, JSON, context ≥ needed)", shape=diamond, fillcolor="#FFF8E7"];
+  c3 [label="Rank remaining by policy strategy\nquality-first / cost-first / latency-first / prefer-internal", shape=diamond, fillcolor="#FFF8E7"];
+  c4 [label="Provider healthy?\n(circuit breaker, rate-limit state)", shape=diamond, fillcolor="#FFF8E7"];
+  ok [label="Use it · emit routing_decision event\n(candidates, chosen, reasons)", fillcolor="#EAF7EA"];
+  nx [label="Next candidate in the SAME or LOWER tier\n(never widen the tier on fallback)"];
+  none [label="No candidate → task waiting_for_input\n(user may pick a model or wait); never silent downgrade", fillcolor="#FDE9D9"];
+  s -> c1 -> c2 -> c3 -> c4; c4 -> ok [label="yes"]; c4 -> nx [label="no"]; nx -> c4 [label="more"]; nx -> none [label="exhausted"];
+}

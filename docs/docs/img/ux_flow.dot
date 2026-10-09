@@ -1,0 +1,10 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  a [label="1. Request\n\"Add OAuth login with Google and GitHub\""];
+  b [label="2. Exploring & planning (live timeline)\nrepo map · classification · model chosen (and why)"];
+  c [label="3. Plan review (approval gate G1)\nsteps · files expected · risk · estimated cost\n[Approve] [Edit] [Cancel]", fillcolor="#FDE9D9"];
+  d [label="4. Implementation (parallel worktrees)\nprogress per task · approval prompts inline\n(command outside allowlist, network egress)"];
+  e [label="5. Verification\nbuild ✓ · tests 184/184 ✓ · static analysis ✓ · security review 0 blocking"];
+  f [label="6. Review (approval gate G2)\ndiff viewer · reports · cost · audit trace\n[Apply to branch] [Commit] [Push (approval)] [Iterate]", fillcolor="#FDE9D9"];
+  a -> b -> c -> d -> e -> f; f -> b [label="iterate", style=dashed];
+}

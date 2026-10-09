@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/workflow.resolveGate.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "gate_id",
+        "decision"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "gate_id": {
+          "$ref": "../common.json#/$defs/taskId"
+        },
+        "decision": {
+          "$ref": "../common.json#/$defs/gateDecision"
+        },
+        "edited_artifact": {
+          "$ref": "../artifacts/plan.json"
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "reject"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "edited_artifact"
+          ]
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "gate_id",
+        "decision",
+        "artifact_id"
+      ],
+      "properties": {
+        "gate_id": {
+          "$ref": "../common.json#/$defs/taskId"
+        },
+        "decision": {
+          "$ref": "../common.json#/$defs/gateDecision"
+        },
+        "artifact_id": {
+          "$ref": "../common.json#/$defs/artifactId",
+          "description": "G1: the plan implement will use (edited or presented); G2: the approved code-diff"
+        },
+        "run_status": {
+          "$ref": "../common.json#/$defs/runStatus",
+          "description": "NEW"
+        },
+        "final_result": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW: set when G2 approval ended the run"
+        }
+      }
+    }
+  }
+}

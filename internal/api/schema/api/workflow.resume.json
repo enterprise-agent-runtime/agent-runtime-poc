@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/workflow.resume.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "from"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "from": {
+          "const": "last_gate"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "resumed_from"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "resumed_from": {
+          "type": "object",
+          "required": [
+            "run_id",
+            "gate_key"
+          ],
+          "properties": {
+            "run_id": {
+              "$ref": "../common.json#/$defs/runId"
+            },
+            "gate_key": {
+              "$ref": "../common.json#/$defs/gateKey"
+            }
+          }
+        }
+      }
+    }
+  }
+}

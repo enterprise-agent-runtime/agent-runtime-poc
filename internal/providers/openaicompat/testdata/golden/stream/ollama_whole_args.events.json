@@ -1,0 +1,37 @@
+[
+  {
+    "index": 0,
+    "model": "qwen2.5-coder:32b",
+    "provider": "ollama",
+    "request_id": "chatcmpl-7",
+    "type": "message_start"
+  },
+  {
+    "id": "call_x1",
+    "index": 0,
+    "name": "fs__list",
+    "type": "tool_use_start"
+  },
+  {
+    "index": 0,
+    "partial_json": "{\"path\":\".\"}",
+    "type": "tool_use_delta"
+  },
+  {
+    "index": 0,
+    "type": "tool_use_end"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "input_tokens": 50,
+      "output_tokens": 10
+    }
+  },
+  {
+    "index": 0,
+    "stop_reason": "tool_use",
+    "type": "message_end"
+  }
+]

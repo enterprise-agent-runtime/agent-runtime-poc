@@ -1,0 +1,7 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8]; node [shape=record];
+  m [label="{Agent package (directory / OCI artifact)|manifest.yaml (identity, capabilities, model policy, limits, approvals, artifacts)\lprompts/ (system, task templates)\lschemas/ (input, output, artifact JSON Schemas)\levals/ (suite.yaml + fixtures)\lsignature (digest + Ed25519 / sigstore)\l}"];
+  wf [label="{Workflow definition|tasks[] (agent@ver, inputs, depends_on)\lretry, timeout, approval gates\lconcurrency groups\loutputs\l}"];
+  impl [label="{Agent implementation (optional, Phase 4)|SDK process speaking Agent Protocol\lruns inside sandbox\lcalls back into runtime for model + tools\l}"];
+  m -> wf [label="referenced by"]; m -> impl [label="may include"];
+}

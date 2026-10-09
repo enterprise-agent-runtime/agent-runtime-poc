@@ -1,0 +1,36 @@
+{
+  "max_completion_tokens": 100,
+  "messages": [
+    {
+      "content": "sys",
+      "role": "developer"
+    },
+    {
+      "content": "u",
+      "role": "user"
+    }
+  ],
+  "model": "qwen2.5-coder:32b",
+  "stream": true,
+  "tool_choice": "required",
+  "tools": [
+    {
+      "function": {
+        "description": "Read a file.",
+        "name": "fs__read",
+        "parameters": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+[
+  {
+    "index": 0,
+    "model": "m",
+    "provider": "ollama",
+    "request_id": "c11",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "text": "done",
+    "type": "text_delta"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "estimated": true,
+      "input_tokens": 40,
+      "output_tokens": 2
+    }
+  },
+  {
+    "index": 0,
+    "stop_reason": "end_turn",
+    "type": "message_end"
+  }
+]

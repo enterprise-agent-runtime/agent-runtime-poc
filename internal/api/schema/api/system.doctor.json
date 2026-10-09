@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/system.doctor.json",
+  "$defs": {
+    "params": {
+      "$ref": "types.json#/$defs/empty"
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "checks"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "ok",
+            "warn",
+            "fail"
+          ],
+          "description": "NEW: worst status over all checks"
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "NEW: true if any blocking check fails (ST-2)"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "types.json#/$defs/doctorCheck"
+          }
+        }
+      }
+    }
+  }
+}

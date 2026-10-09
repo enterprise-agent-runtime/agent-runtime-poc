@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/artifact.get.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/artifactId"
+        }
+      }
+    },
+    "result": {
+      "$ref": "types.json#/$defs/artifactRecord"
+    }
+  }
+}

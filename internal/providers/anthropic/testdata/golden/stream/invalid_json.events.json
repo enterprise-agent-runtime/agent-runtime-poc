@@ -1,0 +1,18 @@
+[
+  {
+    "index": 0,
+    "model": "claude-sonnet-x",
+    "provider": "anthropic",
+    "request_id": "req_test",
+    "type": "message_start"
+  },
+  {
+    "error": {
+      "code": "provider_unavailable",
+      "message": "provider sent invalid stream data",
+      "retryable": true
+    },
+    "index": 0,
+    "type": "error"
+  }
+]

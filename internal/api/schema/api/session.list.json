@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/session.list.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace_id": {
+          "$ref": "../common.json#/$defs/workspaceId"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed",
+            "all"
+          ],
+          "default": "all",
+          "description": "NEW filter"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "sessions"
+      ],
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "session_id",
+              "status",
+              "created_at",
+              "last_activity_at",
+              "cost_usd",
+              "runs"
+            ],
+            "properties": {
+              "session_id": {
+                "$ref": "../common.json#/$defs/sessionId"
+              },
+              "workspace_id": {
+                "$ref": "../common.json#/$defs/workspaceId"
+              },
+              "workspace_root": {
+                "type": "string"
+              },
+              "classification": {
+                "$ref": "../common.json#/$defs/classification"
+              },
+              "status": {
+                "enum": [
+                  "open",
+                  "closed",
+                  "purged"
+                ]
+              },
+              "created_at": {
+                "$ref": "../common.json#/$defs/timestamp"
+              },
+              "last_activity_at": {
+                "$ref": "../common.json#/$defs/timestamp"
+              },
+              "closed_at": {
+                "$ref": "types.json#/$defs/nullableTimestamp"
+              },
+              "cost_usd": {
+                "type": "number",
+                "minimum": 0
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "$ref": "types.json#/$defs/runSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

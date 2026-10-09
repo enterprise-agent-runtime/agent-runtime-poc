@@ -1,0 +1,17 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  req [label="Request: add OAuth login (Google, GitHub)\nclassified: high complexity, confidential data", fillcolor="#DCE6F2"];
+  ex [label="T1 explore\nrepo map, conventions\n(read-only)"];
+  sec [label="T2 security analysis\n(read-only)"]; arch [label="T3 architecture analysis\n(read-only)"];
+  plan [label="T4 plan → Workflow (DAG)\nartifact: plan.v1", fillcolor="#FFF8E7"];
+  gate1 [label="G1 approval gate\nuser reviews plan", shape=hexagon, fillcolor="#FDE9D9"];
+  be [label="T5 backend impl\nworktree wt-5"]; fe [label="T6 frontend impl\nworktree wt-6"]; db [label="T7 migration\nworktree wt-7"];
+  integ [label="T8 integrate\nmerge wt-5..7 → session branch\nconflicts → integrator agent"];
+  build [label="T9 build + lint"]; test [label="T10 tests"]; rev [label="T11 security review\n(read-only, diff)"];
+  repair [label="T12 repair (conditional)\nfailure analysis → fix task(s)", style="rounded,filled,dashed"];
+  gate2 [label="G2 approval gate\nfinal diff + evidence", shape=hexagon, fillcolor="#FDE9D9"];
+  done [label="Deliver: branch/patch, reports,\ncost + audit trace", fillcolor="#EAF7EA"];
+  req -> ex; ex -> sec; ex -> arch; sec -> plan; arch -> plan; plan -> gate1; gate1 -> be; gate1 -> fe; gate1 -> db;
+  be -> integ; fe -> integ; db -> integ; integ -> build; integ -> test; integ -> rev; build -> repair [style=dashed, label="fail"]; test -> repair [style=dashed, label="fail"]; rev -> repair [style=dashed, label="blocking finding"];
+  repair -> integ [style=dashed, label="re-run affected"]; build -> gate2; test -> gate2; rev -> gate2; gate2 -> done;
+}

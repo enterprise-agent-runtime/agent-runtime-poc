@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/provider.models.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "classification": {
+          "$ref": "../common.json#/$defs/classification",
+          "description": "NEW: evaluate without a session"
+        },
+        "task_class": {
+          "$ref": "../common.json#/$defs/taskClass",
+          "default": "implement"
+        }
+      },
+      "not": {
+        "required": [
+          "session_id",
+          "classification"
+        ]
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "models"
+      ],
+      "properties": {
+        "classification": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/classification"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW: context used"
+        },
+        "task_class": {
+          "$ref": "../common.json#/$defs/taskClass",
+          "description": "NEW"
+        },
+        "admitted_tiers": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/tier"
+          },
+          "description": "NEW"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "types.json#/$defs/modelView"
+          }
+        }
+      }
+    }
+  }
+}

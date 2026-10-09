@@ -1,0 +1,48 @@
+[
+  {
+    "index": 0,
+    "model": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "provider": "ollama",
+    "request_id": "chatcmpl-1",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "text": "Reading.",
+    "type": "text_delta"
+  },
+  {
+    "id": "chatcmpl-tool-a",
+    "index": 1,
+    "name": "fs__read",
+    "type": "tool_use_start"
+  },
+  {
+    "index": 1,
+    "partial_json": "{\"path\": ",
+    "type": "tool_use_delta"
+  },
+  {
+    "index": 1,
+    "partial_json": "\"src/app.ts\"}",
+    "type": "tool_use_delta"
+  },
+  {
+    "index": 1,
+    "type": "tool_use_end"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "cached_input_tokens": 64,
+      "input_tokens": 120,
+      "output_tokens": 18
+    }
+  },
+  {
+    "index": 0,
+    "stop_reason": "tool_use",
+    "type": "message_end"
+  }
+]

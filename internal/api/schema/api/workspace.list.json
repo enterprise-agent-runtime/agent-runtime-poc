@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/workspace.list.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "workspaces"
+      ],
+      "properties": {
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "workspace_id",
+              "root",
+              "classification",
+              "last_opened_at",
+              "sessions_count"
+            ],
+            "properties": {
+              "workspace_id": {
+                "$ref": "../common.json#/$defs/workspaceId"
+              },
+              "root": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string",
+                "description": "NEW"
+              },
+              "classification": {
+                "$ref": "../common.json#/$defs/classification"
+              },
+              "last_opened_at": {
+                "$ref": "../common.json#/$defs/timestamp"
+              },
+              "sessions_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "open_sessions_count": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "NEW"
+              },
+              "sandbox_level": {
+                "$ref": "../common.json#/$defs/sandboxLevel",
+                "description": "NEW: level a new session would use"
+              },
+              "capabilities_summary": {
+                "$ref": "types.json#/$defs/capabilitiesSummary",
+                "description": "NEW: same text session.open returns"
+              },
+              "admissible_models": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "NEW: configured models admissible for this classification (BI-7)"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

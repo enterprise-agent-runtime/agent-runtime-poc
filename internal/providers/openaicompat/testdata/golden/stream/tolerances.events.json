@@ -1,0 +1,54 @@
+[
+  {
+    "index": 0,
+    "model": "m",
+    "provider": "ollama",
+    "request_id": "c3",
+    "type": "message_start"
+  },
+  {
+    "id": "b",
+    "index": 1,
+    "name": "fs__search",
+    "type": "tool_use_start"
+  },
+  {
+    "index": 1,
+    "partial_json": "{\"q\":1}",
+    "type": "tool_use_delta"
+  },
+  {
+    "id": "call_1",
+    "index": 0,
+    "name": "fs__read",
+    "type": "tool_use_start"
+  },
+  {
+    "index": 0,
+    "partial_json": "{\"path\":\"a\"}",
+    "type": "tool_use_delta"
+  },
+  {
+    "index": 0,
+    "type": "tool_use_end"
+  },
+  {
+    "index": 1,
+    "type": "tool_use_end"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "estimated": true,
+      "input_tokens": 40,
+      "output_tokens": 6
+    }
+  },
+  {
+    "index": 0,
+    "note": "synthesized tool call id",
+    "stop_reason": "tool_use",
+    "type": "message_end"
+  }
+]

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/audit.export.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "with_blobs": {
+          "type": "boolean",
+          "default": false
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^(/|[A-Za-z]:[/\\\\])",
+          "maxLength": 4096,
+          "description": "target directory or file; default ~/.warden/exports/"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "path",
+        "events",
+        "artifacts",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "events": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifacts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "NEW"
+        },
+        "checkpoint_event_id": {
+          "$ref": "../common.json#/$defs/eventId",
+          "description": "NEW: final chain.checkpoint in the file"
+        }
+      }
+    }
+  }
+}

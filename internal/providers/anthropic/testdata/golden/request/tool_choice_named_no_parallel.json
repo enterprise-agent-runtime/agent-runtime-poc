@@ -1,0 +1,39 @@
+{
+  "max_tokens": 8192,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "u",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-x",
+  "stream": true,
+  "tool_choice": {
+    "disable_parallel_tool_use": true,
+    "name": "fs__read",
+    "type": "tool"
+  },
+  "tools": [
+    {
+      "description": "Read a file.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "fs__read"
+    }
+  ]
+}
