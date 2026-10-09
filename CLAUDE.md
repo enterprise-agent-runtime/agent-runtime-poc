@@ -242,3 +242,46 @@ The milestone's acceptance criteria from WRD-16 §15–§16 (restated in `docs/P
 ## 14. Quick reference
 
 Hypotheses H1–H6 (WRD-16 §1) · demo tasks T1–T6 and security scenarios S1–S4 (WRD-16 §4) · risk classes R0–R6 (WRD-04 §3) · tiers T0 local, T1 private-hosted, T2 enterprise cloud, T3 vendor API, T4 subscription harness (WRD-06 §3) · classifications public/internal/confidential/restricted (WRD-06 §2) · effects allow/deny/approval_required (WRD-08 §3) · task states created/queued/running/waiting_for_approval/waiting_for_input/succeeded/failed/cancelled/timed_out/skipped/blocked (WRD-07 §4) · event types (WRD-09 §3) · storage layout `~/.warden/` (WRD-09 §8).
+
+## 15. Team and process
+
+The main session orchestrates. Specialised agents in `.claude/agents/` do the work, each with a fresh context, a narrow job and only the tools that job needs. Repeatable procedures are skills in `.claude/skills/`.
+
+| Agent | Job | Writes |
+|---|---|---|
+| `planner` | Problem → ordered tasks, each with acceptance criteria, the test that proves it, references, risks | nothing (returns a plan) |
+| `implementer` | One task: test first, prove it fails, code, prove the test bites, `make check`, one commit | code + tests |
+| `reviewer` | Independent correctness and contract review of a commit range | nothing (findings) |
+| `security-reviewer` | Attacker's review against §5, §9 and WRD-10 | nothing (findings) |
+| `test-engineer` | Mutation checks, edge cases, coverage floors, flaky tests, §8.7 milestone tests | tests only |
+| `platform-engineer` | CI on three OSes, scripts, Docker/WSL2/Windows, prerequisites | build, CI, scripts |
+| `docs-writer` | Working files (§11) kept true to what was run | Markdown only |
+| `ui-designer` | B-series design → specs; review of the running app (from M6) | nothing (findings) |
+
+The flow:
+
+1. `/preflight`
+2. `/plan`, then wait for the owner to agree
+3. `/deliver` for each task:
+   1. `implementer`
+   2. `reviewer` and `security-reviewer`, in parallel
+   3. fixes
+   4. `test-engineer`
+   5. `docs-writer`
+4. `/milestone-close`: acceptance, audits, docs, PR, CI
+
+Rules that make this work:
+
+- **Reviews are independent.** Reviewers get the diff and the acceptance criteria, not the implementer's reasoning. A finding needs a concrete failure scenario. Unconfirmed findings are verified before anyone acts on them.
+- **One checkout per writer.** Parallel tasks run in separate `git worktree`s, and two agents never commit in the same checkout. Run `git branch --show-current` before every commit.
+- **The owner decides** three things: the questions §10 says to ask, conflicts marked "needs owner", and merges. Agents stop and report rather than guess.
+- **Explain the why.** The owner is building depth in architecture, security, testing and operations through this project. When a choice is non-obvious, plans, reviews and reports name the concept behind it in a sentence or two.
+- **Guards, not reminders.** `.claude/settings.json` runs `.claude/hooks/guard-bash.sh` and `guard-edit.sh` before every command and edit. Each rule names the incident that motivated it. The guards refuse:
+  - pushes to `main`/`master`, bare pushes from them, and force pushes;
+  - `--no-verify`;
+  - commits on `main`/`master`;
+  - commits whose working tree has not passed `make check` (`make check` records the tree it passed on; Markdown-only changes are exempt);
+  - `warden`/`wardend` runs without `WARDEN_HOME`;
+  - edits to `docs/docs/`, `docs/design/`, `docs/WRD-*` and `docs/PROMPT-*`.
+
+  `.claude/hooks/test-hooks.sh` tests every rule in both directions and runs in `make check`. A blocked command means the work is not done yet; fix the cause rather than working around the guard.
