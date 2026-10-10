@@ -229,7 +229,18 @@ When the specification leaves a detail open: choose the simplest option consiste
 - `docs/CONFLICTS.md`: each conflict with both references, the rule applied (precedence §2) and the resolution or "needs owner".
 - `docs/DECISIONS-poc.md`: dated decision log (see §10).
 - `docs/PROGRESS.md`: at the top, the current milestone's checklist; below, per session: built, tested (exact commands and a summary of their output), left, open questions.
-- Session protocol: (1) read this file, `docs/PROGRESS.md`, `docs/DECISIONS-poc.md`, `docs/CONFLICTS.md`; (2) write the session checklist; (3) implement in small steps with `make check`; (4) run the milestone's acceptance commands; (5) update `docs/PROGRESS.md`; (6) stop.
+- Session protocol:
+  1. Read in layers, never the whole document set at once:
+     - always this file, `docs/PROGRESS.md`, `docs/DECISIONS-poc.md`, `docs/CONFLICTS.md` and the memory index;
+     - for each task, the WRD and design sections it cites, found through the reading table in `docs/INDEX.md`;
+     - `docs/GLOSSARY.md`, `docs/WORKING-WITH-CLAUDE-CODE.md` and `docs/reports/` when a question touches them.
+
+     The specification and design are the `docs/` copy. Their source is the owner's agent-platform-docs repository, which is never edited from here. It is re-copied into `docs/` through a pull request only when the owner says it changed, with the source commit id in the message.
+  2. Write the session checklist.
+  3. Implement in small steps with `make check`.
+  4. Run the milestone's acceptance commands.
+  5. Update `docs/PROGRESS.md`.
+  6. Stop.
 
 ## 12. Commands
 
