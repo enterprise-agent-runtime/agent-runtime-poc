@@ -109,6 +109,67 @@ expect 2 Edit 'D:\Projects\x\docs\Design\A08-policy-engine.md'
 expect 0 Edit "$root/docs/PROGRESS.md"
 expect 0 Write "$root/internal/design/x.go"
 
+# SessionStart: orients the session and never blocks it (CLAUDE.md §11, §15).
+# Why: a session that starts without reading PROGRESS.md repeats finished work
+# and misses blocked prerequisites; the reading list keeps it from loading the
+# whole document set at once.
+session() { # session CWD: run the hook as Claude Code would, capture stdout
+	printf '{"hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$(esc "$1")" |
+		bash "$here/session-start.sh" 2>/dev/null
+}
+want_out() { # want_out yes|no PATTERN OUTPUT LABEL
+	if printf '%s' "$3" | grep -q -e "$2"; then has=yes; else has=no; fi
+	if [ "$has" != "$1" ]; then
+		echo "FAIL: session-start ($4): pattern [$2] present=$has, want $1"
+		fails=$((fails + 1))
+	fi
+}
+mkdir -p "$repo/docs"
+cat >"$repo/docs/PROGRESS.md" <<'EOF'
+# Progress
+## Current milestone: M9 test
+- [x] finished thing
+- [ ] open thing
+  - [ ] nested detail line
+- [!] blocked thing
+- [~] limited thing
+## Sessions
+- [ ] old session item
+EOF
+git -C "$repo" add -A && git -C "$repo" commit -qm progress
+out=$(session "$repo")
+code=$?
+[ "$code" = 0 ] || { echo "FAIL: session-start exit $code, want 0"; fails=$((fails + 1)); }
+want_out yes 'Branch: feature' "$out" branch
+want_out yes 'open thing' "$out" open
+want_out yes 'blocked thing' "$out" blocked
+want_out yes 'limited thing' "$out" limited
+want_out no 'finished thing' "$out" done-excluded
+want_out no 'nested detail' "$out" nested-excluded
+want_out no 'old session item' "$out" sessions-excluded
+want_out yes 'docs/INDEX.md' "$out" reading-list
+want_out yes 'agent-platform-docs' "$out" spec-source
+want_out yes 'not passed make check' "$out" stamp-missing
+stamp
+want_out yes 'matches the last green make check' "$(session "$repo")" stamp-matches
+echo c >>"$repo/a.go"
+want_out yes 'not passed make check' "$(session "$repo")" stamp-stale
+git -C "$repo" stash -q
+git -C "$repo" checkout -q main
+want_out yes 'create a branch' "$(session "$repo")" on-main
+git -C "$repo" checkout -q feature
+rm "$repo/docs/PROGRESS.md"
+out=$(session "$repo")
+code=$?
+[ "$code" = 0 ] || { echo "FAIL: session-start without PROGRESS.md exit $code, want 0"; fails=$((fails + 1)); }
+want_out yes 'Branch: feature' "$out" no-progress-still-orients
+notrepo=$(mktemp -d)
+out=$(session "$notrepo")
+code=$?
+[ "$code" = 0 ] || { echo "FAIL: session-start outside a repo exit $code, want 0"; fails=$((fails + 1)); }
+want_out no 'Branch:' "$out" outside-repo-silent
+rm -rf "$notrepo"
+
 if [ "$fails" -gt 0 ]; then
 	echo "guard hooks: $fails failing case(s)"
 	exit 1
