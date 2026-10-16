@@ -1,0 +1,2207 @@
+{
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "architectures": [
+    "SCMP_ARCH_X86_64",
+    "SCMP_ARCH_AARCH64"
+  ],
+  "syscalls": [
+    {
+      "names": [
+        "kexec_load",
+        "kexec_file_load",
+        "init_module",
+        "finit_module",
+        "delete_module",
+        "open_by_handle_at"
+      ],
+      "action": "SCMP_ACT_KILL_PROCESS",
+      "comment": "Kernel code loading or known container-escape primitives; a build never calls them"
+    },
+    {
+      "names": [
+        "iopl",
+        "ioperm"
+      ],
+      "action": "SCMP_ACT_KILL_PROCESS",
+      "includes": {
+        "arches": [
+          "amd64"
+        ]
+      },
+      "comment": "Kernel code loading or known container-escape primitives; a build never calls them"
+    },
+    {
+      "names": [
+        "ptrace",
+        "process_vm_readv",
+        "process_vm_writev"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "comment": "No tracing (strace -p 1 fails cleanly)"
+    },
+    {
+      "names": [
+        "mount",
+        "umount2",
+        "pivot_root",
+        "chroot",
+        "move_mount",
+        "open_tree",
+        "fsopen",
+        "fsconfig",
+        "fsmount",
+        "fspick",
+        "mount_setattr"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "comment": "No filesystem view changes"
+    },
+    {
+      "names": [
+        "unshare",
+        "setns"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "comment": "unshare/setns after launch (WRD-16 §10.3); unshare -r fails"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 131072,
+          "valueTwo": 131072,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "unshare/setns after launch (WRD-16 §10.3); unshare -r fails"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 33554432,
+          "valueTwo": 33554432,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "unshare/setns after launch (WRD-16 §10.3); unshare -r fails"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 67108864,
+          "valueTwo": 67108864,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "unshare/setns after launch (WRD-16 §10.3); unshare -r fails"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 134217728,
+          "valueTwo": 134217728,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "unshare/setns after launch (WRD-16 §10.3); unshare -r fails"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 268435456,
+          "valueTwo": 268435456,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "unshare/setns after launch (WRD-16 §10.3); unshare -r fails"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 536870912,
+          "valueTwo": 536870912,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "unshare/setns after launch (WRD-16 §10.3); unshare -r fails"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 1073741824,
+          "valueTwo": 1073741824,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "unshare/setns after launch (WRD-16 §10.3); unshare -r fails"
+    },
+    {
+      "names": [
+        "clone3"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 38,
+      "comment": "Flags live in a struct seccomp cannot inspect; ENOSYS makes glibc fall back to clone, which is filtered"
+    },
+    {
+      "names": [
+        "keyctl",
+        "add_key",
+        "request_key"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "comment": "No kernel keyring access"
+    },
+    {
+      "names": [
+        "bpf",
+        "perf_event_open",
+        "userfaultfd"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "comment": "Kernel attack surface"
+    },
+    {
+      "names": [
+        "io_uring_setup",
+        "io_uring_enter",
+        "io_uring_register"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 38,
+      "comment": "Kernel attack surface; libuv and others fall back on ENOSYS"
+    },
+    {
+      "names": [
+        "reboot",
+        "swapon",
+        "swapoff",
+        "acct",
+        "quotactl",
+        "syslog",
+        "settimeofday",
+        "clock_settime",
+        "clock_adjtime",
+        "sethostname",
+        "setdomainname",
+        "vhangup",
+        "name_to_handle_at",
+        "fanotify_init",
+        "lookup_dcookie",
+        "nfsservctl"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "comment": "Host-level operations or information leaks"
+    },
+    {
+      "names": [
+        "uselib"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "includes": {
+        "arches": [
+          "amd64"
+        ]
+      },
+      "comment": "Host-level operations or information leaks"
+    },
+    {
+      "names": [
+        "modify_ldt",
+        "_sysctl"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "includes": {
+        "arches": [
+          "amd64"
+        ]
+      },
+      "comment": "Legacy attack surface"
+    },
+    {
+      "names": [
+        "ioctl"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 1,
+          "value": 4294967295,
+          "valueTwo": 21522,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Terminal injection (also prevented by --new-session)"
+    },
+    {
+      "names": [
+        "ioctl"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 1,
+          "value": 4294967295,
+          "valueTwo": 21532,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Terminal injection (also prevented by --new-session)"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 0,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 3,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967292,
+          "valueTwo": 4,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967294,
+          "valueTwo": 8,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 11,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967292,
+          "valueTwo": 12,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 17,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967294,
+          "valueTwo": 18,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967292,
+          "valueTwo": 20,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967288,
+          "valueTwo": 24,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967264,
+          "valueTwo": 32,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967232,
+          "valueTwo": 64,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967168,
+          "valueTwo": 128,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967040,
+          "valueTwo": 256,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294966784,
+          "valueTwo": 512,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294966272,
+          "valueTwo": 1024,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294965248,
+          "valueTwo": 2048,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294963200,
+          "valueTwo": 4096,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294959104,
+          "valueTwo": 8192,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294950912,
+          "valueTwo": 16384,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294934528,
+          "valueTwo": 32768,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294901760,
+          "valueTwo": 65536,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294836224,
+          "valueTwo": 131072,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294705152,
+          "valueTwo": 262144,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294443008,
+          "valueTwo": 524288,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4293918720,
+          "valueTwo": 1048576,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4292870144,
+          "valueTwo": 2097152,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4290772992,
+          "valueTwo": 4194304,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4286578688,
+          "valueTwo": 8388608,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4278190080,
+          "valueTwo": 16777216,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4261412864,
+          "valueTwo": 33554432,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4227858432,
+          "valueTwo": 67108864,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4160749568,
+          "valueTwo": 134217728,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 4026531840,
+          "valueTwo": 268435456,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 3758096384,
+          "valueTwo": 536870912,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 3221225472,
+          "valueTwo": 1073741824,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "socket"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 97,
+      "args": [
+        {
+          "index": 0,
+          "value": 2147483648,
+          "valueTwo": 2147483648,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Only Unix, IP (private namespace) and netlink (interface enumeration) are needed"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 1,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967294,
+          "valueTwo": 2,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967292,
+          "valueTwo": 4,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 9,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967294,
+          "valueTwo": 10,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967292,
+          "valueTwo": 12,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967280,
+          "valueTwo": 16,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967264,
+          "valueTwo": 32,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967232,
+          "valueTwo": 64,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967168,
+          "valueTwo": 128,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967040,
+          "valueTwo": 256,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294966784,
+          "valueTwo": 512,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294966272,
+          "valueTwo": 1024,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294965248,
+          "valueTwo": 2048,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294963200,
+          "valueTwo": 4096,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294959104,
+          "valueTwo": 8192,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294950912,
+          "valueTwo": 16384,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294934528,
+          "valueTwo": 32768,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294901760,
+          "valueTwo": 65536,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 131073,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967294,
+          "valueTwo": 131074,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967292,
+          "valueTwo": 131076,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 131081,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967294,
+          "valueTwo": 131082,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967292,
+          "valueTwo": 131084,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967280,
+          "valueTwo": 131088,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967264,
+          "valueTwo": 131104,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967232,
+          "valueTwo": 131136,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967168,
+          "valueTwo": 131200,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967040,
+          "valueTwo": 131328,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294966784,
+          "valueTwo": 131584,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294966272,
+          "valueTwo": 132096,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294965248,
+          "valueTwo": 133120,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294963200,
+          "valueTwo": 135168,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294959104,
+          "valueTwo": 139264,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294950912,
+          "valueTwo": 147456,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294934528,
+          "valueTwo": 163840,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294901760,
+          "valueTwo": 196608,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294705152,
+          "valueTwo": 262144,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294443008,
+          "valueTwo": 524288,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4293918720,
+          "valueTwo": 1048576,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4292870144,
+          "valueTwo": 2097152,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4290772992,
+          "valueTwo": 4194304,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4286578688,
+          "valueTwo": 8388608,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4278190080,
+          "valueTwo": 16777216,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4261412864,
+          "valueTwo": 33554432,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4227858432,
+          "valueTwo": 67108864,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4160749568,
+          "valueTwo": 134217728,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4026531840,
+          "valueTwo": 268435456,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 3758096384,
+          "valueTwo": 536870912,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 3221225472,
+          "valueTwo": 1073741824,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 3221225472,
+          "valueTwo": 2147483648,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 3758096384,
+          "valueTwo": 3221225472,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4026531840,
+          "valueTwo": 3758096384,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4160749568,
+          "valueTwo": 4026531840,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4227858432,
+          "valueTwo": 4160749568,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4261412864,
+          "valueTwo": 4227858432,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4278190080,
+          "valueTwo": 4261412864,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4286578688,
+          "valueTwo": 4278190080,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4290772992,
+          "valueTwo": 4286578688,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4292870144,
+          "valueTwo": 4290772992,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4293918720,
+          "valueTwo": 4292870144,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294443008,
+          "valueTwo": 4293918720,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294705152,
+          "valueTwo": 4294443008,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294836224,
+          "valueTwo": 4294705152,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294901760,
+          "valueTwo": 4294836224,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294934528,
+          "valueTwo": 4294901760,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294950912,
+          "valueTwo": 4294934528,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294959104,
+          "valueTwo": 4294950912,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294963200,
+          "valueTwo": 4294959104,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294965248,
+          "valueTwo": 4294963200,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294966272,
+          "valueTwo": 4294965248,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294966784,
+          "valueTwo": 4294966272,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967040,
+          "valueTwo": 4294966784,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967168,
+          "valueTwo": 4294967040,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967232,
+          "valueTwo": 4294967168,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967264,
+          "valueTwo": 4294967232,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967280,
+          "valueTwo": 4294967264,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967288,
+          "valueTwo": 4294967280,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967292,
+          "valueTwo": 4294967288,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967294,
+          "valueTwo": 4294967292,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    },
+    {
+      "names": [
+        "personality"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        {
+          "index": 0,
+          "value": 4294967295,
+          "valueTwo": 4294967294,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Blocks ADDR_NO_RANDOMIZE and similar"
+    }
+  ]
+}
