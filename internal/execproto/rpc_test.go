@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -112,8 +113,39 @@ func TestRPCError_StandardCodes(t *testing.T) {
 // unsafeRunes are the characters Neutralise must replace, written as
 // numbers so the test source itself carries none of them: C0 (CR, LF, ESC,
 // NUL), DEL, C1 (NEL), the bidi embedding and override controls, the bidi
-// isolates, and the line and paragraph separators.
-var unsafeRunes = []rune{0x0d, 0x0a, 0x1b, 0x00, 0x7f, 0x85, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0x2028, 0x2029}
+// isolates, the line and paragraph separators, and (re-review of 8bcce6f)
+// the bidi marks and the zero-width characters, which hide or reorder text
+// just as well.
+var unsafeRunes = []rune{
+	0x0d, 0x0a, 0x1b, 0x00, 0x7f, 0x85, // C0, DEL, C1
+	0x202a, 0x202b, 0x202c, 0x202d, 0x202e, // bidi embedding and override
+	0x2066, 0x2067, 0x2068, 0x2069, // bidi isolates
+	0x2028, 0x2029, // line and paragraph separators
+	0x200e, 0x200f, 0x061c, // LRM, RLM, ALM
+	0x200b, 0x200c, 0x200d, 0xfeff, // ZWSP, ZWNJ, ZWJ, BOM / ZWNBSP
+}
+
+// TestNeutralise_CutsBeforeReplacing guards the re-review finding on
+// 8bcce6f: the peer's text was neutralised whole and cut afterwards, so an
+// 8 MiB message of control bytes became a 24 MiB string (each byte a
+// 3-byte U+FFFD) only to be cut to 1 KiB. Cutting to the byte limit first
+// bounds the work by the limit. Measured as heap bytes (TotalAlloc), which
+// is deterministic under -race.
+func TestNeutralise_CutsBeforeReplacing(t *testing.T) {
+	msg := strings.Repeat("\x01", MaxFrameBytes)
+	e := &RPCError{Code: 7, Message: msg}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	s := e.Error()
+	runtime.ReadMemStats(&after)
+	if d := after.TotalAlloc - before.TotalAlloc; d > 64<<10 {
+		t.Errorf("Error() of an 8 MiB control-byte message allocated %d bytes, want the work bounded by MaxDetailBytes", d)
+	}
+	if len(s) > MaxDetailBytes+64 || !utf8.ValidString(s) {
+		t.Errorf("Error() = %d bytes (valid UTF-8 %v), want at most MaxDetailBytes of text", len(s), utf8.ValidString(s))
+	}
+}
 
 // TestRPCError_PeerTextNeutralised guards the review finding on bcfa1fc
 // (CWE-117, CWE-150): text the executor sends (error.message, data.detail,

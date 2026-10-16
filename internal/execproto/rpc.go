@@ -124,7 +124,7 @@ func RPCErrorOf(e *Error) *RPCError {
 func (e *RPCError) Error() string {
 	msg := rpcText(e.Code)
 	if msg == "" {
-		msg = cutUTF8(Neutralise(e.Message), MaxDetailBytes)
+		msg = neutraliseCut(e.Message, MaxDetailBytes)
 	}
 	return fmt.Sprintf("execproto: rpc error %d: %s", e.Code, msg)
 }
@@ -159,8 +159,9 @@ func rpcText(code int) string {
 // Neutralise replaces every character that can forge a log line, drive a
 // terminal or reorder displayed text (CWE-117, CWE-150) with U+FFFD: C0
 // controls, DEL and C1 controls, the bidi embedding, override and isolate
-// controls (U+202A–U+202E, U+2066–U+2069), the line and paragraph
-// separators (U+2028, U+2029), and invalid UTF-8. It is applied at the
+// controls (U+202A–U+202E, U+2066–U+2069), the bidi marks (U+200E, U+200F,
+// U+061C), the zero-width characters (U+200B–U+200D, U+FEFF), the line and
+// paragraph separators (U+2028, U+2029), and invalid UTF-8. It is applied at the
 // boundary to text the executor sends; internal/termsafe cannot be used
 // here (execproto is a stdlib-only leaf, A02 §5 R6).
 func Neutralise(s string) string {
@@ -191,8 +192,19 @@ func unsafeRune(r rune) bool {
 		return true
 	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069, r == 0x2028, r == 0x2029:
 		return true
+	case r >= 0x200b && r <= 0x200f, r == 0x061c, r == 0xfeff:
+		return true // zero-width space, joiners, LRM, RLM, ALM, BOM
 	}
 	return r == utf8.RuneError // invalid UTF-8 decodes to it; writing it back is the same character
+}
+
+// neutraliseCut bounds peer text to n bytes. It cuts first, so the work and
+// the allocation are bounded by n whatever the input (an 8 MiB detail of
+// control bytes would otherwise become 24 MiB of U+FFFD), then neutralises,
+// which can grow the text up to threefold, then cuts again on a rune
+// boundary.
+func neutraliseCut(s string, n int) string {
+	return cutUTF8(Neutralise(cutUTF8(s, n)), n)
 }
 
 // cutUTF8 cuts s to at most n bytes on a rune boundary.
@@ -222,8 +234,8 @@ func (e *RPCError) Err() error {
 	out := NewError(c, "")
 	var d ErrorData
 	if e.Data != nil && Decode(e.Data, &d) == nil && d.Code == c.Name() {
-		out = NewError(c, Neutralise(d.Detail))
-		out.Data.RelPath = cutUTF8(Neutralise(d.RelPath), MaxRelPathBytes)
+		out = NewError(c, neutraliseCut(d.Detail, MaxDetailBytes))
+		out.Data.RelPath = neutraliseCut(d.RelPath, MaxRelPathBytes)
 	}
 	return out
 }

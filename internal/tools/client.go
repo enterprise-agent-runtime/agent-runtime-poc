@@ -55,9 +55,10 @@ type IOHandler func(execproto.IONotification)
 // Client is a warden.exec/1 client on one connection. Its methods are safe
 // for concurrent use; calls are correlated with their responses by id.
 type Client struct {
-	rwc  io.Closer
-	w    *execproto.FrameWriter
-	onIO IOHandler
+	rwc   io.Closer
+	w     *execproto.FrameWriter
+	wlock chan struct{} // capacity 1: the writer, held for one whole frame; waiting on it honours ctx
+	onIO  IOHandler
 
 	mu      sync.Mutex
 	next    int64
@@ -69,6 +70,8 @@ type Client struct {
 	// afterWrite, when set (tests only, before any call), runs after a
 	// request's write and its context watch have ended.
 	afterWrite func()
+	// beforeWrite, likewise, runs just before a request waits for the writer.
+	beforeWrite func()
 }
 
 type reply struct {
@@ -80,7 +83,7 @@ type reply struct {
 // The client closes when ctx ends, when Close is called, when the executor
 // closes the channel, or on the first message it cannot accept.
 func New(ctx context.Context, rwc io.ReadWriteCloser, onIO IOHandler) *Client {
-	c := &Client{rwc: rwc, w: execproto.NewFrameWriter(rwc), onIO: onIO, pending: map[int64]chan reply{}, done: make(chan struct{})}
+	c := &Client{rwc: rwc, w: execproto.NewFrameWriter(rwc), wlock: make(chan struct{}, 1), onIO: onIO, pending: map[int64]chan reply{}, done: make(chan struct{})}
 	go c.readLoop(execproto.NewFrameReader(rwc))
 	go func() {
 		select {
@@ -190,6 +193,11 @@ func (c *Client) handle(b []byte) error {
 // Call invokes method with params (nil sends {}) and decodes the result
 // strictly into result (nil discards it). Executor errors come back as
 // *execproto.Error, wrapped with the method name.
+//
+// Once the request has been sent, an error other than an executor error
+// (context end, close) leaves the outcome unknown: warden.exec/1 has no
+// cancel, so the executor may have done it. Callers re-read the state they
+// depend on (exec.fs.stat, exec.proc.wait) before acting on either outcome.
 func (c *Client) Call(ctx context.Context, method string, params, result any) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("tools: %s: %w", method, err)
@@ -223,9 +231,28 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 		// back, the same rule as a write error (CWE-1088).
 		// A ctx that ends just as a write completes may still tear down:
 		// conservative, never a partial frame.
+		//
+		// The watch is armed only once this call holds the writer. A call
+		// still waiting for it has written nothing, so its cancel just
+		// returns; tearing down there failed the call holding the writer.
+		if c.beforeWrite != nil {
+			c.beforeWrite()
+		}
+		select {
+		case c.wlock <- struct{}{}:
+		case <-ctx.Done():
+			c.forget(id)
+			return fmt.Errorf("tools: %s: %w", method, ctx.Err())
+		}
+		if cerr := ctx.Err(); cerr != nil { // both were ready and the lock won
+			<-c.wlock
+			c.forget(id)
+			return fmt.Errorf("tools: %s: %w", method, cerr)
+		}
 		stop := context.AfterFunc(ctx, func() { c.fail(ctx.Err()) })
 		err = c.w.WriteFrame(msg)
 		stop()
+		<-c.wlock
 		if c.afterWrite != nil {
 			c.afterWrite()
 		}

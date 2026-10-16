@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -562,14 +563,20 @@ func TestClient_TypedMethods(t *testing.T) {
 // behind it, so Wait, Signal and Shutdown could not meet theirs either. A
 // context that ends during a write now tears the connection down: a
 // partially written frame cannot be taken back, so this is the same rule
-// as a write error. The peer here never reads.
+// as a write error. The peer reads only the first bytes of the first frame
+// (so that call provably holds the writer, mid-frame) and then nothing.
 func TestClient_WriteHonoursContext(t *testing.T) {
-	c, _ := newPair(t, nil)
+	a, b := net.Pipe()
+	c := New(context.Background(), a, nil)
+	t.Cleanup(func() { _ = c.Close(); _ = b.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
 	errc := make(chan error, 1)
 	go func() { errc <- c.Call(ctx, execproto.MethodWait, execproto.WaitParams{Handle: "ph_1"}, nil) }()
+	if _, err := bufio.NewReader(b).Peek(1); err != nil { // the call above holds the writer
+		t.Fatal(err)
+	}
 	const queued = 3
 	qerrs := make(chan error, queued)
 	for range queued {
@@ -601,5 +608,68 @@ func TestClient_WriteHonoursContext(t *testing.T) {
 		case <-time.After(hangGuard):
 			t.Fatal("a call queued behind the blocked write is still blocked")
 		}
+	}
+}
+
+// TestClient_CancelWhileWaitingForWriter guards the re-review finding on
+// c37e6d7: the write watch was armed before the call held the writer, so a
+// call that was only queued behind another call's write (nothing of its
+// own on the wire) closed the connection when its context ended, and the
+// innocent call holding the writer failed with it. A call cancelled before
+// it holds the writer has written nothing and may simply return.
+// A writes 4 MiB that the executor reads only after B is cancelled.
+func TestClient_CancelWhileWaitingForWriter(t *testing.T) {
+	a, b := net.Pipe()
+	c := New(context.Background(), a, nil)
+	t.Cleanup(func() { _ = c.Close(); _ = b.Close() })
+	waiting := make(chan struct{}, 2)
+	c.beforeWrite = func() { waiting <- struct{}{} }
+
+	br := bufio.NewReader(b) // NewFrameReader reuses it, so peeked bytes are kept
+	p := &peer{conn: b, r: execproto.NewFrameReader(br), w: execproto.NewFrameWriter(b)}
+	release := make(chan struct{})
+	finish := p.serve(func() error {
+		<-release
+		m, err := p.request()
+		if err != nil {
+			return err
+		}
+		return p.reply(m.ID, execproto.WriteResult{BytesWritten: 4 << 20})
+	})
+
+	errA := make(chan error, 1)
+	go func() {
+		errA <- c.FS(context.Background(), execproto.MethodFSWrite, execproto.WriteParams{Path: "a", Content: strings.Repeat("x", 4<<20)}, nil)
+	}()
+	<-waiting
+	if _, err := br.Peek(1); err != nil { // A holds the writer and is mid-frame
+		t.Fatal(err)
+	}
+
+	ctxB, cancelB := context.WithCancel(context.Background())
+	errB := make(chan error, 1)
+	go func() {
+		_, err := c.Signal(ctxB, execproto.SignalParams{Handle: "ph_1", Signal: execproto.SignalTERM})
+		errB <- err
+	}()
+	<-waiting
+	cancelB()
+	select {
+	case err := <-errB:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("B, cancelled while waiting for the writer: %v, want context.Canceled", err)
+		}
+	case <-time.After(hangGuard):
+		t.Fatal("B still blocked after its context ended")
+	}
+	close(release)
+	if err := <-errA; err != nil {
+		t.Errorf("A, which held the writer: %v; B's cancel must not touch it", err)
+	}
+	finish(t)
+	select {
+	case <-c.Done():
+		t.Fatal("the connection closed although nothing was abandoned mid-frame")
+	default:
 	}
 }
