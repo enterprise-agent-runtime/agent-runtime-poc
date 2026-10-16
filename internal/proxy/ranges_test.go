@@ -36,12 +36,21 @@ func TestRangeCheck(t *testing.T) {
 		"64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "64:ff9b::10.1.2.3", "64:ff9b::192.168.1.1",
 		// 6to4 embedding a denied IPv4 address (bytes 2..5)
 		"2002:7f00:1::", "2002:a9fe:a9fe::1", "2002:0a00:0001:ffff::1", "2002:c0a8:0101::",
+		// Owner decision 2026-10-16, stricter than A07 §7: whole prefixes of
+		// IPv4-compatible (::/96), SIIT (::ffff:0:0:0/96), local-use NAT64
+		// (64:ff9b:1::/48), Teredo (2001::/32), 6to4 relay anycast
+		// (192.88.99.0/24), deprecated site-local (fec0::/10), benchmarking
+		// (2001:2::/48) and ORCHID (2001:10::/28), public payload or not.
+		"::5db8:d70e", "::1.1.1.1", "::ffff:0:5db8:d70e", "::ffff:0:1.1.1.1", "64:ff9b:1::5db8:d70e", "64:ff9b:1:ffff::1",
+		"2001::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2", "192.88.99.1", "192.88.99.255",
+		"fec0::1", "feff::1", "2001:2::1", "2001:2:0:ffff::1", "2001:10::1", "2001:1f:ffff::1",
 	}
 	allowed := []string{
 		"93.184.215.14", "1.1.1.1", "8.8.8.8", "104.16.0.1", "172.15.255.255", "172.32.0.0",
 		"100.63.255.255", "100.128.0.0", "169.253.255.255", "192.0.1.0", "198.17.255.255",
 		"198.20.0.0", "223.255.255.255", "11.0.0.0", "126.255.255.255", "128.0.0.0",
-		"2606:4700::1111", "2a00:1450:4001::200e", "2001:db9::1", "100:0:0:1::1", "fec0::1",
+		"2606:4700::1111", "2a00:1450:4001::200e", "2001:db9::1", "100:0:0:1::1", "fe7f::1",
+		"2001:20::1", "2001:3::1", "2001:1::1", "192.88.98.255", "192.88.100.0", "64:ff9b:2::1",
 		"::ffff:93.184.215.14",
 		"64:ff9b::5db8:d70e", // NAT64 of a public address
 		"2002:5db8:d70e::1",  // 6to4 of a public address
@@ -65,5 +74,42 @@ func TestRangeCheck(t *testing.T) {
 	}
 	if !AddrDenied(netip.Addr{}) {
 		t.Error("AddrDenied(zero Addr) = false; an invalid address must be refused")
+	}
+}
+
+// TestFloorDenied: the unconditional floor of owner decision 2026-10-16
+// (contradicts A07 §7, where a literal allowlist entry opened any denied
+// address). Loopback, unspecified, link-local and the cloud metadata
+// addresses are never reachable, in any spelling, whatever the allowlist,
+// the Decider, a grant or an operator entry says: one approval click must
+// not be able to hand an agent the instance credentials at
+// 169.254.169.254. Other denied ranges are not floor.
+func TestFloorDenied(t *testing.T) {
+	floor := []string{
+		"0.0.0.0", "0.1.2.3", "127.0.0.1", "127.255.255.255", "::", "::1",
+		"169.254.169.254", "169.254.0.1", "fe80::1", "febf::1", "fe80::1%eth0", "fd00:ec2::254",
+		"::ffff:127.0.0.1", "::ffff:169.254.169.254", "::ffff:0.0.0.0",
+		"64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "64:ff9b::0.0.0.1",
+		"2002:7f00:1::", "2002:a9fe:a9fe::1", "2002:0000:0001::",
+	}
+	notFloor := []string{
+		"10.0.0.5", "192.168.1.1", "172.16.0.1", "100.64.0.1", "fd00:ec2::253", "fc00::1",
+		"93.184.215.14", "2606:4700::1111", "64:ff9b::a00:5", "2002:0a00:0005::",
+	}
+	for _, s := range floor {
+		if !floorDenied(netip.MustParseAddr(s)) {
+			t.Errorf("floorDenied(%s) = false, want true", s)
+		}
+		if !AddrDenied(netip.MustParseAddr(s)) {
+			t.Errorf("AddrDenied(%s) = false: the floor must be inside the denied set", s)
+		}
+	}
+	for _, s := range notFloor {
+		if floorDenied(netip.MustParseAddr(s)) {
+			t.Errorf("floorDenied(%s) = true, want false", s)
+		}
+	}
+	if !floorDenied(netip.Addr{}) {
+		t.Error("floorDenied(zero Addr) = false")
 	}
 }

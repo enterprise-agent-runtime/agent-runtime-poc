@@ -40,8 +40,9 @@ const maxAuthority = 253 + 1 + 1 + 5
 //  1. The port is required: decimal digits only, no sign, no leading zero,
 //     1..65535.
 //  2. A bracketed host must be an IPv6 address without a zone; an
-//     unbracketed one that netip parses as IPv4 is an IPv4 literal. netip
-//     refuses octal, hex, integer and short IPv4 forms.
+//     IPv4-mapped one becomes its IPv4 address. An unbracketed host that
+//     netip parses as IPv4 is an IPv4 literal. netip refuses octal, hex,
+//     integer and short IPv4 forms.
 //  3. Anything else is a name: one trailing dot stripped, ASCII only
 //     (non-ASCII is refused, there is no IDNA, D-033 candidate), lower-cased,
 //     LDH labels of 1..63 bytes that neither start nor end with a hyphen,
@@ -71,6 +72,9 @@ func Normalize(authority string) (Target, error) {
 		if err != nil || !a.Is6() || a.Zone() != "" {
 			return Target{}, deny(ReasonInvalidTarget, "bracketed host is not an IPv6 address")
 		}
+		// One address, one key: [::ffff:a.b.c.d] is a.b.c.d (owner decision
+		// 2026-10-16), so allowlist, operator and floor see the same key.
+		a = a.Unmap()
 		return Target{Host: a.String(), Port: port, IP: a}, nil
 	}
 	if a, err := netip.ParseAddr(host); err == nil {

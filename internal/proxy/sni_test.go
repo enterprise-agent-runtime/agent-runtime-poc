@@ -46,7 +46,7 @@ func TestParseClientHelloSNI(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sni, has, err := parseClientHelloSNI(tc.rec)
+			sni, has, _, err := parseClientHelloSNI(tc.rec)
 			if (err == nil) != tc.ok {
 				t.Fatalf("err = %v, want ok=%v", err, tc.ok)
 			}
@@ -89,7 +89,7 @@ func FuzzParseClientHelloSNI(f *testing.F) {
 	f.Add(record(handshake(helloBody(sniExt("a.example", "b.example")))))
 	f.Add([]byte("GET / HTTP/1.1\r\n\r\n"))
 	f.Fuzz(func(t *testing.T, in []byte) {
-		sni, has, err := parseClientHelloSNI(in)
+		sni, has, _, err := parseClientHelloSNI(in)
 		if err != nil {
 			return
 		}
@@ -100,4 +100,23 @@ func FuzzParseClientHelloSNI(f *testing.F) {
 			t.Fatalf("hasSNI false with name %q", sni)
 		}
 	})
+}
+
+// TestParseClientHelloSNI_ECH: the parser reports an encrypted_client_hello
+// extension wherever it appears, and only then.
+func TestParseClientHelloSNI_ECH(t *testing.T) {
+	for _, tc := range []struct {
+		rec  []byte
+		want bool
+	}{
+		{record(handshake(helloBody(sniExt("a.example"), ext(0xfe0d, []byte{1})))), true},
+		{record(handshake(helloBody(ext(0xfe0d, nil)))), true},
+		{record(handshake(helloBody(sniExt("a.example"), ext(0xfe0c, []byte{1})))), false},
+		{clientHello("a.example"), false},
+	} {
+		_, _, ech, err := parseClientHelloSNI(tc.rec)
+		if err != nil || ech != tc.want {
+			t.Errorf("hasECH = %v, %v; want %v", ech, err, tc.want)
+		}
+	}
 }

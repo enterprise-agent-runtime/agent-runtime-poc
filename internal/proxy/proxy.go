@@ -59,6 +59,18 @@ type Config struct {
 	Now            func() time.Time
 	CallID         func() string // tool call running in the sandbox; nil or "" is null
 	Logger         *slog.Logger  // nil: discard
+
+	// OperatorLiteralAllow lists canonical IP-literal keys ("10.0.0.5:8443")
+	// that the operator allows although the address is in a denied range
+	// (owner decision 2026-10-16, replacing A07 §7's literal-entry
+	// exception). It comes only from operator configuration: the Allowlist,
+	// the Decider, grants and obligations can never add to it. It never
+	// opens the floor (floorDenied).
+	OperatorLiteralAllow []string
+	// InterfaceAddrs returns the host's own addresses; a resolved address
+	// among them is dropped (owner decision 2026-10-16). nil: the system's
+	// (net.InterfaceAddrs).
+	InterfaceAddrs func() ([]netip.Addr, error)
 }
 
 // TaskProxy is the proxy of one sandbox (A07 §12). There is deliberately
@@ -72,6 +84,8 @@ type TaskProxy struct {
 	now      func() time.Time
 	log      *slog.Logger
 	injector CredentialInjector
+	operator map[string]bool // OperatorLiteralAllow, fixed at New
+	ifaddrs  func() ([]netip.Addr, error)
 
 	dnsMu sync.Mutex
 	dns   map[string]dnsEntry
@@ -91,7 +105,18 @@ func New(cfg Config) (*TaskProxy, error) {
 		cfg.SandboxPurpose = "task"
 	}
 	p := &TaskProxy{cfg: cfg, decider: cfg.Decider, resolver: cfg.Resolver, dialer: cfg.Dialer,
-		now: cfg.Now, log: cfg.Logger, injector: noInjector{}, dns: make(map[string]dnsEntry)}
+		now: cfg.Now, log: cfg.Logger, injector: noInjector{}, dns: make(map[string]dnsEntry),
+		operator: make(map[string]bool), ifaddrs: cfg.InterfaceAddrs}
+	for _, k := range cfg.OperatorLiteralAllow {
+		t, err := Normalize(k)
+		if err != nil || !t.IsIP() || t.Key() != k {
+			return nil, fmt.Errorf("proxy: operator literal entry %q: want a canonical IP-literal host:port", k)
+		}
+		p.operator[k] = true
+	}
+	if p.ifaddrs == nil {
+		p.ifaddrs = systemInterfaceAddrs
+	}
 	if p.decider == nil {
 		p.decider = StaticDecider{}
 	}
@@ -186,12 +211,17 @@ func (p *TaskProxy) ServeConn(ctx context.Context, c net.Conn) {
 	}
 }
 
-// verdict is an allow: the event rule and decision id, and whether the
-// allow names the literal IP (A07 §7's only range-check exception).
+// verdict is an allow: the event rule and decision id, and whether an
+// operator entry names this literal IP (the only way past AddrDenied, and
+// never past the floor; owner decision 2026-10-16).
 type verdict struct {
 	rule, decisionID string
-	literal          bool
+	operator         bool
 }
+
+// RuleOperatorLiteral is the event rule of a connection allowed by
+// Config.OperatorLiteralAllow.
+const RuleOperatorLiteral = "operator.literal-allow"
 
 // admit runs A07 §3.2 steps 1 to 4 for an authority: normalise, evaluate,
 // resolve and range-check, dial the checked address. On a refusal it has
@@ -243,12 +273,17 @@ func (p *TaskProxy) admit(ctx context.Context, c net.Conn, authority, method, ca
 }
 
 // evaluate is A07 §5.2 without the M3 steps (deny cache, harness rule,
-// one-shot grants, hold): the allowlist fast path, then the Decider. Any
-// effect other than allow, and any Decider error, denies (fail closed);
-// approval_required is a denial until the hold lands in M3.
+// one-shot grants, hold): operator literal entries, the allowlist fast
+// path, then the Decider. Any effect other than allow, and any Decider
+// error, denies (fail closed); approval_required is a denial until the
+// hold lands in M3. An allow here is still subject to resolve's range
+// checks.
 func (p *TaskProxy) evaluate(ctx context.Context, t Target, method, callID string) (verdict, *DenyError) {
+	if p.operator[t.Key()] {
+		return verdict{rule: RuleOperatorLiteral, operator: true}, nil
+	}
 	if e, ok := p.cfg.Allow.Get(t.Key()); ok {
-		return verdict{rule: e.Rule, decisionID: e.DecisionID, literal: t.IsIP()}, nil
+		return verdict{rule: e.Rule, decisionID: e.DecisionID}, nil
 	}
 	d, err := p.decider.DecideEgress(ctx, EgressRequest{
 		Task: p.cfg.Task, SandboxID: p.cfg.SandboxID, SandboxPurpose: p.cfg.SandboxPurpose,
@@ -264,18 +299,43 @@ func (p *TaskProxy) evaluate(ctx context.Context, t Target, method, callID strin
 	if err := p.cfg.Allow.Add(Entry{Key: t.Key(), Source: SourceGrant, Rule: d.Rule, DecisionID: d.DecisionID}); err != nil {
 		return verdict{}, &DenyError{Reason: ReasonPolicyDenied, Detail: "caching allow", Err: err}
 	}
-	return verdict{rule: d.Rule, decisionID: d.DecisionID, literal: t.IsIP()}, nil
+	return verdict{rule: d.Rule, decisionID: d.DecisionID}, nil
 }
 
-// resolve returns the addresses to dial (A07 §7): the literal IP when an
-// allow names it, otherwise the resolver's answer with every denied
-// address dropped, in resolver order, at most four.
+// resolve returns the addresses to dial (A07 §7, as changed by the owner's
+// decisions of 2026-10-16). Whatever allowed the target:
+//
+//   - an address in the floor is never dialed;
+//   - an address of the host's own interfaces is never dialed, and if the
+//     interface list cannot be read nothing is (fail closed);
+//   - any other denied address is dialed only as an IP literal named by an
+//     operator entry; a resolved name gets no exception.
+//
+// A name's answer keeps resolver order, without duplicates, at most four.
 func (p *TaskProxy) resolve(ctx context.Context, t Target, v verdict) ([]netip.Addr, *DenyError) {
-	if t.IsIP() {
-		if v.literal || !AddrDenied(t.IP) {
-			return []netip.Addr{t.IP}, nil
+	own, err := p.ifaddrs()
+	if err != nil {
+		return nil, &DenyError{Reason: ReasonPrivateAddress, Detail: "host interface addresses unavailable", Err: err}
+	}
+	isOwn := func(a netip.Addr) bool {
+		for _, o := range own {
+			if o.WithZone("").Unmap() == a {
+				return true
+			}
 		}
-		return nil, deny(ReasonPrivateAddress, "literal address in a denied range")
+		return false
+	}
+	if t.IsIP() {
+		a := t.IP.WithZone("").Unmap()
+		switch {
+		case floorDenied(a):
+			return nil, deny(ReasonPrivateAddress, "literal address in the floor")
+		case isOwn(a):
+			return nil, deny(ReasonPrivateAddress, "literal address of this host")
+		case AddrDenied(a) && !v.operator:
+			return nil, deny(ReasonPrivateAddress, "literal address in a denied range")
+		}
+		return []netip.Addr{a}, nil
 	}
 	answer, err := p.lookup(ctx, t.Host)
 	if err != nil {
@@ -284,7 +344,7 @@ func (p *TaskProxy) resolve(ctx context.Context, t Target, v verdict) ([]netip.A
 	var out []netip.Addr
 	for _, a := range answer {
 		a = a.WithZone("").Unmap()
-		if AddrDenied(a) || containsAddr(out, a) {
+		if AddrDenied(a) || isOwn(a) || containsAddr(out, a) {
 			continue
 		}
 		out = append(out, a)
@@ -473,4 +533,27 @@ func containsAddr(list []netip.Addr, a netip.Addr) bool {
 		}
 	}
 	return false
+}
+
+// systemInterfaceAddrs is the production Config.InterfaceAddrs: every
+// address configured on the host's interfaces.
+func systemInterfaceAddrs() ([]netip.Addr, error) {
+	ifas, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, fmt.Errorf("proxy: interface addresses: %w", err)
+	}
+	out := make([]netip.Addr, 0, len(ifas))
+	for _, ia := range ifas {
+		var ip net.IP
+		switch v := ia.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if a, ok := netip.AddrFromSlice(ip); ok {
+			out = append(out, a.Unmap())
+		}
+	}
+	return out, nil
 }

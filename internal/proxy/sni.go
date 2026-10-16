@@ -10,6 +10,8 @@ import (
 const (
 	recordHeaderLen  = 5
 	maxRecordPayload = 16384
+
+	extEncryptedClientHello = 0xfe0d // draft-ietf-tls-esni
 )
 
 // errHello is every structural defect of a ClientHello. The caller turns
@@ -98,25 +100,27 @@ func (c *cursor) empty() bool { return c.ok && len(c.b) == 0 }
 // record), every length must match its contents, an extension type may
 // appear once, and server_name must hold exactly one host_name of
 // 1..255 bytes. A ClientHello without server_name returns hasSNI false.
-func parseClientHelloSNI(rec []byte) (sni string, hasSNI bool, err error) {
+// hasECH reports an encrypted_client_hello extension (0xfe0d), real or
+// GREASE; the caller refuses it (owner decision 2026-10-16).
+func parseClientHelloSNI(rec []byte) (sni string, hasSNI, hasECH bool, err error) {
 	c := cursor{b: rec, ok: true}
 	if c.u8() != 0x16 || c.u8() != 3 {
-		return "", false, errHello
+		return "", false, false, errHello
 	}
 	c.u8() // record minor version: any
 	payload := c.sub(c.u16())
 	if !c.empty() || !payload.ok || len(payload.b) == 0 {
-		return "", false, errHello
+		return "", false, false, errHello
 	}
 	if payload.u8() != 1 { // handshake type client_hello
-		return "", false, errHello
+		return "", false, false, errHello
 	}
 	body := payload.sub(payload.u24())
 	if !payload.empty() || !body.ok {
-		return "", false, errHello
+		return "", false, false, errHello
 	}
 	if body.u8() != 3 { // legacy_version major
-		return "", false, errHello
+		return "", false, false, errHello
 	}
 	body.u8()
 	body.bytes(32) // random
@@ -127,36 +131,39 @@ func parseClientHelloSNI(rec []byte) (sni string, hasSNI bool, err error) {
 	cm := body.u8()
 	body.bytes(cm)
 	if !body.ok || sid > 32 || cs < 2 || cs%2 != 0 || cm < 1 {
-		return "", false, errHello
+		return "", false, false, errHello
 	}
 	if body.empty() {
-		return "", false, nil // no extensions block at all
+		return "", false, false, nil // no extensions block at all
 	}
 	exts := body.sub(body.u16())
 	if !body.empty() || !exts.ok {
-		return "", false, errHello
+		return "", false, false, errHello
 	}
 	seen := make(map[int]bool)
 	for !exts.empty() {
 		typ := exts.u16()
 		data := exts.sub(exts.u16())
 		if !exts.ok {
-			return "", false, errHello
+			return "", false, false, errHello
 		}
 		if seen[typ] {
-			return "", false, errHello
+			return "", false, false, errHello
 		}
 		seen[typ] = true
+		if typ == extEncryptedClientHello {
+			hasECH = true
+		}
 		if typ != 0 { // server_name
 			continue
 		}
 		name, err := parseServerName(data)
 		if err != nil {
-			return "", false, err
+			return "", false, false, err
 		}
 		sni, hasSNI = name, true
 	}
-	return sni, hasSNI, nil
+	return sni, hasSNI, hasECH, nil
 }
 
 // parseServerName parses the server_name extension body: a list holding

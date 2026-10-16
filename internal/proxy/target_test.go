@@ -30,7 +30,11 @@ var normalizeCases = []struct {
 	{"93.184.215.14:80", "93.184.215.14:80", "", true},
 	{"[2606:4700::1111]:443", "[2606:4700::1111]:443", "", true},
 	{"[2606:4700:0:0:0:0:0:1111]:443", "[2606:4700::1111]:443", "", true},
-	{"[::FFFF:127.0.0.1]:80", "[::ffff:127.0.0.1]:80", "", true},
+	// IPv4-mapped literals normalise to the IPv4 key (owner decision
+	// 2026-10-16), so one address has one key for the allowlist and floor.
+	{"[::FFFF:127.0.0.1]:80", "127.0.0.1:80", "", true},
+	{"[::ffff:93.184.215.14]:443", "93.184.215.14:443", "", true},
+	{"[::ffff:0:93.184.215.14]:443", "[::ffff:0:5db8:d70e]:443", "", true},
 	// A07 §13: octal, short and zoned forms refused. A name whose last
 	// label is numeric is an address to getaddrinfo (inet_aton), never a
 	// host name, so every such spelling is refused rather than resolved.

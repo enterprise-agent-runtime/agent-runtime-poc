@@ -38,8 +38,14 @@ func (p *TaskProxy) connect(ctx context.Context, c net.Conn, br *bufio.Reader, a
 	reason := Reason("")
 	if err != nil {
 		reason = ReasonNotTLS
-	} else if sni, hasSNI, err := parseClientHelloSNI(rec); err != nil {
+	} else if sni, hasSNI, hasECH, err := parseClientHelloSNI(rec); err != nil {
 		reason = ReasonNotTLS
+	} else if hasECH {
+		// Owner decision 2026-10-16 (stricter than A07): with ECH the outer
+		// SNI is only the front's public name and the real destination is
+		// encrypted, so any tenant behind an allowed front could be reached.
+		// GREASE ECH (Chromium, Playwright) is refused too: accepted.
+		reason = ReasonSNIMismatch
 	} else if !t.IsIP() && (!hasSNI || !sniMatches(sni, t.Host)) {
 		// A DNS target needs an SNI equal to it; an IP target may omit it
 		// (A07 §3.2 step 6).

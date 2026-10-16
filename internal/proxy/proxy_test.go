@@ -227,11 +227,12 @@ func TestRebinding_DialsCheckedIP(t *testing.T) {
 	}
 }
 
-// TestRangeCheck_LiteralIPEntryAllowed: A07 §7's one exception. An
-// allowlist entry naming a literal IP allows that exact address even in a
-// denied range, without DNS.
-func TestRangeCheck_LiteralIPEntryAllowed(t *testing.T) {
-	h := newHarness(t, "10.0.0.5:8443")
+// TestRangeCheck_OperatorLiteralDialsExactAddress: the replacement for A07
+// §7's literal-entry exception (owner decision 2026-10-16): only an operator
+// entry opens a denied-range literal, it dials exactly that address
+// without DNS, and it opens that port only.
+func TestRangeCheck_OperatorLiteralDialsExactAddress(t *testing.T) {
+	h := newHarnessWith(t, func(c *Config) { c.OperatorLiteralAllow = []string{"10.0.0.5:8443"} })
 	up := &discardUpstream{}
 	h.dial.upstream = up.serve
 	if s := tunnel(t, h, "10.0.0.5:8443", record(handshake(helloBody()))); s != 200 {
@@ -282,6 +283,12 @@ func TestSNIMismatch(t *testing.T) {
 		{"truncated record", "registry.npmjs.org:443", clientHello("registry.npmjs.org")[:20], ReasonNotTLS},
 		{"IP target without SNI", "93.184.215.14:443", record(handshake(helloBody())), ""},
 		{"IP target, plain HTTP", "93.184.215.14:443", []byte("GET / HTTP/1.1\r\n\r\n"), ReasonNotTLS},
+		// Owner decision 2026-10-16 (stricter than A07): any ClientHello with
+		// encrypted_client_hello (0xfe0d) is refused, real or GREASE, because
+		// the inner SNI could name any tenant behind an allowed outer name.
+		{"ECH with matching outer SNI", "registry.npmjs.org:443", record(handshake(helloBody(sniExt("registry.npmjs.org"), ext(0xfe0d, []byte{0, 1, 2, 3})))), ReasonSNIMismatch},
+		{"ECH to an IP target", "93.184.215.14:443", record(handshake(helloBody(ext(0xfe0d, []byte{0})))), ReasonSNIMismatch},
+		{"empty ECH extension", "registry.npmjs.org:443", record(handshake(helloBody(ext(0xfe0d, nil), sniExt("registry.npmjs.org")))), ReasonSNIMismatch},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

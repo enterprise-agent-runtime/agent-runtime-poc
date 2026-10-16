@@ -159,6 +159,14 @@ const testSandbox = "sb_01JAX0000000000000000000AA"
 
 func newHarness(t *testing.T, keys ...string) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil, keys...)
+}
+
+// newHarnessWith is newHarness with a hook to adjust the Config before New.
+// The host's interface addresses default to none, so no test depends on
+// the machine it runs on.
+func newHarnessWith(t *testing.T, mod func(*Config), keys ...string) *harness {
+	t.Helper()
 	var entries []Entry
 	for _, k := range keys {
 		entries = append(entries, Entry{Key: k, Source: SourceCapability})
@@ -169,15 +177,46 @@ func newHarness(t *testing.T, keys ...string) *harness {
 	}
 	h := &harness{sink: &fakeSink{}, res: newFakeResolver(), dial: &fakeDialer{},
 		clock: &fakeClock{t: time.Date(2026, 9, 26, 10, 14, 3, 0, time.UTC)}}
-	h.p, err = New(Config{
+	cfg := Config{
 		SandboxID: testSandbox, Allow: allow, Events: h.sink,
 		Resolver: h.res, Dialer: h.dial, Now: h.clock.Now,
-		CallID: func() string { return "call_31" },
-	})
+		CallID:         func() string { return "call_31" },
+		InterfaceAddrs: func() ([]netip.Addr, error) { return nil, nil },
+	}
+	if mod != nil {
+		mod(&cfg)
+	}
+	h.p, err = New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return h
+}
+
+// fakeDecider answers every DecideEgress with one fixed decision or error
+// and records the requests.
+type fakeDecider struct {
+	mu   sync.Mutex
+	d    Decision
+	err  error
+	reqs []EgressRequest
+}
+
+func (f *fakeDecider) DecideEgress(_ context.Context, req EgressRequest) (Decision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reqs = append(f.reqs, req)
+	return f.d, f.err
+}
+
+func (f *fakeDecider) WaitApproval(context.Context, string) (Decision, error) {
+	return Decision{Effect: EffectDeny}, errors.New("fake: no approvals")
+}
+
+func (f *fakeDecider) calls() []EgressRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]EgressRequest(nil), f.reqs...)
 }
 
 // open starts ServeConn on one end of a pipe and returns the client end
