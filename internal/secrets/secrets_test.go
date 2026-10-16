@@ -363,7 +363,10 @@ func TestSigner_GenerateLoadAndArchive(t *testing.T) {
 	}
 	sig, _ := s1.Sign(ctx, []byte("m"))
 	// The store's verifier accepts this signer's key from checkpoint.pub.
-	keys := PublicKeys(dir)
+	keys, err := PublicKeys(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if pub, ok := keys[s1.KeyID()]; !ok || !pub.Equal(s1.PublicKey()) || len(sig) != 64 {
 		t.Fatalf("keys = %v", keys)
 	}
@@ -372,8 +375,8 @@ func TestSigner_GenerateLoadAndArchive(t *testing.T) {
 	if err != nil || s3.KeyID() == s1.KeyID() {
 		t.Fatal("new key expected")
 	}
-	if keys := PublicKeys(dir); len(keys) != 2 {
-		t.Fatalf("archived keys = %d", len(keys))
+	if keys, err := PublicKeys(dir); err != nil || len(keys) != 2 {
+		t.Fatalf("archived keys = %d %v", len(keys), err)
 	}
 	_ = mem.Set(ctx, "keys/checkpoint/ed25519", []byte("not base64!"))
 	if _, err := LoadSigner(ctx, NewBroker(mem, nil, nil), dir); err == nil {

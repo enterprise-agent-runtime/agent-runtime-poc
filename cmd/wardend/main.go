@@ -91,8 +91,15 @@ func run() int {
 		unsigned = "keychain_locked"
 		slog.Warn("checkpoint key unavailable; checkpoints will be unsigned", "error", err.Error())
 	}
+	// Checkpoint keys are trust anchors: a key file that is not owner-only
+	// stops the start rather than being trusted or ignored (WH-4).
+	pubKeys, err := secrets.PublicKeys(l.Keys())
+	if err != nil {
+		slog.Error("refusing to start: cannot load the checkpoint keys", "error", err.Error())
+		return 1
+	}
 	opts := store.Options{Dir: l.DB(), BlobsDir: l.Blobs(), RuntimeVersion: buildinfo.Version, User: platform.LocalUser(),
-		Redactor: broker.Redactor(), PublicKeys: secrets.PublicKeys(l.Keys())}
+		Redactor: broker.Redactor(), PublicKeys: pubKeys}
 	if signer != nil {
 		opts.Signer = signer
 	}

@@ -474,6 +474,19 @@ func TestAudit_ExportVerifyRoundTrip(t *testing.T) {
 	if code, _ := callErr(c, "audit.verify", map[string]any{"file": filepath.Join(e.l.Home, "missing.jsonl")}); code != CodeNotFound {
 		t.Fatalf("missing file = %d", code)
 	}
+	// A checkpoint key file another account could have planted (0644 on
+	// Unix, an inherited DACL on Windows) fails the verification instead of
+	// being trusted (WH-4, CWE-732).
+	loose := filepath.Join(e.l.Keys(), "checkpoint-planted.pub")
+	if err := os.WriteFile(loose, []byte("planted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(loose, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, d := callErr(c, "audit.verify", map[string]any{"file": path, "strict": true}); code != CodeInvalidState || d.Reason != "untrusted_key_file" {
+		t.Fatalf("file verify with a loose key file = %d %+v; want invalid state, untrusted_key_file", code, d)
+	}
 }
 
 func TestSecretsUnlock_FileBackend(t *testing.T) {

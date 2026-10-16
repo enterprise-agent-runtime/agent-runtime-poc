@@ -181,7 +181,14 @@ func (s *Server) auditVerify(ctx context.Context, _ *conn, _ *jrpc2.Request, raw
 	var rep store.Report
 	var err error
 	if p.File != "" {
-		rep, err = store.VerifyFile(p.File, secrets.PublicKeys(s.d.Layout.Keys()), p.Strict)
+		// A key file that is not owner-only fails the call rather than be
+		// trusted, or be skipped and turn a forged checkpoint into a mere
+		// "unknown key" (WH-4).
+		keys, kerr := secrets.PublicKeys(s.d.Layout.Keys())
+		if kerr != nil {
+			return nil, Fail(CodeInvalidState, "untrusted_key_file", kerr.Error())
+		}
+		rep, err = store.VerifyFile(p.File, keys, p.Strict)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, Fail(CodeNotFound, "file", "no such export file")
