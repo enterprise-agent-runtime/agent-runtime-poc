@@ -184,31 +184,47 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		// exact platform files that need it (internal/sandbox/ok/dll.go and
 		// internal/platform/disk_windows.go here); internal/platform/dll_other.go
 		// is not.
-		"INV-H internal/platform/dll_other.go",   // syscall.NewLazyDLL beside the allowed files
-		"INV-H internal/store/dll.go",            // syscall.NewLazyDLL
-		"INV-H internal/store/dll.go",            // syscall.LoadDLL
-		"INV-H internal/store/dll.go",            // syscall.MustLoadDLL
-		"INV-H internal/store/dll.go",            // syscall.LoadLibrary
-		"INV-H internal/store/dll.go",            // syscall.GetProcAddress
-		"INV-H internal/store/dllwin.go",         // windows.NewLazySystemDLL
-		"INV-H internal/store/dllwin.go",         // windows.LoadLibraryEx
-		"INV-H internal/store/linkname2.go",      // //go:linknamestd
-		"INV-H internal/store/procsyscall.go",    // syscall.CreateProcess
-		"INV-H internal/store/procsyscall.go",    // syscall.CreateProcessAsUser
-		"INV-H internal/store/rawmore.go",        // syscall.Syscall9
-		"INV-H internal/store/rawmore.go",        // syscall.Syscall12
-		"INV-H internal/store/rawmore.go",        // syscall.Syscall15
-		"INV-H internal/store/rawmore.go",        // syscall.Syscall18
-		"INV-H internal/store/rawmoreunix.go",    // unix.SyscallNoError
-		"INV-H internal/store/rawmoreunix.go",    // unix.RawSyscallNoError
-		"INV-H internal/store/shell.go",          // windows.ShellExecute
-		"INV-H internal/store/shell.go",          // windows.ShellExecuteEx
-		"imports internal/policy/bad.go",         // policy importing a provider
-		"imports internal/providers/bad/bad.go",  // third-party import in a provider
-		"imports internal/providers/bad/bad.go",  // provider importing internal/store
-		"os-selection internal/api/os.go",        // //go:build linux
-		"os-selection internal/api/os.go",        // runtime.GOOS
-		"os-selection internal/api/x_windows.go", // file-name suffix
+		"INV-H internal/platform/dll_other.go", // syscall.NewLazyDLL beside the allowed files
+		"INV-H internal/store/dll.go",          // syscall.NewLazyDLL
+		"INV-H internal/store/dll.go",          // syscall.LoadDLL
+		"INV-H internal/store/dll.go",          // syscall.MustLoadDLL
+		"INV-H internal/store/dll.go",          // syscall.LoadLibrary
+		"INV-H internal/store/dll.go",          // syscall.GetProcAddress
+		"INV-H internal/store/dllwin.go",       // windows.NewLazySystemDLL
+		"INV-H internal/store/dllwin.go",       // windows.LoadLibraryEx
+		"INV-H internal/store/linkname2.go",    // //go:linknamestd
+		"INV-H internal/store/procsyscall.go",  // syscall.CreateProcess
+		"INV-H internal/store/procsyscall.go",  // syscall.CreateProcessAsUser
+		"INV-H internal/store/rawmore.go",      // syscall.Syscall9
+		"INV-H internal/store/rawmore.go",      // syscall.Syscall12
+		"INV-H internal/store/rawmore.go",      // syscall.Syscall15
+		"INV-H internal/store/rawmore.go",      // syscall.Syscall18
+		"INV-H internal/store/rawmoreunix.go",  // unix.SyscallNoError
+		"INV-H internal/store/rawmoreunix.go",  // unix.RawSyscallNoError
+		"INV-H internal/store/shell.go",        // windows.ShellExecute
+		"INV-H internal/store/shell.go",        // windows.ShellExecuteEx
+		// Round 5: golang.org/x/sys/execabs is a drop-in for os/exec (its Cmd
+		// is exec.Cmd) and net/http/cgi starts processes through os/exec, so
+		// both are treated exactly like os/exec (internal/sandbox/ok/abs.go
+		// and ok/cgi.go carry a justification and are allowed). The DLL and
+		// proc types can be built as struct literals, bypassing the loader
+		// functions, so naming them is a DLL use.
+		"INV-H internal/sandbox/nocomment/abs.go", // execabs without a justification
+		"INV-H internal/store/cgi.go",             // net/http/cgi outside the sandbox packages
+		"INV-H internal/store/dlltypes.go",        // syscall.LazyDLL
+		"INV-H internal/store/dlltypes.go",        // syscall.DLL
+		"INV-H internal/store/dlltypes.go",        // syscall.LazyProc
+		"INV-H internal/store/dlltypes.go",        // syscall.Proc
+		"INV-H internal/store/dlltypes.go",        // windows.LazyDLL
+		"INV-H internal/store/dotexecabs.go",      // execabs imported outside the sandbox packages
+		"INV-H internal/store/dotexecabs.go",      // import . "golang.org/x/sys/execabs"
+		"INV-H internal/store/execabs.go",         // execabs outside the sandbox packages
+		"imports internal/policy/bad.go",          // policy importing a provider
+		"imports internal/providers/bad/bad.go",   // third-party import in a provider
+		"imports internal/providers/bad/bad.go",   // provider importing internal/store
+		"os-selection internal/api/os.go",         // //go:build linux
+		"os-selection internal/api/os.go",         // runtime.GOOS
+		"os-selection internal/api/x_windows.go",  // file-name suffix
 		// internal/exec/sys_linux.go and cmd/warden-exec/main_darwin.go select by
 		// OS and are allowed (C-61); these two are still rejected.
 		"os-selection internal/executor/x_linux.go", // a name prefix of internal/exec is not internal/exec

@@ -48,7 +48,7 @@ var listenAllowed = "; allowed only in " + strings.Join(listenDirs, ", ") + " an
 // dotWatchedExec and dotWatchedListen are the packages whose identifiers the rules look for. A
 // dot-import makes them unqualified, so Scan cannot resolve their uses and
 // the rules would be blind; such an import is therefore a violation itself.
-var dotWatchedExec = []string{"os/exec", "os", "syscall", "golang.org/x/sys/unix", "golang.org/x/sys/windows"}
+var dotWatchedExec = []string{"os/exec", "golang.org/x/sys/execabs", "net/http/cgi", "os", "syscall", "golang.org/x/sys/unix", "golang.org/x/sys/windows"}
 var dotWatchedListen = []string{"net", "net/http", "crypto/tls"}
 
 // rawSocketPkgs expose Bind and Listen on raw sockets, bypassing package net,
@@ -70,13 +70,16 @@ var rawSyscalls = map[string]bool{
 // socket.
 var rawSyscallFiles = map[string]bool{"internal/platform/term_linux.go": true, "internal/platform/term_darwin.go": true}
 
-// dllLoaders load a Windows DLL or resolve a function in one. A resolved proc
-// is called by name with arbitrary arguments (CreateProcessW, bind), past
-// every named check here, so they are allowed only in execPackages and in
-// dllFiles.
+// dllLoaders load a Windows DLL or resolve a function in one, or name the
+// DLL and proc types. A resolved proc is called by name with arbitrary
+// arguments (CreateProcessW, bind), past every named check here, so they are
+// allowed only in execPackages and in dllFiles.
 var dllLoaders = map[string]bool{
 	"NewLazyDLL": true, "NewLazySystemDLL": true, "LoadDLL": true, "MustLoadDLL": true,
 	"LoadLibrary": true, "LoadLibraryEx": true, "GetProcAddress": true,
+	// The types, because a struct literal (&syscall.LazyDLL{Name: ...}) builds
+	// a loader without calling any function above.
+	"LazyDLL": true, "DLL": true, "LazyProc": true, "Proc": true,
 }
 
 // dllFiles may load DLLs outside execPackages. Each entry is one exact file,
@@ -103,6 +106,12 @@ var linknameFiles = map[string]bool{}
 // groups) and it must still compile on Windows (docs/CONFLICTS.md C-61).
 var osDirs = []string{"internal/platform", "internal/sandbox", "internal/secrets", "internal/exec", "cmd/warden-exec"}
 
+// execImports start processes and are allowed, like os/exec itself, only in
+// execPackages with a //sandboxed justification: golang.org/x/sys/execabs is
+// a drop-in for os/exec (its Cmd is exec.Cmd), and net/http/cgi runs its
+// handler programs through os/exec.
+var execImports = []string{"os/exec", "golang.org/x/sys/execabs", "net/http/cgi"}
+
 // processStarters are the calls that create a process without os/exec.
 var processStarters = map[string]map[string]bool{
 	"os":                       {"StartProcess": true},
@@ -111,12 +120,12 @@ var processStarters = map[string]map[string]bool{
 	"golang.org/x/sys/windows": {"CreateProcess": true, "CreateProcessAsUser": true, "ShellExecute": true, "ShellExecuteEx": true},
 }
 
-// ExecRule implements INV-H statically: os/exec only in execPackages, with a
-// //sandboxed justification; other process starters likewise, plus the
-// documented daemon self-spawn. Raw numbered system calls only in
-// execPackages and rawSyscallFiles; DLL loading only in execPackages and
-// dllFiles; //go:linkname only in linknameFiles (none). Test files are
-// included ("including tests").
+// ExecRule implements INV-H statically: os/exec and the other execImports
+// only in execPackages, with a //sandboxed justification; other process
+// starters likewise, plus the documented daemon self-spawn. Raw numbered
+// system calls only in execPackages and rawSyscallFiles; DLL loading only in
+// execPackages and dllFiles; //go:linkname only in linknameFiles (none).
+// Test files are included ("including tests").
 func ExecRule(files []File) []Violation {
 	var out []Violation
 	for _, f := range files {
@@ -126,13 +135,13 @@ func ExecRule(files []File) []Violation {
 			}
 		}
 		for _, imp := range f.Imports {
-			if imp != "os/exec" {
+			if !slices.Contains(execImports, imp) {
 				continue
 			}
 			if !underAny(f.Dir, execPackages) {
-				out = append(out, Violation{f.Rel, 0, "INV-H", "os/exec imported outside " + strings.Join(execPackages, ", ")})
+				out = append(out, Violation{f.Rel, 0, "INV-H", imp + " imported outside " + strings.Join(execPackages, ", ")})
 			} else if !f.Sandboxed {
-				out = append(out, Violation{f.Rel, 0, "INV-H", "os/exec imported without a //sandboxed: <reason> comment"})
+				out = append(out, Violation{f.Rel, 0, "INV-H", imp + " imported without a //sandboxed: <reason> comment"})
 			}
 		}
 		if !linknameFiles[f.Rel] {
