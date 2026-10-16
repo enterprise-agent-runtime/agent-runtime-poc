@@ -22,6 +22,32 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-014 · 2026-10-16 · M2-1: `warden daemon stop` waits for wardend to exit
+
+- **Asked:** M2 plan task M2-1, from a preflight finding: on Windows, cleanup right after `warden daemon stop` failed with "Device or resource busy". Delivered under the owner's "merge each task when its review passes".
+- **Task:** Make stop wait until wardend has really exited, so its files are released.
+- **How:**
+  - **The wait:** stop reads the pid and opens a watch before `system.shutdown`, then waits up to 10 s (D-029). On Windows the watch is a SYNCHRONIZE handle; on Unix a `kill(pid,0)` poll with child reaping, where EPERM means a stale pid file. The decision lives in the pure loop `platform.WaitExit` and in `stopAndWait`.
+  - **Review fixes:**
+    - each home gets its own keychain namespace (D-042);
+    - the integration test cleans up its own keychain items (D-043);
+    - a golden test pins the home suffix.
+  - Commits `1ff879a`, `5f4a238`, `0894d6d`, `89dbdac`, `4812dae`.
+- **Rules kept:**
+  - Test first. The Windows integration test failed 3/3 before the fix; the unit tests failed against a stub.
+  - Revert and mutation checks for every fix.
+  - OS code stays in `internal/platform` and `cmd/warden` stays wiring (CLAUDE.md §6).
+  - No new process starter (INV-H): the test uses the existing SpawnDaemon path.
+  - No new dependency.
+  - A temp `WARDEN_HOME` for every daemon run.
+- **Rules changed or bent:**
+  - **Broken by mistake (CLAUDE.md §8.4):** before the review, the new integration test's daemon used the owner's real Credential Manager service `warden`. It read the real checkpoint seed and wrote and deleted `doctor/probe`, over about 8 runs. Nothing was overwritten. Every M1 `warden doctor` run with a temp home did the same, which is how the real checkpoint key got there. Now prevented by D-042 (per-home keychain namespace) and D-043 (the test cleans its namespace and refuses plain `warden`). A leftover test entry `warden-68ad2efe:keys/checkpoint/ed25519` is the owner's to remove.
+  - **Design deviation:** design A15 §2 and the design core §10 name a single service `warden`. CLAUDE.md §8.4 wins (C-63). The design text is unchanged.
+  - **Product behaviour change:** a non-default `WARDEN_HOME` now has its own secrets (D-042 upgrade note).
+  - **Process notes:** one fix commit (`0894d6d`) bundles three small findings. Fix 2 moved logic that already worked, so mutations stand in for "fails before".
+- **Verified:** `make check` green on every commit. CI on the PR. Windows integration run: pass, and Credential Manager unchanged before and after.
+- **Left:** CI doesn't run `make integration` yet (M2-23). Unix `platform.Alive` treats EPERM as dead and a zombie as alive (noticed, not fixed).
+
 ## W-013 · 2026-10-16 · M2 preflight, plan and owner decisions
 
 - **Asked:** Owner: "Keep working at the next step" (the next step was `/preflight M2`, then `/plan M2`).
