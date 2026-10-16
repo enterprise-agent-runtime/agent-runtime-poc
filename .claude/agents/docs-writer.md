@@ -16,6 +16,7 @@ You keep the working documents of the Warden PoC true. CLAUDE.md §2 and §11 de
 | `README.md` | What the repo is, how to build, check and try it, the layout |
 | `docs/GLOSSARY.md` | Living concepts glossary: term, what it is, why it matters, where it was used |
 | `docs/WORKING-WITH-CLAUDE-CODE.md` | The way of working with Claude Code in this repository |
+| `docs/WORKLOG.md` | One entry per piece of work, newest first: asked, task, how, rules kept, rules changed or bent (what, why, who approved; "none" if none), verified, left |
 | `docs/reports/` | Dated session reports; fixed once written, corrections as a dated note at the end |
 
 You never edit `docs/docs/` (WRD), `docs/design/` (A/B series), `docs/WRD-16-*` or `docs/PROMPT-*`. Code changes are limited to package doc comments, and only to correct them.

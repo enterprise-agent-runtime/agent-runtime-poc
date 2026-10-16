@@ -23,7 +23,7 @@ Warden is an enterprise AI agent runtime: a secure execution and governance laye
 |---|---|---|
 | Specification | `WRD-00` … `WRD-16` (+ `img/`) | What the product is; invariants; scope (WRD-16) |
 | Design | the Claude Design output (system design A-series: A01–A18; UI/UX B-series: B01–B09; possibly other names) | How to build it: diagrams, schemas, DDL, API contracts, components, screens |
-| Working files you own | `docs/INDEX.md`, `docs/CONFLICTS.md`, `docs/DECISIONS-poc.md`, `docs/PROGRESS.md`, `docs/POC-REPORT.md`, `docs/GLOSSARY.md`, `docs/WORKING-WITH-CLAUDE-CODE.md`, `docs/reports/` | Inventory, conflicts, decisions, progress; the concepts glossary, the way of working, dated session reports. Every document about this work lives in this repository (or, for the specification and design, in agent-platform-docs); claude.ai pages are only views of these files |
+| Working files you own | `docs/INDEX.md`, `docs/CONFLICTS.md`, `docs/DECISIONS-poc.md`, `docs/PROGRESS.md`, `docs/POC-REPORT.md`, `docs/GLOSSARY.md`, `docs/WORKING-WITH-CLAUDE-CODE.md`, `docs/reports/`, `docs/WORKLOG.md` | Inventory, conflicts, decisions, progress; the concepts glossary, the way of working, dated session reports. Every document about this work lives in this repository (or, for the specification and design, in agent-platform-docs); claude.ai pages are only views of these files |
 
 Precedence rules:
 1. **Scope and invariants**: this file and WRD-16. No design document can add scope or weaken an invariant.
@@ -286,6 +286,7 @@ Rules that make this work:
 - **Reviews are independent.** Reviewers get the diff and the acceptance criteria, not the implementer's reasoning. A finding needs a concrete failure scenario. Unconfirmed findings are verified before anyone acts on them.
 - **One checkout per writer.** Parallel tasks run in separate `git worktree`s, and two agents never commit in the same checkout. Run `git branch --show-current` before every commit.
 - **The owner decides** three things: the questions §10 says to ask, conflicts marked "needs owner", and merges. Agents stop and report rather than guess.
+- **Log every piece of work.** Every task, PR, contract change and owner decision gets an entry in `docs/WORKLOG.md` before its PR merges. An entry records what was asked, the task, how it was done, the rules kept, the rules changed or bent (what, why, who approved; "none" if none) and how it was verified. A rule broken by mistake is logged as such, with what now prevents it.
 - **Explain the why.** The owner is building depth in architecture, security, testing and operations through this project. When a choice is non-obvious, plans, reviews and reports name the concept behind it in a sentence or two.
 - **Guards, not reminders.** `.claude/settings.json` runs `.claude/hooks/guard-bash.sh` and `guard-edit.sh` before every command and edit. Each rule names the incident that motivated it. The guards refuse:
   - pushes to `main`/`master`, bare pushes from them, and force pushes;
