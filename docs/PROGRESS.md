@@ -86,11 +86,12 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 - [x] **M2-12** Spec, mounts and env model, with `TestSandboxSpecMounts`, `TestSandboxEnvAllowlist` and `TestDenyListThreeLayers` (D-056, D-057).
   - **Pieces:** `Spec`, `Validate`, `Mounts`, `Env`, `WorktreeMasks`, the `Manager` interface, and `sandboxtest.FakeSandbox` built from the same code. The shared three-layer corpus is in `internal/execproto/denylist/testdata/three-layers.json`; the executor and policy layers load it too.
-  - **Commits:** `4a530f3`, `d9d381d`, `abd1dc5`, `fa795a5`.
+  - **Commits:** `4a530f3`, `d9d381d`, `abd1dc5`, `fa795a5`, `c8fce80`.
   - **Review:** two rounds. Four checks had no test (the sidecar host, the walk entry cap, the toolchain-root overlap, the main objects deny-list); a custom WARDEN_HOME let `$HOME` be a toolchain root; the proxy socket and the session directory were not pinned. After the fixes 28 of 29 mutants are caught; coverage 94%%.
   - **Low, left:** the `ids.Valid` check on the session id has no isolating test row (the ulid match still guards it).
   - **Left for M2-13:** EvalSymlinks each toolchain root and re-check (`/var/run` is a link to `/run`, exposing docker.sock); consider reserving `/sys`; Lstat the proxy socket for S_ISSOCK before binding; pin the backend-added mounts to A06 §11.1 in the bwrap argv test; a real-disk walk test with `os.DirFS`; `Manager.RecoverOrphans` with the A06 §13.5 sweep.
   - **Must fix before the L2 backend merges (high, CWE-178):** bind masks are keyed on the on-disk case, so on a case-insensitive host file system (Windows L2 over NTFS through Docker Desktop, macOS L2) `.ENV` reads the masked `.env`; reproduced on WSL drvfs. Make S/worktree case-sensitive before checkout and fail closed if it is not, or mask host-side; add an escape-check row. NTFS 8.3 names (`ENV~1`) bypass the masks the same way for spawned processes (D-055).
+  - **Before a real Spec is built (platform layer):** expand host paths to their long form (GetLongPathName) before they reach the Spec; host-path checks skip the 8.3 rule (D-055 amendment), so a short-form host path would otherwise dodge it.
   - **For A14 / the policy engine:** masks hide only the working tree; `git show HEAD:.env` through /git reads a committed secret, and `denylist.Argv` does not match `HEAD:.env`. A deny-listed pathspec rule for git object reads is needed.
 - [ ] **M2-13** bwrap argv
 - [ ] **M2-14** seccomp in pure Go
