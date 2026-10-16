@@ -22,6 +22,34 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-020 · 2026-10-16 · M2-5: the executor transport
+
+- **Asked:** M2 plan task M2-5. Delivered under "merge each task when its review passes".
+- **Task:** The protocol pipe between the daemon and `warden-exec`: one ordered JSON-RPC transport over a socketpair (L1) or container stdio (L2).
+- **How:**
+  - **Codec:** a strict Content-Length codec and envelope in `internal/execproto`.
+  - **Server:** the executor-side server in `internal/exec`, with a hello gate and a single writer.
+  - **Client:** the daemon-side client in `internal/tools`, which delivers notifications in order, binds each write to the call's context, takes the meaning of an error code from its own table, and neutralises executor text.
+  - **Commits:** `bcfa1fc`, `c37e6d7`, `8bcce6f`, `fdbde48`.
+- **Rules kept:**
+  - R3, R4 and R6: the client imports only `execproto`, the server only `execproto`, and `execproto` only the standard library.
+  - INV-C: `secret_env` goes on the wire only through `MarshalWire`, and no frame is ever logged; a test checks both.
+  - Every goroutine has a stop path (§7).
+  - No wall-clock budgets in tests.
+  - Every guarded behaviour has a test that failed first and fails on revert.
+- **Rules changed or bent:**
+  - **Client API:** `New(ctx, rwc, onIO)` instead of A02 §4.8's `New(net.Conn)`, so it runs over stdio too. Decided by me; recorded in D-050.
+  - **Two test-only hook fields** (`afterWrite`, `beforeWrite`), nil in production.
+  - **Broken by mistake and repaired:** raw bidi characters got into a test source (the editing tool decoded `\u` escapes), and a GNU sed repair then damaged the file. It was caught by staticcheck ST1018, restored from HEAD and rewritten with numeric runes.
+- **Verified:**
+  - Three review rounds, the security boundary reviewed as hostile-executor.
+  - Fuzzing ran 5.3M + 1.5M execs with no failure.
+  - `-race -count=20` passes; `make check` is green; coverage is 94–98%.
+- **Left:**
+  - M3 must check `WaitResult` completeness before trusting it.
+  - A02 R7 ("only `internal/agentloop` imports `internal/tools`") is not enforced yet.
+  - Accepted minor (review round 4): `cutUTF8` walks back over any run of non-RuneStart bytes, so a detail of invalid UTF-8 longer than the limit can be cut to "". That costs diagnostics from a misbehaving peer, not safety. A fix would bound the walk to `utf8.UTFMax - 1` bytes.
+
 ## W-019 · 2026-10-16 · WH-3: the client verifies who serves the daemon endpoint (pipe squatting)
 
 - **Asked:** M2 plan task WH-3, the most serious open finding from the FX-3 security review (2026-10-08). The owner scheduled it "before L2, in parallel" on 2026-10-16. Delivered under "merge each task when its review passes".
