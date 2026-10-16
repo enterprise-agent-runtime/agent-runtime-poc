@@ -11,6 +11,8 @@
 // read every file regardless of build constraints, so an import or a call
 // hidden behind a GOOS tag is still seen. The scan skips only what the go
 // tool skips (testdata, "." and "_" names) and fails closed on symlinks,
-// junctions and other irregular entries, which it does not follow.
+// junctions and other irregular entries, which it does not follow, on any
+// import of a skipped path (the go tool compiles those when imported), and
+// on non-Go sources (assembly, cgo, .syso) that no rule can read.
 // scripts/lint-imports.sh and scripts/lint-exec.sh run these tests by name.
 package archtest

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,15 +48,28 @@ func (v Violation) String() string {
 	return fmt.Sprintf("%s:%d: %s: %s", v.Rel, v.Line, v.Rule, v.Detail)
 }
 
-// goIgnored reports whether the go tool ignores a directory or file of this
-// name at any depth: testdata, and names starting with "." or "_" (go help
-// packages). Such code is never compiled, so it is never scanned, and these
-// are the only names Scan skips: any other skip would leave every rule blind
-// to code that is compiled into the binaries (round 3 found docs/ at the root
-// skipped yet compiled). testdata trees are scanned explicitly by the tests.
+// goIgnored reports whether the go tool leaves a directory or file of this
+// name out of pattern matching (./...) at any depth: testdata, and names
+// starting with "." or "_" (go help packages). Scan skips exactly these and
+// nothing else; any other skip would leave every rule blind to compiled code
+// (round 3 found docs/ at the root skipped yet compiled). Skipping them is
+// safe only because nothing may import them: the go tool still compiles such
+// a package when something imports it (round 4), so Scan refuses every
+// module-internal import whose path has an element goIgnored matches.
+// testdata trees are scanned explicitly by the tests.
 func goIgnored(name string) bool {
 	return name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
+
+// nonGoSources are linked into the binaries by the go tool but cannot be read
+// by any rule here: assembly, cgo C/C++/Objective-C sources and headers, and
+// prebuilt .syso objects. Scan refuses each one outside the ignored names
+// unless it is in nonGoFiles.
+var nonGoSources = map[string]bool{".s": true, ".S": true, ".syso": true, ".c": true, ".cc": true, ".cpp": true, ".h": true, ".m": true}
+
+// nonGoFiles may hold a non-Go source. Empty: the tree has none, and adding
+// an entry needs its own justification.
+var nonGoFiles = map[string]bool{}
 
 // irregular reports whether a directory entry type is anything but a regular
 // file or a directory: a symlink, a Windows junction or other reparse point
@@ -66,10 +80,15 @@ func irregular(t fs.FileMode) bool {
 
 // Scan parses every .go file under root that the go tool would compile in
 // some build, skipping only what goIgnored names. Build constraints are not
-// evaluated. It fails closed: the go tool resolves package directories
-// through symlinks and junctions but Scan does not follow them, so every
-// irregular entry outside the ignored names is reported in a *ScanError and
-// the tree cannot pass until it is removed.
+// evaluated. It fails closed, returning a *ScanError so that every rule test
+// fails, on what it cannot vouch for:
+//   - symlinks, junctions and other irregular entries, which the go tool
+//     follows and Scan does not;
+//   - an import of a module-internal path with an element goIgnored matches,
+//     which the go tool compiles but Scan never reads (the module path is
+//     read from root's go.mod; without one, as in the seeded fixture tree,
+//     this check is off);
+//   - non-Go sources (nonGoSources) not in nonGoFiles.
 func Scan(root string) ([]File, error) {
 	return scanFS(os.DirFS(root))
 }
@@ -77,6 +96,10 @@ func Scan(root string) ([]File, error) {
 func scanFS(fsys fs.FS) ([]File, error) {
 	var files []File
 	var refused []Violation
+	module := ""
+	if b, err := fs.ReadFile(fsys, "go.mod"); err == nil {
+		module = modulePathOf(b)
+	}
 	fset := token.NewFileSet()
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -95,7 +118,14 @@ func scanFS(fsys fs.FS) ([]File, error) {
 			refused = append(refused, Violation{p, 0, "scan", entryKind(d.Type()) + ": the go tool follows links and archtest does not, so the tree may contain only regular files and directories"})
 			return nil
 		}
-		if d.IsDir() || !strings.HasSuffix(p, ".go") {
+		if d.IsDir() {
+			return nil
+		}
+		if nonGoSources[path.Ext(p)] && !nonGoFiles[p] {
+			refused = append(refused, Violation{p, 0, "scan", "non-Go source: the go tool links it into the binaries and no rule here can read it"})
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") {
 			return nil
 		}
 		src, err := fs.ReadFile(fsys, p)
@@ -106,6 +136,11 @@ func scanFS(fsys fs.FS) ([]File, error) {
 		if err != nil {
 			return err
 		}
+		for _, imp := range f.Imports {
+			if rest, ok := strings.CutPrefix(imp, module+"/"); module != "" && ok && slices.ContainsFunc(strings.Split(rest, "/"), goIgnored) {
+				refused = append(refused, Violation{p, 0, "scan", "imports " + imp + ": the go tool compiles it, but archtest skips testdata and \".\"/\"_\" names, so nothing may import them"})
+			}
+		}
 		files = append(files, f)
 		return nil
 	})
@@ -114,6 +149,16 @@ func scanFS(fsys fs.FS) ([]File, error) {
 		err = &ScanError{refused}
 	}
 	return files, err
+}
+
+// modulePathOf returns the module path declared in a go.mod file, "" if none.
+func modulePathOf(gomod []byte) string {
+	for _, line := range strings.Split(string(gomod), "\n") {
+		if m, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			return strings.Trim(strings.TrimSpace(m), `"`)
+		}
+	}
+	return ""
 }
 
 func parseFile(fset *token.FileSet, rel string, src []byte) (File, error) {

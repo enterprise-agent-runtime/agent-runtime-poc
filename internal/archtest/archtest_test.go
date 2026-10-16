@@ -277,3 +277,59 @@ func TestScan_FailsClosedOnIrregularEntries(t *testing.T) {
 		t.Errorf("regular files still scanned: got %v", files)
 	}
 }
+
+// TestScan_RefusesWhatTheGoToolHides exists because of round 4's full
+// bypass: the go tool leaves testdata and "."/"_" names out of ./... pattern
+// matching only, and still compiles such a package whenever something
+// imports it. Probe: internal/store/_impl with exec.Command and
+// net.Listen("tcp"), imported by internal/store/hidden_use.go, passed every
+// rule while go list -deps ./cmd/wardend listed it. Scan cannot read what it
+// skips, so it refuses the import instead. It also refuses non-Go sources
+// (assembly, cgo C/C++/Objective-C, .syso objects): they are linked into the
+// binaries and no rule here can read them. Third-party import paths are not
+// affected. This is an in-memory tree because a refusal stops every rule,
+// which would stop TestRules_CatchKnownViolations too.
+func TestScan_RefusesWhatTheGoToolHides(t *testing.T) {
+	src := func(imp string) *fstest.MapFile {
+		return &fstest.MapFile{Data: []byte("package api\n\nimport _ \"" + imp + "\"\n")}
+	}
+	fsys := fstest.MapFS{
+		"go.mod":                        {Data: []byte("module warden.dev/warden\n\ngo 1.26\n")},
+		"internal/api/_old/l.go":        {Data: []byte("package old\n")},
+		"internal/api/importsold.go":    src("warden.dev/warden/internal/api/_old"),
+		"internal/api/importstd.go":     src("warden.dev/warden/internal/api/testdata/pkg"),
+		"internal/api/importsdot.go":    src("warden.dev/warden/internal/.hidden"),
+		"internal/api/ok.go":            src("warden.dev/warden/internal/model"),
+		"internal/api/thirdparty.go":    src("github.com/example/_examples/x"), // not ours: unaffected
+		"internal/api/asm_amd64.s":      {Data: []byte("TEXT ·f(SB),0,$0\n")},
+		"internal/api/asm_arm64.S":      {},
+		"internal/api/blob.syso":        {},
+		"internal/api/c.c":              {},
+		"internal/api/c.cc":             {},
+		"internal/api/c.cpp":            {},
+		"internal/api/c.h":              {},
+		"internal/api/m.m":              {},
+		"internal/api/README.md":        {}, // not a source the toolchain links
+		"internal/api/_ignored/x.c":     {}, // inside an ignored name: never read by the go tool either
+		"internal/api/testdata/pkg/x.c": {},
+	}
+	_, err := scanFS(fsys)
+	var se *ScanError
+	if !errors.As(err, &se) {
+		t.Fatalf("scanFS returned %v, want a *ScanError", err)
+	}
+	var got []string
+	for _, v := range se.Violations {
+		got = append(got, v.Rule+" "+v.Rel)
+	}
+	sort.Strings(got)
+	want := []string{
+		"scan internal/api/asm_amd64.s", "scan internal/api/asm_arm64.S", "scan internal/api/blob.syso",
+		"scan internal/api/c.c", "scan internal/api/c.cc", "scan internal/api/c.cpp", "scan internal/api/c.h",
+		"scan internal/api/importsdot.go", "scan internal/api/importsold.go", "scan internal/api/importstd.go",
+		"scan internal/api/m.m",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("refused entries differ\n got:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	}
+}
