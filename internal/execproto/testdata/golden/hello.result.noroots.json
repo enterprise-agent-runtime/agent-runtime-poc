@@ -1,0 +1,1 @@
+{"protocol":"warden.exec/1","executor_version":"0.2.0","os":"darwin","arch":"arm64","mode":"harness","roots":[],"profiles_digest":"sha256:3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8550","features":{"openat2":false,"o_nofollow_any":true,"pid_namespace":false,"cgroup":false},"pid":7,"uid":501}

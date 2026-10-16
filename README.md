@@ -77,7 +77,7 @@ Provider secrets go to the OS keychain, or to an encrypted file unlocked with `w
 | `internal/secrets` | keychain and encrypted-file backends, `secret://` broker, redaction, checkpoint signer (design A15) |
 | `internal/platform` | every OS difference: home, socket/pipe, files, spawn, terminal |
 | `internal/config` | `models.yaml` loading and validation, probe cache |
-| `internal/exec/denylist` | the platform deny-list shared by policy, executor and sandbox |
+| `internal/execproto/denylist` | the platform deny-list shared by policy, executor and sandbox |
 | `internal/sandbox`, `internal/worktree` | M1: doctor probes. M2/M4: sandboxes and worktrees |
 | `internal/archtest` | static architecture checks |
 | `spikes/copilot` | Copilot SDK spike (its own module) |

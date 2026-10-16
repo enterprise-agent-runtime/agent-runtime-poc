@@ -136,7 +136,7 @@ func TestDial_RefusesOversizedToken(t *testing.T) {
 // ErrNotRunning; the others say what happened and keep their cause.
 func TestDialError_Wording(t *testing.T) {
 	const ep = `\.\pipe\warden-test`
-	errNotOwned := errors.New("endpoint is served by another user") // stands in for platform.ErrEndpointNotOwned
+	errNotOwned := fmt.Errorf("refusing %s: %w: the pipe is owned by another user", ep, platform.ErrEndpointNotOwned)
 	transport := func(err error) error { return fmt.Errorf("wardend is not running (%s): %w", ep, err) }
 	cases := []struct {
 		name       string
@@ -147,7 +147,7 @@ func TestDialError_Wording(t *testing.T) {
 		{"missing", transport(&fs.PathError{Op: "open", Path: ep, Err: fs.ErrNotExist}), true, "not running"},
 		{"refused", transport(syscall.ECONNREFUSED), true, "not running"},
 		{"access denied", transport(&fs.PathError{Op: "open", Path: ep, Err: fs.ErrPermission}), false, "access denied"},
-		{"not owned", errNotOwned, false, "another user"},
+		{"not owned", errNotOwned, false, "not served by the current user"},
 	}
 	for _, c := range cases {
 		got := dialError(ep, c.err)
@@ -161,7 +161,7 @@ func TestDialError_Wording(t *testing.T) {
 			t.Errorf("%s: cause lost: %v", c.name, got)
 		}
 	}
-	if got := dialError(ep, errNotOwned); !errors.Is(got, errNotOwned) {
+	if got := dialError(ep, errNotOwned); !errors.Is(got, platform.ErrEndpointNotOwned) {
 		t.Errorf("endpoint-not-owned identity lost: %v", got)
 	}
 }

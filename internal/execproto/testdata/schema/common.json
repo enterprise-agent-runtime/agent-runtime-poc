@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/exec/common.json",
+  "title": "warden-exec common definitions",
+  "$defs": {
+    "RootName": { "enum": ["worktree", "scratch", "cache", "git"] },
+    "InputPath": {
+      "type": "string", "minLength": 1, "maxLength": 4096,
+      "description": "Relative to the root (preferred) or absolute in sandbox coordinates. No NUL; each segment at most 255 bytes."
+    },
+    "RelPath": {
+      "type": "string", "maxLength": 4096,
+      "description": "Root-relative, slash-separated, no leading '/', no '.' or '..' segments; '' is the root itself."
+    },
+    "Sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "Encoding": { "enum": ["utf-8", "base64"] },
+    "Kind": { "enum": ["file", "dir", "symlink", "other"] },
+    "CallId": { "type": "string", "pattern": "^call_[0-9A-Za-z]{1,40}$" },
+    "Handle": { "type": "string", "pattern": "^ph_[0-9]{1,10}$" },
+    "Resolved": {
+      "type": "object",
+      "required": ["root", "rel_path", "canonical", "deny_match"],
+      "additionalProperties": false,
+      "properties": {
+        "root": { "$ref": "#/$defs/RootName" },
+        "rel_path": { "$ref": "#/$defs/RelPath" },
+        "canonical": { "type": "string", "description": "Absolute sandbox path after symlink resolution inside the roots" },
+        "requested_rel_path": { "$ref": "#/$defs/RelPath", "description": "Lexically cleaned input before symlink resolution" },
+        "deny_match": { "type": ["string", "null"], "description": "Deny-list glob that matched the requested or canonical path, else null" }
+      }
+    },
+    "ErrorData": {
+      "type": "object",
+      "required": ["code", "violation"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "enum": ["path_escape", "outside_roots", "deny_list", "not_found", "not_regular", "not_allowed", "shell_string", "profile_mismatch", "too_large", "timeout", "invalid_argument", "conflict", "patch_failed", "redaction_marker", "mode_forbidden", "branch_mismatch", "busy", "io_error", "invalid_state", "shutting_down"] },
+        "violation": { "type": "boolean", "description": "True when the daemon must emit sandbox.violation" },
+        "kind": { "enum": ["path_escape", "deny_list", "root_check", null] },
+        "detail": { "type": "string", "maxLength": 1024 },
+        "rel_path": { "$ref": "#/$defs/RelPath" }
+      }
+    }
+  }
+}

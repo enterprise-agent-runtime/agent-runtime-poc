@@ -1,0 +1,1 @@
+{"handle":"ph_2","state":"exited","signal":"SIGSYS","reason":"resource","resource":{"kind":"memory","detail":"cgroup memory.max reached"},"seccomp_kill":true,"duration_ms":40,"truncated":true,"strays_killed":2}

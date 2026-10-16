@@ -79,7 +79,7 @@ func TestConnect_NotRunningStarts(t *testing.T) {
 // starts nothing: starting wardend there would hand our token to whoever
 // owns the endpoint, or replace the running daemon's token.
 func TestConnect_StartsOnlyOnNotRunning(t *testing.T) {
-	errNotOwned := errors.New("endpoint is served by another user") // stands in for platform.ErrEndpointNotOwned
+	errNotOwned := fmt.Errorf("refusing x: %w", platform.ErrEndpointNotOwned)
 	cases := []struct {
 		name      string
 		dialErr   error

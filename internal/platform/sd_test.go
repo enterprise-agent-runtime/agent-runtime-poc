@@ -247,16 +247,10 @@ func testSD(owner []byte, control uint16, aces ...[]byte) []byte {
 			b = append(b, a...)
 		}
 	}
-	return withOwner(b, owner)
-}
-
-// withOwner appends owner to sd and points OffsetOwner at it (nil: no owner).
-func withOwner(sd, owner []byte) []byte {
 	if owner == nil {
-		return sd
+		return b
 	}
-	binary.LittleEndian.PutUint32(sd[4:], uint32(len(sd)))
-	return append(sd, owner...)
+	return withOwner(b, owner) // endpoint_test.go
 }
 
 // headerOverlapSD places the DACL at offset 10, inside the 20-byte header:
@@ -292,7 +286,10 @@ func nullDACLSD(owner []byte) []byte {
 	b := make([]byte, sdHeaderSize)
 	b[0] = 1
 	binary.LittleEndian.PutUint16(b[2:], seDACLPresent|seDACLProtected|seSelfRelative)
-	return withOwner(b, owner)
+	if owner == nil {
+		return b
+	}
+	return withOwner(b, owner) // endpoint_test.go
 }
 
 // TestOwnerOnlyDirDACL guards the directory form of the check (WH-1+2,

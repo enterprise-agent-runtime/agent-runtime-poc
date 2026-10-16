@@ -353,8 +353,12 @@ func underAny(dir string, prefixes []string) bool {
 }
 
 // isStdlib reports whether an import path belongs to the standard library
-// (its first element has no dot).
+// (its first element has no dot). "C" is not: it is cgo, which compiles
+// and links the arbitrary C code in the file's preamble.
 func isStdlib(p string) bool {
+	if p == "C" {
+		return false
+	}
 	first, _, _ := strings.Cut(p, "/")
 	return !strings.Contains(first, ".")
 }

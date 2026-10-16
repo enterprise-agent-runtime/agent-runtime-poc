@@ -55,6 +55,10 @@ func Dial(ctx context.Context, l platform.Layout, name, version string, onNotify
 	if err != nil {
 		return nil, err
 	}
+	// platform.Dial returns only an endpoint served by the current user
+	// (platform.ErrEndpointNotOwned otherwise), so the token below never
+	// reaches a pipe or socket another local user created first. Handshake
+	// on a connection from anywhere else has no such guarantee.
 	nc, err := platform.Dial(ctx, l.Home)
 	if err != nil {
 		return nil, dialError(platform.Endpoint(l.Home), err)

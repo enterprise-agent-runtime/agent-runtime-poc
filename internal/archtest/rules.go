@@ -309,6 +309,16 @@ func ImportRules(module string, files []File) []Violation {
 				} else if !isInternal && !isStdlib(imp) && !under(imp, "golang.org/x/sys") {
 					bad = "R3: the executor imports no third-party module except golang.org/x/sys"
 				}
+			case under(f.Dir, "internal/execproto") && !f.Test:
+				// Design A02 §5 R6: execproto is a stdlib-only leaf. The wire
+				// types and the deny-list (internal/execproto/denylist, D-014,
+				// design A06 §3.1/§17) are linked into the daemon, the policy
+				// engine, the sandbox mount layer and the executor (INV-I), so
+				// anything it imports would cross R3 into the executor. Test
+				// files are exempt (the golden tests use jsonschema).
+				if isInternal || !isStdlib(imp) {
+					bad = "R6: internal/execproto/... imports only the standard library"
+				}
 			case under(f.Dir, "internal/policy"):
 				if isInternal && (under(internal, "internal/providers") || under(internal, "internal/harness")) {
 					bad = "internal/policy imports no provider or harness package"

@@ -1,0 +1,3 @@
+{"resolved":{"root":"worktree","rel_path":"src/routes/users.ts","canonical":"/work/src/routes/users.ts","requested_rel_path":"src/routes/users.ts","deny_match":null},
+ "content":"export const users = [];\n","encoding":"utf-8","size":25,"offset":0,"returned":25,"eof":true,
+ "sha256":"sha256:0f343b0931126a20f133d67c2b018a3b5d4b5f4d6b0e4f2c6b8c1c2f1b2a3c4d"}

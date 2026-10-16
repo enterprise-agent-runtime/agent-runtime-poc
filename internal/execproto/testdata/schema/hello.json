@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/exec/hello.json",
+  "$defs": {
+    "Params": {
+      "type": "object", "required": ["protocol", "sandbox_id", "session_id", "daemon_version"], "additionalProperties": false,
+      "properties": {
+        "protocol": { "const": "warden.exec/1" },
+        "sandbox_id": { "type": "string", "pattern": "^sb_[0-9A-Z]{26}$" },
+        "session_id": { "type": "string", "pattern": "^ses_[0-9A-Z]{26}$" },
+        "daemon_version": { "type": "string" }
+      }
+    },
+    "Result": {
+      "type": "object",
+      "required": ["protocol", "executor_version", "os", "arch", "mode", "roots", "profiles_digest", "features", "pid", "uid"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol": { "const": "warden.exec/1" },
+        "executor_version": { "type": "string" },
+        "os": { "enum": ["linux", "darwin"] },
+        "arch": { "enum": ["amd64", "arm64"] },
+        "mode": { "enum": ["tool", "harness"] },
+        "roots": { "type": "array", "items": { "type": "object", "required": ["name", "path", "mode"], "additionalProperties": false,
+          "properties": { "name": { "type": "string" }, "path": { "type": "string" }, "mode": { "enum": ["rw", "ro"] } } } },
+        "profiles_digest": { "$ref": "https://schemas.warden.dev/poc/exec/common.json#/$defs/Sha256" },
+        "features": { "type": "object", "additionalProperties": false, "properties": {
+          "openat2": { "type": "boolean" }, "o_nofollow_any": { "type": "boolean" }, "pid_namespace": { "type": "boolean" }, "cgroup": { "type": "boolean" } } },
+        "pid": { "type": "integer" },
+        "uid": { "type": "integer" },
+        "proxy_listen": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
