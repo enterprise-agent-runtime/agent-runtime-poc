@@ -22,6 +22,28 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-023 · 2026-10-16 · M2-12: the sandbox Spec, its mounts and its environment
+
+- **Asked:** M2 plan task M2-12. Delivered under "merge each task when its review passes".
+- **Task:** One backend-neutral description of a sandbox from which the mount table and the environment are derived, checked so that no backend can be handed a sandbox the invariants forbid.
+- **How:**
+  - **Spec and Validate** (D-056): the exact A06 §2 session layout, required `HostHome`, host sources checked against both homes and the deny-list, L2 per C-03.
+  - **Mounts and Env:** exactly the C-24 list and the A06 §8 allowlist; nothing read from the host environment.
+  - **Mask walk** (D-057): the A06 §11.3 walk over an `fs.FS`, failing closed at its bounds.
+  - **FakeSandbox:** built through the same code, keeping its own deep copy of the Spec.
+  - **Commits:** `4a530f3`, `d9d381d`, `abd1dc5`, `fa795a5`.
+- **Rules kept:**
+  - R4: `internal/sandbox` imports only `execproto` and `execproto/denylist`.
+  - No processes, no real mounts (the walk takes an `fs.FS`), no `runtime.GOOS`, no new dependency.
+  - Mutation checks: 28 of 29 mutants caught after round 2.
+- **Rules changed or bent:**
+  - **Test first was partial for `Validate`** in the first commit (it was written alongside its tests); the mutation check covers it.
+  - **"Worktree inside the Warden home is an error" replaced** by the exact session layout, because in A06 §2 every worktree lives under `<home>/sessions`. Decided by me.
+  - **Upper-case sidecar hosts are refused**, not lower-cased: the daemon names the sidecar, so a capital letter means the address came from somewhere else.
+  - **Test layout** uses a fixed `/srv/warden-test` base on slash hosts, because `t.TempDir()` lives under the reserved `/tmp`; the L1 toolchain-root rows skip on Windows, where L1 does not exist, and run on Linux and macOS CI.
+- **Verified:** two review rounds, code and security together; `make check` green; `-race` in WSL2; a case-insensitivity probe on WSL drvfs (which found the L2 mask bypass recorded in PROGRESS).
+- **Left:** see the M2-12 entry in PROGRESS (M2-13 items, the L2 case-sensitivity fix, git object reads for A14).
+
 ## W-022 · 2026-10-16 · M2-6: the executor resolves and opens model paths without escaping the roots
 
 - **Asked:** M2 plan task M2-6. Delivered under "merge each task when its review passes".
