@@ -144,6 +144,13 @@ func run() int {
 		slog.Error("cannot write the token file", "error", err.Error())
 		return 1
 	}
+	// Verify what was written before serving with it (WH-1+2): a token file
+	// another account can read or replace defeats the handshake.
+	if err := platform.CheckOwnerOnly(l.Token()); err != nil {
+		slog.Error("the token file is not owner-only; refusing to serve", "error", err.Error())
+		os.Remove(l.Token())
+		return 1
+	}
 	ln, err := platform.Listen(home)
 	if errors.Is(err, platform.ErrDaemonRunning) {
 		fmt.Fprintln(os.Stderr, "wardend: already running for", home)

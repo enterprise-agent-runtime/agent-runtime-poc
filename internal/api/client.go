@@ -51,15 +51,33 @@ type reply struct {
 
 // Dial connects to the daemon of a Warden home.
 func Dial(ctx context.Context, l platform.Layout, name, version string, onNotify Notify) (*Client, error) {
-	tok, err := os.ReadFile(l.Token())
+	tok, err := readToken(l.Token())
 	if err != nil {
-		return nil, fmt.Errorf("wardend is not running (no token file at %s)", l.Token())
+		return nil, err
 	}
 	nc, err := platform.Dial(ctx, l.Home)
 	if err != nil {
 		return nil, err
 	}
-	return Handshake(ctx, nc, strings.TrimSpace(string(tok)), name, version, onNotify)
+	return Handshake(ctx, nc, tok, name, version, onNotify)
+}
+
+// readToken reads the token file, refusing one that is not owner-only: a
+// file another account can write may hold its token, not the daemon's, and
+// one it can read has leaked the token already (WH-1+2, security review of
+// FX-3; A05 §3.1).
+func readToken(path string) (string, error) {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("wardend is not running (no token file at %s)", path)
+	}
+	if err := platform.CheckOwnerOnly(path); err != nil {
+		return "", fmt.Errorf("refusing to send the token: %w", err)
+	}
+	tok, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot read the token file: %w", err)
+	}
+	return strings.TrimSpace(string(tok)), nil
 }
 
 // Handshake wraps an established connection and performs system.hello.

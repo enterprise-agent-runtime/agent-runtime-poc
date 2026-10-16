@@ -155,3 +155,63 @@ func TestUser(t *testing.T) {
 		t.Fatal("Alive")
 	}
 }
+
+// TestWriteOwnerOnly_OldTempNamePlanted guards WH-1+2 (a): the temp file was
+// always path+".tmp", which another account able to write the directory
+// could pre-create (owning it on Windows, so keeping WRITE_DAC). Something
+// planted at the old name no longer affects the write; a directory makes
+// the old code fail outright on every OS.
+func TestWriteOwnerOnly_OldTempNamePlanted(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "token")
+	if err := os.Mkdir(p+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteOwnerOnly(p, []byte("tok")); err != nil {
+		t.Fatalf("WriteOwnerOnly with %s.tmp planted: %v", p, err)
+	}
+	if ok, err := OwnerOnly(p); err != nil || !ok {
+		t.Fatalf("owner-only %v %v; read back %s", ok, err, ownerOnlyDetail(p))
+	}
+}
+
+// TestWriteOwnerOnly_TempNameRandomAndExclusive guards WH-1+2 (a): the temp
+// name is unpredictable (two writes use different names, never the old
+// path+".tmp"), lives next to the target so the rename stays on one volume,
+// is gone afterwards, and an existing file at the chosen name is refused
+// (O_EXCL / CREATE_NEW), never truncated and reused.
+func TestWriteOwnerOnly_TempNameRandomAndExclusive(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "token")
+	var names []string
+	h := writeHooks{afterCreate: func(tmp string) error { names = append(names, tmp); return nil }}
+	for i := 0; i < 2; i++ {
+		if err := writeOwnerOnly(p, []byte("tok"), h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(names) != 2 || names[0] == names[1] {
+		t.Fatalf("temp names %q: want two different names", names)
+	}
+	for _, n := range names {
+		if n == p+".tmp" || filepath.Dir(n) != filepath.Dir(p) || !strings.HasPrefix(filepath.Base(n), "token.") {
+			t.Errorf("temp name %s: want a random name next to %s", n, p)
+		}
+		if _, err := os.Lstat(n); !os.IsNotExist(err) {
+			t.Errorf("temp file %s left behind (%v)", n, err)
+		}
+	}
+
+	planted := filepath.Join(filepath.Dir(p), "planted")
+	if err := os.WriteFile(planted, []byte("theirs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	q := filepath.Join(filepath.Dir(p), "other")
+	if err := writeOwnerOnly(q, []byte("tok"), writeHooks{tempName: func(string) string { return planted }}); err == nil {
+		t.Fatal("write through an existing temp file succeeded")
+	}
+	if b, _ := os.ReadFile(planted); string(b) != "theirs" {
+		t.Errorf("planted file rewritten: %q", b)
+	}
+	if _, err := os.Lstat(q); !os.IsNotExist(err) {
+		t.Errorf("%s created through a planted temp file (%v)", q, err)
+	}
+}

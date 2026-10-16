@@ -8,6 +8,8 @@
 package platform
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -70,14 +72,77 @@ func (l Layout) Token() string { return l.path("run", "token") }
 // PID is the daemon pid file.
 func (l Layout) PID() string { return l.path("run", "wardend.pid") }
 
-// Ensure creates the home and its directories owner-only.
+// Ensure creates the home and its directories owner-only. The home and run
+// directories get an explicit owner-only descriptor on Windows, inherited by
+// what is created in them (WH-1+2); the others are 0700 and, on Windows,
+// inherit the home's.
 func (l Layout) Ensure() error {
-	for _, d := range []string{l.Home, l.Run(), l.DB(), l.Blobs(), l.Keys(), l.Exports(), l.Logs(), l.Cache()} {
+	for _, d := range []string{l.Home, l.Run()} {
+		if err := ensureOwnerOnlyDir(d); err != nil {
+			return err
+		}
+	}
+	for _, d := range []string{l.DB(), l.Blobs(), l.Keys(), l.Exports(), l.Logs(), l.Cache()} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// CheckOwnerOnly returns an error unless path is owner-only (OwnerOnly):
+// wardend checks the token file right after writing it and refuses to serve,
+// and the client checks it before reading the token (WH-1+2, security review
+// of FX-3).
+func CheckOwnerOnly(path string) error {
+	ok, err := OwnerOnly(path)
+	if err != nil {
+		return fmt.Errorf("cannot check that %s is owner-only: %w", path, err)
+	}
+	if !ok {
+		return fmt.Errorf("%s is not owner-only (%s): another account could read or replace it; remove it and restart wardend", path, ownerOnlyDetail(path))
+	}
+	return nil
+}
+
+// writeHooks lets tests choose the temp name and look at the temp file
+// between its creation and the write. The zero value is production.
+type writeHooks struct {
+	tempName    func(path string) string
+	afterCreate func(tmp string) error
+}
+
+// temp returns the temp file name for path: path, a dot, 16 random hex
+// digits and ".tmp", in the same directory so the rename stays on one
+// volume. It is unpredictable so another account cannot pre-create it.
+func (h writeHooks) temp(path string) (string, error) {
+	if h.tempName != nil {
+		return h.tempName(path), nil
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return path + "." + hex.EncodeToString(b[:]) + ".tmp", nil
+}
+
+// writeSyncClose writes data to f, flushes it to disk and closes it.
+func writeSyncClose(f *os.File, data []byte, h writeHooks) error {
+	if h.afterCreate != nil {
+		if err := h.afterCreate(f.Name()); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // OS names the running operating system for system.version.
