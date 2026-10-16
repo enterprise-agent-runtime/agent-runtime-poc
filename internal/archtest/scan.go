@@ -23,6 +23,7 @@ type File struct {
 	DotImports []string // import paths imported with "." (their identifiers are not resolved into Uses)
 	Constraint string   // the //go:build expression, "" if none
 	Sandboxed  bool     // has a "// sandboxed: <reason>" comment with a non-empty reason
+	Linknames  []int    // lines of //go:linkname directives
 	Uses       []Use    // selector expressions of interest (pkg.Name), resolved to import paths
 }
 
@@ -143,6 +144,9 @@ func parseFile(fset *token.FileSet, rel string, src []byte) (File, error) {
 	}
 	for _, cg := range af.Comments {
 		for _, c := range cg.List {
+			if strings.HasPrefix(c.Text, "//go:linkname ") {
+				f.Linknames = append(f.Linknames, fset.Position(c.Pos()).Line)
+			}
 			if strings.HasPrefix(c.Text, "//go:build ") && c.Pos() < af.Package {
 				f.Constraint = strings.TrimSpace(strings.TrimPrefix(c.Text, "//go:build "))
 			}

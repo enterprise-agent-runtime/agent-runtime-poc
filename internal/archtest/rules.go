@@ -49,10 +49,28 @@ var listenAllowed = "; allowed only in " + strings.Join(listenDirs, ", ") + " an
 // dot-import makes them unqualified, so Scan cannot resolve their uses and
 // the rules would be blind; such an import is therefore a violation itself.
 var dotWatchedExec = []string{"os/exec", "os", "syscall", "golang.org/x/sys/unix", "golang.org/x/sys/windows"}
-var dotWatchedListen = []string{"net", "net/http"}
+var dotWatchedListen = []string{"net", "net/http", "crypto/tls"}
 
-// rawSocketPkgs expose Bind and Listen on raw sockets, bypassing package net.
+// rawSocketPkgs expose Bind and Listen on raw sockets, bypassing package net,
+// and the numbered system-call entry points in rawSyscalls.
 var rawSocketPkgs = map[string]bool{"syscall": true, "golang.org/x/sys/unix": true, "golang.org/x/sys/windows": true}
+
+// rawSyscalls call a system call by number, so they can fork, exec, bind or
+// listen past every named check here. They are allowed in execPackages and
+// in rawSyscallFiles only.
+var rawSyscalls = map[string]bool{"Syscall": true, "Syscall6": true, "RawSyscall": true, "RawSyscall6": true, "SyscallN": true}
+
+// rawSyscallFiles may make raw system calls outside execPackages. Each entry
+// is one exact file. The entries are the host terminal helpers behind the
+// CLI's passphrase prompt: ioctl TCGETS/TCSETS (TIOCGETA/TIOCSETA on macOS)
+// to switch echo off and back on. They neither create a process nor open a
+// socket.
+var rawSyscallFiles = map[string]bool{"internal/platform/term_linux.go": true, "internal/platform/term_darwin.go": true}
+
+// linknameFiles may carry a //go:linkname directive, which reaches
+// unexported runtime and syscall functions past every check here. Empty: no
+// file needs one, and adding an entry needs its own justification.
+var linknameFiles = map[string]bool{}
 
 // osDirs may select behaviour by operating system (CLAUDE.md §3, §6). The
 // executor is included because its semantics are per OS (openat2, process
@@ -69,7 +87,9 @@ var processStarters = map[string]map[string]bool{
 
 // ExecRule implements INV-H statically: os/exec only in execPackages, with a
 // //sandboxed justification; other process starters likewise, plus the
-// documented daemon self-spawn. Test files are included ("including tests").
+// documented daemon self-spawn. Raw numbered system calls only in
+// execPackages and rawSyscallFiles; //go:linkname only in linknameFiles
+// (none). Test files are included ("including tests").
 func ExecRule(files []File) []Violation {
 	var out []Violation
 	for _, f := range files {
@@ -88,7 +108,15 @@ func ExecRule(files []File) []Violation {
 				out = append(out, Violation{f.Rel, 0, "INV-H", "os/exec imported without a //sandboxed: <reason> comment"})
 			}
 		}
+		if !linknameFiles[f.Rel] {
+			for _, line := range f.Linknames {
+				out = append(out, Violation{f.Rel, line, "INV-H", "//go:linkname reaches unexported runtime and syscall code past this check"})
+			}
+		}
 		for _, u := range f.Uses {
+			if rawSocketPkgs[u.Pkg] && rawSyscalls[u.Name] && !underAny(f.Dir, execPackages) && !rawSyscallFiles[f.Rel] {
+				out = append(out, Violation{f.Rel, u.Line, "INV-H", fmt.Sprintf("raw system call %s.%s outside the sandbox packages", path.Base(u.Pkg), u.Name)})
+			}
 			if !processStarters[u.Pkg][u.Name] {
 				continue
 			}
@@ -110,7 +138,8 @@ func ExecRule(files []File) []Violation {
 // Server type is flagged wherever it is named, because its methods
 // (ListenAndServe, Serve) are called on a value and are invisible to a check
 // of package-qualified calls. Dot-imports of net and net/http are flagged for
-// the same reason. Also flagged: net.FileListener, raw Listen and Bind from
+// the same reason, as are dot-imports of crypto/tls. Also flagged:
+// tls.Listen, tls.NewListener, net.FileListener, raw Listen and Bind from
 // syscall and golang.org/x/sys/{unix,windows}, and importing net/http/httptest.
 // Test files are exempt (httptest servers bind 127.0.0.1 inside the test
 // process).
@@ -142,6 +171,8 @@ func ListenRule(files []File) []Violation {
 				bad = "http." + u.Name
 			case u.Pkg == "net/http" && u.Name == "Server":
 				bad = "http.Server (its ListenAndServe and Serve methods open or serve a listener)"
+			case u.Pkg == "crypto/tls" && (u.Name == "Listen" || u.Name == "NewListener"):
+				bad = "tls." + u.Name + " (a TLS listener is a TCP listener)"
 			case u.Pkg == "net" && u.Name == "FileListener":
 				bad = "net.FileListener (a listener from an inherited or raw socket)"
 			case rawSocketPkgs[u.Pkg] && (u.Name == "Listen" || u.Name == "Bind"):

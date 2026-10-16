@@ -151,14 +151,32 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		// and x/sys/unix, and R4 applying to test files. R3 does not apply to
 		// executor test files (A02 "!$test"): internal/exec/x_test.go and
 		// cmd/warden-exec/main_test.go import internal/store and are allowed.
-		"INV-H internal/store/dotos.go",          // import . "os" hides StartProcess
-		"INV-H internal/store/dotunix.go",        // import . "golang.org/x/sys/unix" hides Exec
-		"INV-J internal/api/filelistener.go",     // net.FileListener
-		"INV-J internal/api/httptest.go",         // net/http/httptest in a non-test file
-		"INV-J internal/api/syslisten.go",        // syscall.Listen
-		"INV-J internal/api/unixbind.go",         // unix.Bind
-		"INV-J internal/api/winlisten.go",        // windows.Listen
-		"imports internal/api/x_test.go",         // R4 includes test files
+		"INV-H internal/store/dotos.go",      // import . "os" hides StartProcess
+		"INV-H internal/store/dotunix.go",    // import . "golang.org/x/sys/unix" hides Exec
+		"INV-J internal/api/filelistener.go", // net.FileListener
+		"INV-J internal/api/httptest.go",     // net/http/httptest in a non-test file
+		"INV-J internal/api/syslisten.go",    // syscall.Listen
+		"INV-J internal/api/unixbind.go",     // unix.Bind
+		"INV-J internal/api/winlisten.go",    // windows.Listen
+		"imports internal/api/x_test.go",     // R4 includes test files
+		// Round 3: a TLS listener is a TCP listener. Raw system calls by number
+		// can create processes or sockets past every named check, so they are
+		// confined to the sandbox packages plus the platform terminal files
+		// (internal/sandbox/ok/raw.go and internal/platform/term_linux.go are
+		// allowed; internal/platform/other.go is not). //go:linkname reaches
+		// unexported runtime and syscall code; its allowlist is empty.
+		"INV-H internal/platform/other.go",       // syscall.Syscall beside the allowed terminal file
+		"INV-H internal/store/linkname.go",       // //go:linkname
+		"INV-H internal/store/rawsyscall.go",     // syscall.Syscall
+		"INV-H internal/store/rawsyscall.go",     // syscall.Syscall6
+		"INV-H internal/store/rawsyscall.go",     // syscall.RawSyscall
+		"INV-H internal/store/rawsyscall.go",     // syscall.RawSyscall6
+		"INV-H internal/store/rawsyscall.go",     // syscall.SyscallN
+		"INV-H internal/store/rawunix.go",        // unix.Syscall
+		"INV-H internal/store/rawwindows.go",     // windows.SyscallN
+		"INV-J internal/api/dottls.go",           // import . "crypto/tls" hides Listen
+		"INV-J internal/api/tls.go",              // tls.Listen
+		"INV-J internal/api/tls.go",              // tls.NewListener
 		"imports internal/policy/bad.go",         // policy importing a provider
 		"imports internal/providers/bad/bad.go",  // third-party import in a provider
 		"imports internal/providers/bad/bad.go",  // provider importing internal/store
