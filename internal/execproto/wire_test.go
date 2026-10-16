@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -373,7 +372,12 @@ func TestWireTypesHaveNoEmbeddedFields(t *testing.T) {
 // TestDecodeSecretEnvManyKeysFast: secret_env holds at most one variable
 // (proc.json maxProperties 1). The case-variant check compared every pair
 // of keys, so a frame with 100k keys took 84 s of CPU (re-review of
-// 3ddbd15); the count is now checked first.
+// 3ddbd15). The key check now refuses the frame at the second key, without
+// reading the rest. The bound is a count of allocations, not wall-clock
+// time: a time budget failed under -race in CI (CLAUDE.md §8.6, flaky
+// tests), while the allocation count is the same with or without the race
+// detector and a full walk would exceed it a hundredfold (one key string
+// per key, plus the decoder's map).
 func TestDecodeSecretEnvManyKeysFast(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`{"call_id":"call_1","argv":["go"],"timeout_ms":1000,"secret_env":{`)
@@ -384,14 +388,15 @@ func TestDecodeSecretEnvManyKeysFast(t *testing.T) {
 		fmt.Fprintf(&b, `"K%d":"v"`, i)
 	}
 	b.WriteString(`},"authz":{"decision_id":"dec_1","profile":"","approved":true,"kind":"harness"}}`)
-	start := time.Now()
-	err := Decode([]byte(b.String()), new(SpawnParams))
-	elapsed := time.Since(start)
+	raw := []byte(b.String())
+	var err error
+	allocs := testing.AllocsPerRun(3, func() { err = Decode(raw, new(SpawnParams)) })
 	if err == nil {
 		t.Error("Decode accepted 100000 secret_env keys")
 	}
-	if elapsed > 500*time.Millisecond {
-		t.Errorf("Decode took %v for a 100k-key secret_env", elapsed)
+	t.Logf("100k-key secret_env refused after %.0f allocations", allocs)
+	if allocs > 1000 {
+		t.Errorf("Decode made %.0f allocations for a 100k-key secret_env, want it refused before reading the keys (≤ 1000)", allocs)
 	}
 	two := `{"call_id":"call_1","argv":["go"],"timeout_ms":1000,"secret_env":{"A":"1","B":"2"},"authz":{"decision_id":"dec_1","profile":"","approved":true,"kind":"harness"}}`
 	if err := Decode([]byte(two), new(SpawnParams)); err == nil {
@@ -427,5 +432,18 @@ func TestDecodeArraysBounded(t *testing.T) {
 	}
 	if err := Decode([]byte(spawn(ok)), new(SpawnParams)); err != nil {
 		t.Errorf("1024-element argv refused: %v", err)
+	}
+}
+
+// TestSecretEnvUnmarshalCountsKeys: the key check refuses a second
+// secret_env key inside Decode; SecretEnv.UnmarshalJSON refuses it again
+// for callers that use encoding/json directly (defence in depth).
+func TestSecretEnvUnmarshalCountsKeys(t *testing.T) {
+	var e SecretEnv
+	if err := json.Unmarshal([]byte(`{"A":"1","B":"2"}`), &e); err == nil {
+		t.Error("json.Unmarshal into SecretEnv accepted two keys")
+	}
+	if err := json.Unmarshal([]byte(`{"A":"1"}`), &e); err != nil || e.Len() != 1 {
+		t.Errorf("one key: %v, Len %d", err, e.Len())
 	}
 }

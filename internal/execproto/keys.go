@@ -97,8 +97,14 @@ func (w *keyWalker) walk(t reflect.Type) error {
 		if !ok {
 			return fmt.Errorf("an object where %s is expected, at %s", t, w.at())
 		}
+		limit := maxObjectKeys(t)
 		seen := map[string]bool{}
-		for w.dec.More() {
+		for count := 0; w.dec.More(); count++ {
+			if limit > 0 && count == limit {
+				// Refuse at the first key too many, before reading the rest:
+				// a 100k-key secret_env is one key over, not 100k keys of work.
+				return fmt.Errorf("more than %d keys in %s", limit, w.at())
+			}
 			tok, err := w.dec.Token()
 			if err != nil {
 				return err
@@ -125,6 +131,16 @@ func (w *keyWalker) walk(t reflect.Type) error {
 	}
 	_, err = w.dec.Token() // the closing delimiter
 	return err
+}
+
+// maxObjectKeys is the most keys an object decoded into t may have, 0 for no
+// limit beyond the input size. Only SecretEnv has one (maxProperties 1);
+// SecretEnv.UnmarshalJSON checks it again.
+func maxObjectKeys(t reflect.Type) int {
+	if t == reflect.TypeFor[SecretEnv]() {
+		return MaxSecretEnvKeys
+	}
+	return 0
 }
 
 // arrayShape says how to check an array decoded into t: its element type,
