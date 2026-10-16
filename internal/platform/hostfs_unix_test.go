@@ -27,6 +27,9 @@ func TestHostFS_CaseSensitiveMatchesLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs, err := h.CaseSensitiveDir(dir)
+	if errors.Is(err, ErrCaseUnknown) {
+		t.Skipf("temp dir file system is not on the allowlist (refused, fail closed): %v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

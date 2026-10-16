@@ -224,3 +224,16 @@ func TestHostFS_FinalPath(t *testing.T) {
 		t.Errorf("FinalPath of a missing path succeeded")
 	}
 }
+
+// Value 3 of NtfsDisable8dot3NameCreation depends on whether a volume is
+// the system volume (M2-18 review round 1), so that answer is checked on
+// the real machine: the Windows directory is on it, by definition.
+func TestIsSystemVolume(t *testing.T) {
+	win, err := windows.GetSystemWindowsDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := isSystemVolume(filepath.Join(win, "System32")); err != nil || !got {
+		t.Fatalf("isSystemVolume(%s) = %v, %v; want true", win, got, err)
+	}
+}

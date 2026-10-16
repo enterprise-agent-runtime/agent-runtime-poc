@@ -3,6 +3,7 @@
     "name": "warden-int-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
     "internal": true,
     "labels": {
+      "warden.home": "4d0ac798",
       "warden.role": "internal_network",
       "warden.sandbox": "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
       "warden.session": "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB"
@@ -12,6 +13,7 @@
     "name": "warden-egress-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
     "internal": false,
     "labels": {
+      "warden.home": "4d0ac798",
       "warden.role": "egress_network",
       "warden.sandbox": "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
       "warden.session": "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB"
@@ -27,6 +29,7 @@
     "env": null,
     "working_dir": "",
     "labels": {
+      "warden.home": "4d0ac798",
       "warden.role": "proxy",
       "warden.sandbox": "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
       "warden.session": "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB"
@@ -125,6 +128,7 @@
     ],
     "working_dir": "/work",
     "labels": {
+      "warden.home": "4d0ac798",
       "warden.role": "sandbox",
       "warden.sandbox": "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
       "warden.session": "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB"

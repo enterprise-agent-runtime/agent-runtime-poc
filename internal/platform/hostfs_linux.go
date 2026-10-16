@@ -10,33 +10,26 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// fsCasefold is FS_CASEFOLD_FL, the ext4/f2fs/tmpfs per-directory
-// case-folding attribute (`chattr +F`).
-const fsCasefold = 0x40000000
+// The magic numbers of hostfs_decide.go must be the kernel's: a compile
+// error here if one drifts from x/sys/unix (ZFS is not in x/sys).
+// One array per constant, so two errors cannot cancel out.
+var (
+	_ = [1]struct{}{}[magicExt-unix.EXT4_SUPER_MAGIC]
+	_ = [1]struct{}{}[magicXFS-unix.XFS_SUPER_MAGIC]
+	_ = [1]struct{}{}[magicBtrfs-unix.BTRFS_SUPER_MAGIC]
+	_ = [1]struct{}{}[magicTmpfs-unix.TMPFS_MAGIC]
+	_ = [1]struct{}{}[magicOverlay-unix.OVERLAYFS_SUPER_MAGIC]
+	_ = [1]struct{}{}[magicF2FS-unix.F2FS_SUPER_MAGIC]
+	_ = [1]struct{}{}[magicBcachefs-unix.BCACHEFS_SUPER_MAGIC]
+)
 
-// foldingFS are file systems whose lookups may ignore case, or whose case
-// behaviour depends on a server or mount option this check cannot see:
-// vfat, exfat, ntfs3, cifs/smb, and 9p (WSL2 drvfs over NTFS, where the
-// M2-12 review reproduced the .ENV bypass). They count as case-insensitive.
-var foldingFS = map[int64]string{
-	0x4d44:     "vfat",
-	0x2011bab0: "exfat",
-	0x7366746e: "ntfs3",
-	0xff534d42: "cifs",
-	0xfe534d42: "smb2",
-	0x01021997: "9p",
-}
-
-// CaseSensitiveDir is false on a file system that may fold case, or for a
-// directory with FS_CASEFOLD_FL. A file system that does not implement
-// FS_IOC_GETFLAGS has no casefold attribute.
+// CaseSensitiveDir: true only on an allowlisted local case-sensitive file
+// system, for a directory without FS_CASEFOLD_FL (caseSensitiveFS).
+// Anything else is ErrCaseUnknown.
 func (hostFS) CaseSensitiveDir(dir string) (bool, error) {
 	var st unix.Statfs_t
 	if err := unix.Statfs(dir, &st); err != nil {
 		return false, fmt.Errorf("case sensitivity of %s: %w", dir, err)
-	}
-	if _, ok := foldingFS[int64(st.Type)]; ok {
-		return false, nil
 	}
 	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -44,20 +37,28 @@ func (hostFS) CaseSensitiveDir(dir string) (bool, error) {
 	}
 	defer unix.Close(fd)
 	flags, err := unix.IoctlGetUint32(fd, unix.FS_IOC_GETFLAGS)
+	res := ioctlOK
 	switch {
 	case errors.Is(err, unix.ENOTTY), errors.Is(err, unix.EOPNOTSUPP), errors.Is(err, unix.EINVAL):
-		return true, nil
+		res = ioctlUnsupported
 	case err != nil:
+		res = ioctlFailed
+	}
+	cs, err := caseSensitiveFS(int64(st.Type), flags, res)
+	if err != nil {
 		return false, fmt.Errorf("case sensitivity of %s: %w", dir, err)
 	}
-	return flags&fsCasefold == 0, nil
+	return cs, nil
 }
 
-// ShortNameCreation: Linux file systems create no 8.3 aliases (vfat's
-// short names are refused above as case folding).
+// ShortNameCreation: the Linux file systems CaseSensitiveDir accepts
+// create no 8.3 aliases.
 func (hostFS) ShortNameCreation(string) (bool, error) { return false, nil }
 
-// HasShortAlias: see ShortNameCreation.
+// HasShortAlias is always false on Linux. That is safe only together with
+// CaseSensitiveDir: an NTFS volume mounted through ntfs3 or ntfs-3g (FUSE),
+// where Linux might match DOS names, is not on the allowlist, so a
+// worktree there is refused before aliases matter.
 func (hostFS) HasShortAlias(string) (bool, error) { return false, nil }
 
 // FinalPath resolves every symbolic link.

@@ -52,7 +52,6 @@ func (hostFS) CaseSensitiveDir(dir string) (bool, error) {
 // itself (measured for M2-18: access denied without elevation).
 const (
 	fsctlQueryPersistentVolumeState = 0x0009023C
-	shortNameCreationDisabled       = 0x00000001 // PERSISTENT_VOLUME_STATE_SHORT_NAME_CREATION_DISABLED
 )
 
 // GetFinalPathNameByHandle flags (fileapi.h), absent from x/sys/windows.
@@ -65,14 +64,12 @@ type fileFSPersistentVolumeInformation struct {
 	VolumeFlags, FlagMask, Version, Reserved uint32
 }
 
-// ShortNameCreation combines the two settings `fsutil 8dot3name query`
-// reports. The machine-wide registry value NtfsDisable8dot3NameCreation:
-// 0 creates short names on every volume, 1 on none, 2 decides per volume
-// (the persistent volume flag), 3 on the system volume only. Value 3 is
-// answered with the per-volume flag only when that flag disables creation;
-// otherwise it counts as enabled, because telling the system volume apart
-// is not needed to fail closed. A volume that is not NTFS: ReFS never
-// creates short names; anything else (FAT) counts as creating them.
+// ShortNameCreation gathers what `fsutil 8dot3name query` reports, without
+// elevation, and lets shortNamesOn decide: the volume's file system name,
+// the machine-wide NtfsDisable8dot3NameCreation, the volume's persistent
+// state flag (FSCTL_QUERY_PERSISTENT_VOLUME_STATE on a directory handle),
+// and whether the volume is the system volume (the one holding the Windows
+// directory, which value 3 leaves creating short names).
 func (hostFS) ShortNameCreation(dir string) (bool, error) {
 	h, err := openForQuery(dir)
 	if err != nil {
@@ -83,38 +80,65 @@ func (hostFS) ShortNameCreation(dir string) (bool, error) {
 	if err := windows.GetVolumeInformationByHandle(h, nil, 0, nil, nil, nil, &fsName[0], uint32(len(fsName))); err != nil {
 		return true, fmt.Errorf("8.3 name creation for %s: volume information: %w", dir, err)
 	}
-	switch windows.UTF16ToString(fsName) {
-	case "NTFS":
-	case "ReFS":
-		return false, nil
-	default:
-		return true, nil
-	}
-	setting := uint64(2) // the Windows default when the value is absent
+	var regVal uint64
+	var regPresent bool
 	if k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\FileSystem`, registry.QUERY_VALUE); err == nil {
 		v, _, err := k.GetIntegerValue("NtfsDisable8dot3NameCreation")
 		k.Close()
 		switch {
 		case err == nil:
-			setting = v
+			regVal, regPresent = v, true
 		case !errors.Is(err, registry.ErrNotExist):
 			return true, fmt.Errorf("8.3 name creation: NtfsDisable8dot3NameCreation: %w", err)
 		}
-	}
-	switch setting {
-	case 0:
-		return true, nil
-	case 1:
-		return false, nil
 	}
 	in := fileFSPersistentVolumeInformation{FlagMask: shortNameCreationDisabled, Version: 1}
 	var out fileFSPersistentVolumeInformation
 	var n uint32
 	if err := windows.DeviceIoControl(h, fsctlQueryPersistentVolumeState, (*byte)(unsafe.Pointer(&in)), uint32(unsafe.Sizeof(in)),
 		(*byte)(unsafe.Pointer(&out)), uint32(unsafe.Sizeof(out)), &n, nil); err != nil {
-		return true, fmt.Errorf("8.3 name creation for %s: persistent volume state: %w", dir, err)
+		out.VolumeFlags = 0 // unknown: counts as creating short names wherever the flag decides
 	}
-	return out.VolumeFlags&shortNameCreationDisabled == 0, nil
+	system, err := isSystemVolume(dir)
+	if err != nil {
+		return true, fmt.Errorf("8.3 name creation for %s: %w", dir, err)
+	}
+	return shortNamesOn(windows.UTF16ToString(fsName), regVal, regPresent, out.VolumeFlags, system), nil
+}
+
+// isSystemVolume reports whether dir is on the volume holding the Windows
+// directory, comparing the volume GUID paths, so drive letters and mounted
+// folders both resolve to the same answer.
+func isSystemVolume(dir string) (bool, error) {
+	win, err := windows.GetSystemWindowsDirectory()
+	if err != nil {
+		return false, err
+	}
+	a, err := volumeGUID(dir)
+	if err != nil {
+		return false, err
+	}
+	b, err := volumeGUID(win)
+	if err != nil {
+		return false, err
+	}
+	return a == b, nil
+}
+
+func volumeGUID(p string) (string, error) {
+	u, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return "", err
+	}
+	mount := make([]uint16, windows.MAX_LONG_PATH)
+	if err := windows.GetVolumePathName(u, &mount[0], uint32(len(mount))); err != nil {
+		return "", fmt.Errorf("volume of %s: %w", p, err)
+	}
+	guid := make([]uint16, 64)
+	if err := windows.GetVolumeNameForVolumeMountPoint(&mount[0], &guid[0], uint32(len(guid))); err != nil {
+		return "", fmt.Errorf("volume name of %s: %w", p, err)
+	}
+	return windows.UTF16ToString(guid), nil
 }
 
 // HasShortAlias asks GetShortPathName for p and compares the last element:

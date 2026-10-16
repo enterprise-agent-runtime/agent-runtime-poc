@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"warden.dev/warden/internal/execproto"
+	"warden.dev/warden/internal/platform"
 	"warden.dev/warden/internal/sandbox"
 	"warden.dev/warden/internal/sandbox/seccomp"
 )
@@ -221,8 +222,8 @@ func checkPlan(t *testing.T, s *sandbox.Spec, o Options, p *Plan) {
 		if !c.ReadonlyRootfs || !c.NoNewPrivileges || c.Privileged {
 			t.Errorf("%s: readonly_rootfs=%v no_new_privileges=%v privileged=%v", c.Name, c.ReadonlyRootfs, c.NoNewPrivileges, c.Privileged)
 		}
-		if c.Labels["warden.sandbox"] != s.ID || c.Labels["warden.session"] != s.SessionID {
-			t.Errorf("%s: labels %v lack warden.sandbox/warden.session", c.Name, c.Labels)
+		if c.Labels["warden.sandbox"] != s.ID || c.Labels["warden.session"] != s.SessionID || c.Labels["warden.home"] != platform.HomeHash(s.WardenHome) {
+			t.Errorf("%s: labels %v lack warden.sandbox/warden.session/warden.home", c.Name, c.Labels)
 		}
 	}
 	if sb.Image != o.SandboxImage || p.Sidecar.Image != o.ProxyImage {
@@ -289,7 +290,7 @@ func checkPlan(t *testing.T, s *sandbox.Spec, o Options, p *Plan) {
 		t.Errorf("sidecar hostname = %q, want %q", p.Sidecar.Hostname, host)
 	}
 	for _, n := range []Network{p.Internal, p.Egress} {
-		if n.Labels["warden.sandbox"] != s.ID || n.Labels["warden.session"] != s.SessionID {
+		if n.Labels["warden.sandbox"] != s.ID || n.Labels["warden.session"] != s.SessionID || n.Labels["warden.home"] != platform.HomeHash(s.WardenHome) {
 			t.Errorf("network %s labels %v", n.Name, n.Labels)
 		}
 	}
@@ -365,6 +366,14 @@ func TestBuild_Refuses(t *testing.T) {
 			}
 			o.Engine = EngineRootless
 		}, false},
+		// The sidecar host is a name on the internal network (M2-18 review
+		// round 1): the sandbox's own hostname or localhost would point
+		// HTTP_PROXY back into the sandbox, and an IP literal pins an
+		// address the engine assigns.
+		{"sidecar host is the sandbox hostname", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "warden:3128" }, false},
+		{"sidecar host is localhost", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "localhost:3128" }, false},
+		{"sidecar host is an IP literal", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "172.18.0.2:3128" }, false},
+		{"sidecar host is a loopback literal", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "127.0.0.1:3128" }, false},
 		{"worktree case-insensitive", func(_ *sandbox.Spec, _ *Options, f *fakeFS) { f.insensitive = map[string]bool{wt: true} }, true},
 		{"mask parent case-insensitive", func(_ *sandbox.Spec, _ *Options, f *fakeFS) {
 			f.insensitive = map[string]bool{filepath.Join(wt, "config", "prod"): true}
@@ -401,6 +410,37 @@ func TestBuild_Refuses(t *testing.T) {
 				t.Fatalf("Build error %v: sandbox_unavailable=%v, want %v", err, got, c.unavailable)
 			}
 		})
+	}
+}
+
+// The short_names_enabled refusal tells the owner what to do, in the order
+// of the owner's decision of 2026-10-16: move WARDEN_HOME to a volume
+// without 8.3 name creation (found with warden doctor, since `fsutil
+// 8dot3name query` needs elevation), or have an administrator turn it off
+// for that volume, which affects new names only, plus strip.
+func TestBuild_ShortNamesHint(t *testing.T) {
+	l := layout()
+	_, err := Build(validSpec(l), validOptions(l, &fakeFS{shortCreation: true}))
+	if err == nil || !errors.Is(err, sandbox.ErrUnavailable) {
+		t.Fatalf("Build = %v, want sandbox_unavailable", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"short_names_enabled",
+		"WARDEN_HOME on a volume without 8.3 name creation",
+		"warden doctor",
+		"`fsutil 8dot3name query <drive>:` needs elevation",
+		"an administrator",
+		"`fsutil 8dot3name set <drive>: 1`",
+		"affects new names only",
+		"`fsutil 8dot3name strip`",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("hint lacks %q:\n%s", want, msg)
+		}
+	}
+	if i, j := strings.Index(msg, "WARDEN_HOME"), strings.Index(msg, "administrator"); i < 0 || j < 0 || i > j {
+		t.Errorf("hint must offer moving WARDEN_HOME first:\n%s", msg)
 	}
 }
 

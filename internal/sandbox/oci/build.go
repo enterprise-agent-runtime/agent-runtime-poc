@@ -8,7 +8,9 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 
+	"warden.dev/warden/internal/platform"
 	"warden.dev/warden/internal/sandbox"
 	"warden.dev/warden/internal/sandbox/seccomp"
 )
@@ -44,6 +46,7 @@ const (
 	LabelSandbox = "warden.sandbox"
 	LabelSession = "warden.session"
 	LabelRole    = "warden.role"
+	LabelHome    = "warden.home"
 )
 
 // Build turns a validated L2 Spec into a Plan (A06 §15 as amended by
@@ -78,6 +81,14 @@ func Build(s *sandbox.Spec, o Options) (*Plan, error) {
 		if err := CheckImageRef(img); err != nil {
 			return nil, err
 		}
+	}
+	// validateProxy (D-056) has made Sidecar a plain host:port.
+	sidecarHost, _, err := net.SplitHostPort(s.Proxy.Sidecar)
+	if err != nil {
+		return nil, fmt.Errorf("%w: proxy sidecar: %w", sandbox.ErrInvalidSpec, err)
+	}
+	if err := checkSidecarHost(sidecarHost); err != nil {
+		return nil, err
 	}
 	if o.FS == nil {
 		return nil, fmt.Errorf("%w: no host file system checks (Options.FS)", sandbox.ErrInvalidSpec)
@@ -125,11 +136,6 @@ func Build(s *sandbox.Spec, o Options) (*Plan, error) {
 
 	internal := Network{Name: "warden-int-" + s.ID, Internal: true, Labels: labels(s, "internal_network")}
 	egress := Network{Name: "warden-egress-" + s.ID, Internal: false, Labels: labels(s, "egress_network")}
-	// validateProxy (D-056) has made Sidecar a plain host:port.
-	sidecarHost, _, err := net.SplitHostPort(s.Proxy.Sidecar)
-	if err != nil {
-		return nil, fmt.Errorf("%w: proxy sidecar: %w", sandbox.ErrInvalidSpec, err)
-	}
 
 	var envList []string
 	for _, e := range env {
@@ -210,8 +216,33 @@ func (o Options) users() (users, error) {
 	return users{}, fmt.Errorf("%w: engine %q on host %q is not a supported L2 engine", sandbox.ErrInvalidSpec, o.Engine, o.HostOS)
 }
 
+// labels identify every container and network of one sandbox. warden.home
+// is the D-042 hash of the Warden home (platform.HomeHash), so the orphan
+// sweep (A06 §13.5, M2-21) can match the name prefix, every label and its
+// own home: two daemons with different homes sharing one engine never
+// remove each other's live containers.
 func labels(s *sandbox.Spec, role string) map[string]string {
-	return map[string]string{LabelSandbox: s.ID, LabelSession: s.SessionID, LabelRole: role}
+	return map[string]string{
+		LabelSandbox: s.ID, LabelSession: s.SessionID, LabelRole: role,
+		LabelHome: platform.HomeHash(s.WardenHome),
+	}
+}
+
+// checkSidecarHost refuses sidecar host names that would not reach the
+// sidecar on the internal network: the sandbox's own hostname and
+// localhost resolve inside the sandbox, so HTTP_PROXY would point back at
+// it, and an IP literal pins an address the engine assigns (D-056 accepts
+// both shapes; the L2 backend does not).
+func checkSidecarHost(host string) error {
+	switch {
+	case host == sandboxHostname:
+		return fmt.Errorf("%w: proxy sidecar host %q is the sandbox's own hostname", sandbox.ErrInvalidSpec, host)
+	case host == "localhost" || strings.HasSuffix(host, ".localhost"):
+		return fmt.Errorf("%w: proxy sidecar host %q is loopback", sandbox.ErrInvalidSpec, host)
+	case net.ParseIP(host) != nil:
+		return fmt.Errorf("%w: proxy sidecar host %q is an IP literal; use its name on the internal network", sandbox.ErrInvalidSpec, host)
+	}
+	return nil
 }
 
 // executorArgs is the A06 §3.1 / §11.1 command line in its L2 form: the RPC
@@ -303,7 +334,7 @@ func checkWorktree(s *sandbox.Spec, o Options) error {
 		return unavailable("short_names_unknown", "%v", err)
 	}
 	if on {
-		return unavailable("short_names_enabled", "the volume of %q creates 8.3 names, so ENV~1 would open a masked .env; an administrator runs `fsutil 8dot3name set <drive>: 1` (and `fsutil 8dot3name strip` for names already created), or WARDEN_HOME moves to a volume without 8.3 names", s.Worktree)
+		return unavailable("short_names_enabled", "%s", shortNamesHint(s.Worktree))
 	}
 	for _, e := range elems {
 		alias, err := o.FS.HasShortAlias(e)
@@ -315,6 +346,18 @@ func checkWorktree(s *sandbox.Spec, o Options) error {
 		}
 	}
 	return nil
+}
+
+// shortNamesHint follows the owner's decision of 2026-10-16: the first
+// remedy is to move the Warden home to a volume without 8.3 name creation
+// (on the owner's machine D:, rather than changing C:); the second is an
+// administrator turning creation off for the volume.
+func shortNamesHint(worktree string) string {
+	return fmt.Sprintf("the volume of %q creates 8.3 names, so a sandboxed process could open a masked .env as ENV~1, "+
+		"or rename a directory to give it a new alias. Put WARDEN_HOME on a volume without 8.3 name creation "+
+		"(warden doctor reports it per volume; `fsutil 8dot3name query <drive>:` needs elevation), "+
+		"or have an administrator disable it for this volume with `fsutil 8dot3name set <drive>: 1`, "+
+		"which affects new names only, then remove existing ones with `fsutil 8dot3name strip`", worktree)
 }
 
 func caseHint(hostOS, worktree string) string {

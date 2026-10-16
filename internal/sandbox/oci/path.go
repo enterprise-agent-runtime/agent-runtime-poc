@@ -37,7 +37,8 @@ var windowsReserved = func() map[string]bool {
 //
 // Windows (Docker Desktop): the plain drive form C:\dir\..., which Docker
 // Desktop translates into its VM (WSL2 backend: /run/desktop/mnt/host/c/...).
-// The drive letter is upper-cased; nothing else changes, because on a
+// The drive letter must be upper case, the one spelling FinalPath returns
+// (Build compares each source with it); nothing else is touched, because on a
 // case-sensitive worktree the case is part of the name. Refused: UNC paths
 // (\\server\share), the \\?\ long-path and \\.\ device prefixes (refused,
 // not stripped: platform.HostFS.FinalPath already strips \\?\ for a drive
@@ -91,7 +92,7 @@ func windowsSource(p string) (string, error) {
 	case len(p) > maxWindowsPath:
 		return bad(fmt.Sprintf("longer than %d characters", maxWindowsPath))
 	case len(p) < 3 || !isDriveLetter(p[0]) || p[1] != ':' || p[2] != '\\':
-		return bad(`not an absolute drive path (C:\...)`)
+		return bad(`not an absolute drive path with an upper-case drive letter (C:\...)`)
 	}
 	rest := p[3:]
 	if rest == "" {
@@ -118,10 +119,12 @@ func windowsSource(p string) (string, error) {
 			return bad("a reserved device name")
 		}
 	}
-	return strings.ToUpper(p[:1]) + p[1:], nil
+	return p, nil
 }
 
-func isDriveLetter(c byte) bool { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') }
+// isDriveLetter accepts upper case only: GetFinalPathNameByHandle returns
+// the drive in upper case, so a lower-case source never passes Build.
+func isDriveLetter(c byte) bool { return c >= 'A' && c <= 'Z' }
 
 // reImageRef is a repository (optional registry host with port, then
 // lower-case path components) pinned by a sha256 digest, with no tag: the

@@ -13,9 +13,8 @@ import (
 func TestMapHostPath_Windows(t *testing.T) {
 	ok := []struct{ in, want string }{
 		{`C:\Users\ana\AppData\Local\Warden\sessions\01JAXR\worktree`, `C:\Users\ana\AppData\Local\Warden\sessions\01JAXR\worktree`},
-		// The drive letter is case-insensitive and normalised; the rest is
-		// kept exactly, because on a case-sensitive worktree case matters.
-		{`c:\Users\ana\Src`, `C:\Users\ana\Src`},
+		// Case is kept exactly: on a case-sensitive worktree it is part of
+		// the name.
 		{`D:\x\MiXeD\cAsE`, `D:\x\MiXeD\cAsE`},
 		// Spaces are fine in a structured Engine API mount.
 		{`C:\Program Files\Warden\linux-amd64\warden-exec`, `C:\Program Files\Warden\linux-amd64\warden-exec`},
@@ -68,6 +67,11 @@ func TestMapHostPath_Windows(t *testing.T) {
 		{`C:\Users\COM` + string(rune(0xB9)), "reserved device name with a superscript digit"},
 		{`C:\` + strings.Repeat("a", 257), "longer than MAX_PATH - 1 (long paths refused)"},
 		{`1:\Users`, "not a drive letter"},
+		// One spelling: the drive letter is upper case, as FinalPath returns
+		// it, so a lower-case one would fail Build's FinalPath comparison
+		// anyway; refusing it here keeps the two checks consistent (M2-18
+		// review round 1: the old upper-casing was dead code).
+		{`c:\Users\ana\Src`, "lower-case drive letter"},
 	}
 	for _, c := range refused {
 		if got, err := MapHostPath(HostWindows, c.in); err == nil {
