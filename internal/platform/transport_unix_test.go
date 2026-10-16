@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -139,4 +140,170 @@ func unixCtx(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 	return ctx
+}
+
+// The daemon half of the same squatting class: Listen used to MkdirAll the
+// socket directory and ignore the chmod (`_ = os.Chmod`), so a directory
+// another user had created first (the long-path fallback lives in a shared
+// /tmp as /tmp/warden-<uid> on Linux) or a symlink in its place was used as
+// is, and the daemon bound its socket where that user controls the entry.
+// ensureSocketDir takes the uid to compare against, which is the seam for
+// "owned by someone else" without a real chown.
+
+func TestEnsureSocketDir_CreatesMissing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	if err := ensureSocketDir(dir, os.Getuid()); err != nil {
+		t.Fatal(err)
+	}
+	assertMode(t, dir, 0o700)
+}
+
+func TestEnsureSocketDir_TightensExistingMode(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSocketDir(dir, os.Getuid()); err != nil {
+		t.Fatal(err)
+	}
+	assertMode(t, dir, 0o700)
+}
+
+func TestEnsureSocketDir_RefusesSymlink(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "elsewhere")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "run")
+	if err := os.Symlink(target, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureSocketDir(dir, os.Getuid()); err == nil || !strings.Contains(err.Error(), "socket directory") {
+		t.Fatalf("err = %v, want a socket directory refusal", err)
+	}
+	assertMode(t, target, 0o755) // the symlink's target was not touched
+}
+
+func TestEnsureSocketDir_RefusesOtherOwner(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := ensureSocketDir(dir, os.Getuid()+1)
+	if err == nil || !strings.Contains(err.Error(), "is not owned by the current user") {
+		t.Fatalf("err = %v, want an ownership refusal", err)
+	}
+	assertMode(t, dir, 0o755) // someone else's directory is not chmodded
+}
+
+// TestListen_RefusesSymlinkedSocketDir: the check is wired into Listen.
+func TestListen_RefusesSymlinkedSocketDir(t *testing.T) {
+	h, err := os.MkdirTemp("/tmp", "wh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(h) })
+	t.Setenv(EnvHome, h)
+	target := filepath.Join(h, "elsewhere")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(h, "run")); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := Listen(h); err == nil {
+		l.Close()
+		t.Fatal("Listen bound a socket in a symlinked directory")
+	}
+	if _, err := os.Lstat(filepath.Join(target, "wardend.sock")); err == nil {
+		t.Fatal("socket created behind the symlink")
+	}
+}
+
+// TestPeerChecked_RejectsOtherUser: the daemon drops a connection whose
+// peer uid differs from its own. Linux had this (SO_PEERCRED); macOS used a
+// no-op and now reads LOCAL_PEERCRED through the same serverUID. The uid
+// the listener compares against is the seam: a real other-user client is
+// not available in a test.
+func TestPeerChecked_RejectsOtherUser(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("peer credentials are read on Linux and macOS only")
+	}
+	l := rawUnixListener(t)
+	pl := newPeerListener(l, os.Getuid()+1)
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if c, err := pl.Accept(); err == nil {
+			accepted <- c
+		}
+		close(accepted)
+	}()
+	var d net.Dialer
+	c, err := d.DialContext(unixCtx(t), "unix", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := c.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("read = %v, want EOF: the connection was not dropped", err)
+	}
+	l.Close()
+	if c, ok := <-accepted; ok {
+		c.Close()
+		t.Fatal("Accept returned a connection from another uid")
+	}
+}
+
+func TestPeerChecked_AcceptsSameUser(t *testing.T) {
+	l := rawUnixListener(t)
+	pl := newPeerListener(l, os.Getuid())
+	go func() {
+		var d net.Dialer
+		if c, err := d.DialContext(context.Background(), "unix", l.Addr().String()); err == nil {
+			defer c.Close()
+			time.Sleep(time.Second)
+		}
+	}()
+	c, err := pl.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+}
+
+func rawUnixListener(t *testing.T) net.Listener {
+	t.Helper()
+	d, err := os.MkdirTemp("/tmp", "wh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	l, err := net.Listen("unix", filepath.Join(d, "s.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	return l
+}
+
+func assertMode(t *testing.T, p string, want os.FileMode) {
+	t.Helper()
+	fi, err := os.Lstat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != want {
+		t.Fatalf("%s mode = %#o, want %#o", p, fi.Mode().Perm(), want)
+	}
 }

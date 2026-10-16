@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,15 +33,15 @@ func Endpoint(home string) string {
 	return filepath.Join(os.TempDir(), "warden-"+strconv.Itoa(os.Getuid()), hex.EncodeToString(h[:])[:16]+".sock")
 }
 
-// Listen binds the daemon socket (mode 0600 in a 0700 directory). A stale
-// socket is removed only when nothing answers on it; a live one means
-// another daemon is running.
+// Listen binds the daemon socket (mode 0600 in a 0700 directory the current
+// user owns, ensureSocketDir). A stale socket is removed only when nothing
+// answers on it; a live one means another daemon is running. Connections
+// from other users are dropped (newPeerListener).
 func Listen(home string) (net.Listener, error) {
 	p := Endpoint(home)
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+	if err := ensureSocketDir(filepath.Dir(p), os.Getuid()); err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(filepath.Dir(p), 0o700)
 	if fi, err := os.Lstat(p); err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("refusing symlinked socket path %s", p)
@@ -60,7 +62,7 @@ func Listen(home string) (net.Listener, error) {
 		l.Close()
 		return nil, err
 	}
-	return peerChecked(l), nil
+	return newPeerListener(l, os.Getuid()), nil
 }
 
 // Dial connects to the daemon socket and, before returning the connection,
@@ -127,4 +129,63 @@ func ownerUID(fi os.FileInfo) int {
 		return -1
 	}
 	return int(st.Uid)
+}
+
+// ensureSocketDir makes dir the daemon's own socket directory or refuses.
+// An existing entry must be a real directory (Lstat: a symlink is refused,
+// never followed) owned by uid; a missing one is created with Mkdir, and
+// losing that race to another creator (EEXIST) leads to the same ownership
+// check. The mode is then tightened to 0700, and a failed chmod is an error.
+// Another user's directory is never used: whoever owns it controls the
+// socket entry inside it (CLAUDE.md §4 IPC, pipe squatting).
+func ensureSocketDir(dir string, uid int) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("socket directory %s is not a directory (%v)", dir, fi.Mode().Type())
+	}
+	if owner := ownerUID(fi); owner != uid {
+		return fmt.Errorf("socket directory %s is not owned by the current user (owner uid %d)", dir, owner)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("socket directory %s: %w", dir, err)
+	}
+	return nil
+}
+
+// newPeerListener drops connections whose peer uid, where the OS reports it
+// (serverUID: SO_PEERCRED on Linux, LOCAL_PEERCRED on macOS), is not uid,
+// and connections whose credential cannot be read (A05 §2.1).
+func newPeerListener(l net.Listener, uid int) net.Listener { return &peerListener{l, uid} }
+
+type peerListener struct {
+	net.Listener
+	uid int
+}
+
+func (p *peerListener) Accept() (net.Conn, error) {
+	for {
+		c, err := p.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		uc, ok := c.(*net.UnixConn)
+		if !ok {
+			return c, nil
+		}
+		if peer, known, err := serverUID(uc); err != nil || (known && peer != p.uid) {
+			slog.Warn("rejected a connection from another user on the daemon socket")
+			c.Close()
+			continue
+		}
+		return c, nil
+	}
 }
