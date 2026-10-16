@@ -4,14 +4,10 @@ package platform
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"os/user"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -21,7 +17,7 @@ import (
 // Endpoint returns the named pipe \\.\pipe\warden-<user>[-<home hash>]
 // (CLAUDE.md §4 IPC; docs/DECISIONS-poc.md D-011).
 func Endpoint(home string) string {
-	return `\\.\pipe\warden-` + sanitize.Replace(Username()) + homeSuffix(home)
+	return `\\.\pipe\warden-` + sanitize.Replace(Username()) + HomeSuffix(home)
 }
 
 // ownerSDDL grants the current user full access and nobody else; "P"
@@ -67,15 +63,5 @@ func Dial(ctx context.Context, home string) (net.Conn, error) {
 
 // errorPipeBusy is ERROR_PIPE_BUSY (231), absent from package syscall.
 const errorPipeBusy = syscall.Errno(231)
-
-// homeSuffix distinguishes endpoints of overridden homes, so a test daemon
-// never collides with the user's real one.
-func homeSuffix(home string) string {
-	if os.Getenv(EnvHome) == "" {
-		return ""
-	}
-	h := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(home))))
-	return "-" + hex.EncodeToString(h[:])[:8]
-}
 
 var sanitize = strings.NewReplacer(" ", "_", "\\", "_", "/", "_", ":", "_")

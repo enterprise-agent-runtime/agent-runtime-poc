@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/zalando/go-keyring"
+
+	"warden.dev/warden/internal/platform"
 )
 
 // Backend errors (A15 §2.3).
@@ -96,13 +98,20 @@ func KeyringName() string {
 type Keyring struct {
 	mu      sync.Mutex
 	timeout time.Duration
+	service string
 }
 
-// NewKeyring returns the OS keychain backend.
-func NewKeyring() *Keyring { return &Keyring{timeout: 30 * time.Second} }
+// NewKeyring returns the OS keychain backend for one keychain service
+// (platform.KeychainService of the home: one namespace per home).
+func NewKeyring(service string) *Keyring {
+	return &Keyring{timeout: 30 * time.Second, service: service}
+}
 
 // Name implements Backend.
 func (*Keyring) Name() string { return KeyringName() }
+
+// Service is the keychain service name this backend reads and writes.
+func (k *Keyring) Service() string { return k.service }
 
 func (k *Keyring) call(ctx context.Context, fn func() (string, error)) (string, error) {
 	k.mu.Lock()
@@ -135,7 +144,7 @@ func (k *Keyring) call(ctx context.Context, fn func() (string, error)) (string, 
 
 // Get implements Backend.
 func (k *Keyring) Get(ctx context.Context, a string) ([]byte, error) {
-	v, err := k.call(ctx, func() (string, error) { return keyring.Get(Service, a) })
+	v, err := k.call(ctx, func() (string, error) { return keyring.Get(k.service, a) })
 	if err != nil {
 		return nil, err
 	}
@@ -144,13 +153,13 @@ func (k *Keyring) Get(ctx context.Context, a string) ([]byte, error) {
 
 // Set implements Backend.
 func (k *Keyring) Set(ctx context.Context, a string, v []byte) error {
-	_, err := k.call(ctx, func() (string, error) { return "", keyring.Set(Service, a, string(v)) })
+	_, err := k.call(ctx, func() (string, error) { return "", keyring.Set(k.service, a, string(v)) })
 	return err
 }
 
 // Delete implements Backend.
 func (k *Keyring) Delete(ctx context.Context, a string) error {
-	_, err := k.call(ctx, func() (string, error) { return "", keyring.Delete(Service, a) })
+	_, err := k.call(ctx, func() (string, error) { return "", keyring.Delete(k.service, a) })
 	return err
 }
 
@@ -332,7 +341,7 @@ func (f *File) Delete(_ context.Context, a string) error {
 // round-trip works, else the encrypted file. A locked keychain is not a
 // reason to switch (that would split the store).
 func Select(ctx context.Context, home string, probe bool) Backend {
-	k := NewKeyring()
+	k := NewKeyring(platform.KeychainService(home))
 	if !probe {
 		return k
 	}
