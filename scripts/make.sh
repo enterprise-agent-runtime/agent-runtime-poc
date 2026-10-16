@@ -52,6 +52,9 @@ lint() {
 	scripts/lint-exec.sh || return 1
 	step "Claude Code guard hooks"
 	bash .claude/hooks/test-hooks.sh || return 1
+	step "shell scripts executable in the git index"
+	bash scripts/lint-modes.sh || return 1
+	bash scripts/test-lint-modes.sh || return 1
 	step "CI required-tests check"
 	bash scripts/test-ci-require-tests.sh || return 1
 	step "API schemas and YAML examples"
