@@ -68,11 +68,13 @@ type Config struct {
 	Logger         *slog.Logger  // nil: discard
 
 	// OperatorLiteralAllow lists canonical IP-literal keys ("10.0.0.5:8443")
-	// that the operator allows although the address is in a denied range
-	// (owner decision 2026-10-16, replacing A07 §7's literal-entry
-	// exception). It comes only from operator configuration: the Allowlist,
-	// the Decider, grants and obligations can never add to it. It never
-	// opens the floor (floorDenied).
+	// whose address may be dialed although it is in a denied range (owner
+	// decision 2026-10-16, replacing A07 §7's literal-entry exception). It is
+	// not an allow: the target still needs an allowlist entry or a Decider
+	// allow, and a harness sandbox gets no exemption (round-2 review F2). It
+	// comes only from operator configuration; the Allowlist, the Decider,
+	// grants and obligations can never add to it. New refuses entries in the
+	// floor or in an IPv6 transition range (floorDenied, transitionPrefixes).
 	OperatorLiteralAllow []string
 	// InterfaceAddrs returns the host's own addresses; a resolved address
 	// among them is dropped (owner decision 2026-10-16). nil: the system's
@@ -137,6 +139,9 @@ func New(cfg Config) (*TaskProxy, error) {
 		t, err := Normalize(k)
 		if err != nil || !t.IsIP() || t.Key() != k {
 			return nil, fmt.Errorf("proxy: operator literal entry %q: want a canonical IP-literal host:port", k)
+		}
+		if floorDenied(t.IP) || in(t.IP, transitionPrefixes()) {
+			return nil, fmt.Errorf("proxy: operator literal entry %q: in the floor or a transition range, never reachable", k)
 		}
 		p.operator[k] = true
 	}
@@ -306,16 +311,14 @@ func (p *TaskProxy) ServeConn(ctx context.Context, c net.Conn) {
 }
 
 // verdict is an allow: the event rule and decision id, and whether an
-// operator entry names this literal IP (the only way past AddrDenied, and
-// never past the floor; owner decision 2026-10-16).
+// operator entry lifts the denied-range check for this literal (the only
+// way past AddrDenied, never past the floor; owner decision 2026-10-16).
+// operator is set only on an allow that came from the allowlist or the
+// Decider, never in a harness sandbox (round-2 review F2).
 type verdict struct {
 	rule, decisionID string
 	operator         bool
 }
-
-// RuleOperatorLiteral is the event rule of a connection allowed by
-// Config.OperatorLiteralAllow.
-const RuleOperatorLiteral = "operator.literal-allow"
 
 // admit runs A07 §3.2 steps 1 to 4 for an authority: normalise, evaluate,
 // resolve and range-check, dial the checked address. On a refusal it has
@@ -390,17 +393,17 @@ func (p *TaskProxy) admitSlot(ctx context.Context, c net.Conn, authority, method
 }
 
 // evaluate is A07 §5.2 without the M3 steps (deny cache, harness rule,
-// one-shot grants, hold): operator literal entries, the allowlist fast
-// path, then the Decider. Any effect other than allow, and any Decider
-// error, denies (fail closed); approval_required is a denial until the
-// hold lands in M3. An allow here is still subject to resolve's range
-// checks.
+// one-shot grants, hold): the allowlist fast path, then the Decider. Any
+// effect other than allow, and any Decider error, denies (fail closed);
+// approval_required is a denial until the hold lands in M3. An allow here
+// is still subject to resolve's range checks. An operator entry is not an
+// allow: it only marks an allow of this exact literal as exempt from the
+// denied ranges, and never in a harness sandbox (ID-12: harness egress is
+// the vendor list only).
 func (p *TaskProxy) evaluate(ctx context.Context, t Target, method, callID string) (verdict, *DenyError) {
-	if p.operator[t.Key()] {
-		return verdict{rule: RuleOperatorLiteral, operator: true}, nil
-	}
+	exempt := p.operator[t.Key()] && p.cfg.SandboxPurpose != "harness"
 	if e, ok := p.cfg.Allow.Get(t.Key()); ok {
-		return verdict{rule: e.Rule, decisionID: e.DecisionID}, nil
+		return verdict{rule: e.Rule, decisionID: e.DecisionID, operator: exempt}, nil
 	}
 	d, err := p.decider.DecideEgress(ctx, EgressRequest{
 		Task: p.cfg.Task, SandboxID: p.cfg.SandboxID, SandboxPurpose: p.cfg.SandboxPurpose,
@@ -416,7 +419,7 @@ func (p *TaskProxy) evaluate(ctx context.Context, t Target, method, callID strin
 	if err := p.cfg.Allow.Add(Entry{Key: t.Key(), Source: SourceGrant, Rule: d.Rule, DecisionID: d.DecisionID}); err != nil {
 		return verdict{}, &DenyError{Reason: ReasonPolicyDenied, Detail: "caching allow", Err: err}
 	}
-	return verdict{rule: d.Rule, decisionID: d.DecisionID}, nil
+	return verdict{rule: d.Rule, decisionID: d.DecisionID, operator: exempt}, nil
 }
 
 // resolve returns the addresses to dial (A07 §7, as changed by the owner's

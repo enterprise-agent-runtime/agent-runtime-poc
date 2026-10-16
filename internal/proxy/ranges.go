@@ -121,3 +121,20 @@ func allZero(b []byte) bool {
 	}
 	return true
 }
+
+// transitionPrefixes are IPv6 ranges that carry or translate to an IPv4
+// address. An operator entry may never name one (round-2 review F3,
+// CWE-918): the floor extracts IPv4 only from mapped, NAT64 64:ff9b::/96
+// and 6to4 addresses, so an entry like [::7f00:1] or a Teredo literal
+// would reach a floor address through a translator. IPv4-mapped literals
+// never get here: Normalize unmaps them.
+func transitionPrefixes() []netip.Prefix {
+	return []netip.Prefix{
+		netip.MustParsePrefix("::/96"),           // IPv4-compatible
+		netip.MustParsePrefix("::ffff:0:0:0/96"), // SIIT
+		netip.MustParsePrefix("64:ff9b::/96"),    // NAT64
+		netip.MustParsePrefix("64:ff9b:1::/48"),  // local-use NAT64
+		netip.MustParsePrefix("2001::/32"),       // Teredo
+		netip.MustParsePrefix("2002::/16"),       // 6to4
+	}
+}

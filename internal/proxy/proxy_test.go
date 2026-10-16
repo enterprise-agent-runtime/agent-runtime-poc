@@ -238,11 +238,11 @@ func TestRebinding_DialsCheckedIP(t *testing.T) {
 }
 
 // TestRangeCheck_OperatorLiteralDialsExactAddress: the replacement for A07
-// §7's literal-entry exception (owner decision 2026-10-16): only an operator
-// entry opens a denied-range literal, it dials exactly that address
-// without DNS, and it opens that port only.
+// §7's literal-entry exception (owner decision 2026-10-16): an allowed
+// denied-range literal that an operator entry also names is dialed at
+// exactly that address without DNS, and only on that port.
 func TestRangeCheck_OperatorLiteralDialsExactAddress(t *testing.T) {
-	h := newHarnessWith(t, func(c *Config) { c.OperatorLiteralAllow = []string{"10.0.0.5:8443"} })
+	h := newHarnessWith(t, func(c *Config) { c.OperatorLiteralAllow = []string{"10.0.0.5:8443"} }, "10.0.0.5:8443")
 	up := &discardUpstream{}
 	h.dial.upstream = up.serve
 	if s := tunnel(t, h, "10.0.0.5:8443", record(handshake(helloBody()))); s != 200 {

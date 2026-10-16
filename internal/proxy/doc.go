@@ -25,9 +25,10 @@
 //     second DNS answer cannot change where the connection goes (DNS
 //     rebinding).
 //   - A floor (loopback, unspecified, link-local, cloud metadata) is never
-//     dialed, whatever allowed it. Other denied-range literals open only
-//     through Config.OperatorLiteralAllow, never through the allowlist, a
-//     grant or the Decider (owner decision 2026-10-16, contradicting A07 §7).
+//     dialed, whatever allowed it. Other denied-range literals are dialed
+//     only when allowed (allowlist or Decider) and also named by
+//     Config.OperatorLiteralAllow, never in a harness sandbox (owner
+//     decision 2026-10-16, contradicting A07 §7; round-2 review F2).
 //   - A CONNECT tunnel to a DNS name must open with a TLS ClientHello whose
 //     server_name equals that name (A07 §3.2 step 6), and no ClientHello may
 //     carry encrypted_client_hello (owner decision 2026-10-16); anything else
