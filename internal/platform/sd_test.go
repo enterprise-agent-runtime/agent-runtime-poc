@@ -2,6 +2,7 @@ package platform
 
 import (
 	"encoding/binary"
+	"os"
 	"testing"
 )
 
@@ -28,28 +29,39 @@ func TestOwnerOnlyDACL(t *testing.T) {
 		sid  []byte
 		want bool
 	}{
-		{"owner only", testSD(seDACLPresent|seDACLProtected, allowed(user)), user, true},
-		{"RID 500 owner", testSD(seDACLPresent|seDACLProtected, allowed(admin)), admin, true},
-		{"not protected", testSD(seDACLPresent, allowed(user)), user, false},
-		{"DACL absent", testSD(seDACLProtected), user, false}, // offset 0; the present bit is guarded below
+		{"owner only", testSD(user, seDACLPresent|seDACLProtected, allowed(user)), user, true},
+		{"RID 500 owner", testSD(admin, seDACLPresent|seDACLProtected, allowed(admin)), admin, true},
+		{"not protected", testSD(user, seDACLPresent, allowed(user)), user, false},
+		{"DACL absent", testSD(user, seDACLProtected), user, false}, // offset 0; the present bit is guarded below
 
-		{"NULL DACL", nullDACLSD(), user, false},
-		{"two ACEs", testSD(seDACLPresent|seDACLProtected, allowed(user), allowed(user)), user, false},
-		{"no ACE", testSD(seDACLPresent | seDACLProtected), user, false},
-		{"deny ACE", testSD(seDACLPresent|seDACLProtected, testACE(1, 0, fileAllAccess, user)), user, false},
-		{"inherited ACE", testSD(seDACLPresent|seDACLProtected, testACE(0, 0x10, fileAllAccess, user)), user, false},
-		{"wrong mask", testSD(seDACLPresent|seDACLProtected, testACE(0, 0, 0x120089, user)), user, false},
-		{"different SID", testSD(seDACLPresent|seDACLProtected, allowed(other)), user, false},
-		{"SID prefix only", testSD(seDACLPresent|seDACLProtected, allowed(user)), user[:len(user)-4], false},
-		{"empty SID", testSD(seDACLPresent|seDACLProtected, allowed(user)), nil, false},
+		{"NULL DACL", nullDACLSD(user), user, false},
+		{"two ACEs", testSD(user, seDACLPresent|seDACLProtected, allowed(user), allowed(user)), user, false},
+		{"no ACE", testSD(user, seDACLPresent|seDACLProtected), user, false},
+		{"deny ACE", testSD(user, seDACLPresent|seDACLProtected, testACE(1, 0, fileAllAccess, user)), user, false},
+		{"inherited ACE", testSD(user, seDACLPresent|seDACLProtected, testACE(0, 0x10, fileAllAccess, user)), user, false},
+		{"wrong mask", testSD(user, seDACLPresent|seDACLProtected, testACE(0, 0, 0x120089, user)), user, false},
+		{"different SID", testSD(user, seDACLPresent|seDACLProtected, allowed(other)), user, false},
+		{"SID prefix only", testSD(user, seDACLPresent|seDACLProtected, allowed(user)), user[:len(user)-4], false},
+		{"empty SID", testSD(user, seDACLPresent|seDACLProtected, allowed(user)), nil, false},
 		{"empty SD", nil, user, false},
 
 		// Added by the mutation audit of FX-3; each row kills a mutant the
 		// rows above let through.
-		{"ACE padded after SID", testSD(seDACLPresent|seDACLProtected, padded), user, true},                                  // SID compared to the ACE's end
-		{"inherit-only ACE", testSD(seDACLPresent|seDACLProtected, testACE(0, 0x08, fileAllAccess, user)), user, false},      // grants nothing on the file itself; kills a flags check narrowed to INHERITED_ACE
-		{"DACL inside the header", headerOverlapSD(user), user, false},                                                       // review of 2fab6a3: offset 10, the ACL reuses header bytes
-		{"mask superset", testSD(seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess|0x10000000, user)), user, false}, // WriteOwnerOnly writes exactly FA; kills mask&FA == FA
+		{"ACE padded after SID", testSD(user, seDACLPresent|seDACLProtected, padded), user, true},                                  // SID compared to the ACE's end
+		{"inherit-only ACE", testSD(user, seDACLPresent|seDACLProtected, testACE(0, 0x08, fileAllAccess, user)), user, false},      // grants nothing on the file itself; kills a flags check narrowed to INHERITED_ACE
+		{"DACL inside the header", headerOverlapSD(user), user, false},                                                             // review of 2fab6a3: offset 10, the ACL reuses header bytes
+		{"mask superset", testSD(user, seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess|0x10000000, user)), user, false}, // WriteOwnerOnly writes exactly FA; kills mask&FA == FA
+
+		// Security review of FX-3 (WH-1+2, CWE-283): the owner of a file holds
+		// READ_CONTROL and WRITE_DAC whatever its DACL says, so a token file
+		// owned by anyone but the user (another user who pre-created it, or
+		// BUILTIN\Administrators, an elevated token's default owner) is not
+		// owner-only although its DACL is.
+		{"owner is a different SID", testSD(other, seDACLPresent|seDACLProtected, allowed(user)), user, false},
+		{"owner is Administrators", testSD(testSID(5, 32, 544), seDACLPresent|seDACLProtected, allowed(user)), user, false},
+		{"no owner", testSD(nil, seDACLPresent|seDACLProtected, allowed(user)), user, false},
+		{"owner is a SID prefix", testSD(user[:len(user)-4], seDACLPresent|seDACLProtected, allowed(user)), user, false},
+		{"directory ACE on a file", testSD(user, seDACLPresent|seDACLProtected, testACE(0, objectInheritACE|containerInheritACE, fileAllAccess, user)), user, false},
 	}
 	for _, c := range cases {
 		if got := ownerOnlyDACL(c.sd, c.sid); got != c.want {
@@ -60,7 +72,7 @@ func TestOwnerOnlyDACL(t *testing.T) {
 	// Truncated buffers and lying offsets or lengths are rejected, never a
 	// panic: the bytes come from the OS, but a parser that trusts them is a
 	// parser that can be crashed.
-	good := testSD(seDACLPresent|seDACLProtected, allowed(user))
+	good := testSD(user, seDACLPresent|seDACLProtected, allowed(user))
 	for n := 0; n < len(good); n++ {
 		if ownerOnlyDACL(good[:n], user) {
 			t.Errorf("truncated to %d bytes: accepted", n)
@@ -77,6 +89,7 @@ func TestOwnerOnlyDACL(t *testing.T) {
 	}
 	acl := sdHeaderSize
 	ace := acl + aclHeaderSize
+	aclEnd := ace + len(allowed(user)) // the owner SID starts here
 	for name, b := range map[string][]byte{
 		"DACL offset past end":   lie(16, uint32(len(good)), 4),
 		"DACL offset huge":       lie(16, 0xFFFFFFF0, 4),
@@ -100,7 +113,17 @@ func TestOwnerOnlyDACL(t *testing.T) {
 		// removal of ace = ace[:aceSize].
 		"AceCount 0, ACE present":     lie(acl+4, 0, 2),
 		"AclSize cuts ACE header":     lie(acl+2, aclHeaderSize+2, 2),
-		"AceSize ends inside the SID": lie(ace+2, uint32(len(good)-ace-4), 2),
+		"AceSize ends inside the SID": lie(ace+2, uint32(aclEnd-ace-4), 2),
+		// Security review of FX-3 (WH-1+2): the owner offset is bounds-checked
+		// like the DACL's. 0 is "no owner"; an offset inside the header would
+		// read the SID out of the header's own fields; one inside the DACL
+		// reads the ACL header, which is no SID; past the end must not panic.
+		"owner offset 0":           lie(4, 0, 4),
+		"owner offset in header":   lie(4, 8, 4),
+		"owner offset at the DACL": lie(4, uint32(acl), 4),
+		"owner offset past end":    lie(4, uint32(len(good)), 4),
+		"owner offset huge":        lie(4, 0xFFFFFFF0, 4),
+		"owner subauth count lies": lie(aclEnd, 0x0F01, 2), // revision 1, 15 subauthorities
 	} {
 		if ownerOnlyDACL(b, user) {
 			t.Errorf("%s: accepted", name)
@@ -142,19 +165,22 @@ func TestValidSID(t *testing.T) {
 // parser must hold for any bytes. Property: it never panics, and it never
 // accepts unless the descriptor is self-relative with a present, protected
 // DACL and contains the exact owner-only ACE body (type 0, flags 0, mask
-// FILE_ALL_ACCESS, followed by the caller's SID). The seeds run as part of
+// FILE_ALL_ACCESS, followed by the caller's SID), and its owner offset, past
+// the header, points at the caller's SID (WH-1+2). The seeds run as part of
 // every go test; explore further with
 // go test -run '^$' -fuzz FuzzOwnerOnlyDACL ./internal/platform/
 func FuzzOwnerOnlyDACL(f *testing.F) {
 	user := testSID(5, 21, 1111, 2222, 3333, 1001)
-	good := testSD(seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user))
+	good := testSD(user, seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user))
 	f.Add(good, user)
 	f.Add(good[:len(good)-1], user)
-	f.Add(testSD(seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user), testACE(0, 0, fileAllAccess, user)), user)
-	f.Add(testSD(seDACLPresent, testACE(0, 0, fileAllAccess, user)), user)
-	f.Add(nullDACLSD(), user)
+	f.Add(testSD(user, seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user), testACE(0, 0, fileAllAccess, user)), user)
+	f.Add(testSD(user, seDACLPresent, testACE(0, 0, fileAllAccess, user)), user)
+	f.Add(nullDACLSD(user), user)
 	f.Add([]byte{}, []byte{})
-	f.Add(headerOverlapSD(user), user) // review of 2fab6a3
+	f.Add(headerOverlapSD(user), user)                                                                          // review of 2fab6a3
+	f.Add(testSD(testSID(5, 32, 544), seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user)), user) // WH-1+2: foreign owner
+	f.Add(testSD(nil, seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user)), user)                 // WH-1+2: no owner
 	f.Fuzz(func(t *testing.T, sd, sid []byte) {
 		if !ownerOnlyDACL(sd, sid) {
 			return
@@ -174,6 +200,11 @@ func FuzzOwnerOnlyDACL(f *testing.F) {
 		}
 		if sd[ace] != accessAllowedACEType || sd[ace+1] != 0 || string(sd[ace+aceHeaderSize:ace+aceHeaderSize+uint64(len(body))]) != string(body) {
 			t.Fatalf("accepted without an owner-only ACE for the SID at offset %d: sd %x sid %x", ace, sd, sid)
+		}
+		// WH-1+2: and the owner, past the header, is exactly the SID.
+		owner := uint64(binary.LittleEndian.Uint32(sd[4:]))
+		if owner < sdHeaderSize || owner+uint64(len(sid)) > uint64(len(sd)) || string(sd[owner:owner+uint64(len(sid))]) != string(sid) {
+			t.Fatalf("accepted with owner offset %d not holding the SID: sd %x sid %x", owner, sd, sid)
 		}
 	})
 }
@@ -196,34 +227,38 @@ func testACE(typ, flags byte, mask uint32, sid []byte) []byte {
 }
 
 // testSD builds a self-relative security descriptor whose DACL, when
-// seDACLPresent is set, holds the given ACEs and directly follows the header.
-func testSD(control uint16, aces ...[]byte) []byte {
+// seDACLPresent is set, holds the given ACEs and directly follows the
+// header; the owner SID, when not nil, follows the DACL.
+func testSD(owner []byte, control uint16, aces ...[]byte) []byte {
 	b := make([]byte, sdHeaderSize)
 	b[0] = 1
 	binary.LittleEndian.PutUint16(b[2:], control|seSelfRelative)
-	if control&seDACLPresent == 0 {
+	if control&seDACLPresent != 0 {
+		binary.LittleEndian.PutUint32(b[16:], sdHeaderSize)
+		size := aclHeaderSize
+		for _, a := range aces {
+			size += len(a)
+		}
+		b = append(b, 2, 0)
+		b = binary.LittleEndian.AppendUint16(b, uint16(size))
+		b = binary.LittleEndian.AppendUint16(b, uint16(len(aces)))
+		b = append(b, 0, 0)
+		for _, a := range aces {
+			b = append(b, a...)
+		}
+	}
+	if owner == nil {
 		return b
 	}
-	binary.LittleEndian.PutUint32(b[16:], sdHeaderSize)
-	size := aclHeaderSize
-	for _, a := range aces {
-		size += len(a)
-	}
-	b = append(b, 2, 0)
-	b = binary.LittleEndian.AppendUint16(b, uint16(size))
-	b = binary.LittleEndian.AppendUint16(b, uint16(len(aces)))
-	b = append(b, 0, 0)
-	for _, a := range aces {
-		b = append(b, a...)
-	}
-	return b
+	return withOwner(b, owner) // endpoint_test.go
 }
 
 // headerOverlapSD places the DACL at offset 10, inside the 20-byte header:
 // the ACL's Sbz2 is the low half of OffsetDacl and the ACE's type and flags
 // are its zero high bytes, so a parser that only bounds-checks the end of
 // the buffer reads a well-formed owner-only ACE out of it. The kernel never
-// returns such a descriptor; the parser must still refuse it.
+// returns such a descriptor; the parser must still refuse it. The owner is
+// valid (after the ACE), so only the DACL offset can reject it.
 func headerOverlapSD(sid []byte) []byte {
 	const off = 10
 	aceSize := aceHeaderSize + 4 + len(sid)
@@ -238,17 +273,102 @@ func headerOverlapSD(sid []byte) []byte {
 	binary.LittleEndian.PutUint16(b[ace+2:], uint16(aceSize))
 	binary.LittleEndian.PutUint32(b[ace+4:], fileAllAccess)
 	copy(b[ace+8:], sid)
-	return b
+	return withOwner(b, sid)
 }
 
 // nullDACLSD is "DACL present" with a zero offset: a NULL DACL, which grants
 // everyone everything. ownerOnlyDACL rejects it with `off < sdHeaderSize`,
 // which since the review of 2fab6a3 covers offset 0 and every other offset
 // inside the header; headerOverlapSD is the case that kills a mutant
-// narrowing it back to `off == 0`.
-func nullDACLSD() []byte {
+// narrowing it back to `off == 0`. The owner is valid, so only the NULL DACL
+// can reject it.
+func nullDACLSD(owner []byte) []byte {
 	b := make([]byte, sdHeaderSize)
 	b[0] = 1
 	binary.LittleEndian.PutUint16(b[2:], seDACLPresent|seDACLProtected|seSelfRelative)
-	return b
+	if owner == nil {
+		return b
+	}
+	return withOwner(b, owner) // endpoint_test.go
+}
+
+// TestOwnerOnlyDirDACL guards the directory form of the check (WH-1+2,
+// security review of FX-3, CWE-276): Ensure() used to create the home and
+// run directories with MkdirAll alone, whose mode means nothing on Windows,
+// so they kept the DACL inherited from %LOCALAPPDATA%. They now carry a
+// protected DACL whose one ACE is inherited by files and subdirectories
+// (OI|CI), owned by the user; anything else is refused.
+func TestOwnerOnlyDirDACL(t *testing.T) {
+	user := testSID(5, 21, 1111, 2222, 3333, 1001)
+	other := testSID(5, 21, 1111, 2222, 3333, 1002)
+	dir := func(flags byte, sid []byte) []byte { return testACE(0, flags, fileAllAccess, sid) }
+	const oici = objectInheritACE | containerInheritACE
+	cases := []struct {
+		name string
+		sd   []byte
+		want bool
+	}{
+		{"owner-only, OI|CI", testSD(user, seDACLPresent|seDACLProtected, dir(oici, user)), true},
+		{"not protected", testSD(user, seDACLPresent, dir(oici, user)), false},
+		{"file ACE (not inheritable)", testSD(user, seDACLPresent|seDACLProtected, dir(0, user)), false},
+		{"inherited ACE", testSD(user, seDACLPresent|seDACLProtected, dir(oici|0x10, user)), false},
+		{"inherit-only ACE", testSD(user, seDACLPresent|seDACLProtected, dir(oici|0x08, user)), false},
+		{"other SID", testSD(user, seDACLPresent|seDACLProtected, dir(oici, other)), false},
+		{"foreign owner", testSD(other, seDACLPresent|seDACLProtected, dir(oici, user)), false},
+		{"extra ACE", testSD(user, seDACLPresent|seDACLProtected, dir(oici, user), dir(oici, other)), false},
+	}
+	for _, c := range cases {
+		if got := ownerOnlyDirDACL(c.sd, user); got != c.want {
+			t.Errorf("%s: ownerOnlyDirDACL = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestOwnerOnlyMode is the Unix owner-only decision, pure so the foreign
+// owner case runs without root (WH-1+2, security review of FX-3, CWE-283):
+// OwnerOnly used to check the permission bits only, so a 0600 token file
+// owned by another uid (who can chmod it, and read it) passed.
+func TestOwnerOnlyMode(t *testing.T) {
+	cases := []struct {
+		name       string
+		perm       os.FileMode
+		owner, uid int
+		want       bool
+	}{
+		{"0600, own", 0o600, 1000, 1000, true},
+		{"0400, own", 0o400, 1000, 1000, true},
+		{"0600, other uid", 0o600, 1001, 1000, false},
+		{"0600, root-owned", 0o600, 0, 1000, false},
+		{"0640, own", 0o640, 1000, 1000, false},
+		{"0604, own", 0o604, 1000, 1000, false},
+	}
+	for _, c := range cases {
+		if got := ownerOnlyMode(c.perm, c.owner, c.uid); got != c.want {
+			t.Errorf("%s: ownerOnlyMode = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestOwnerIs: protectDir on Windows refuses a directory whose owner is not
+// the user before changing it (WH-1+2 re-review of 330a5ed); the owner is
+// read with the same bounds checks as ownerOnlyDACL.
+func TestOwnerIs(t *testing.T) {
+	user := testSID(5, 21, 1111, 2222, 3333, 1001)
+	other := testSID(5, 21, 1111, 2222, 3333, 1002)
+	ace := testACE(0, 0, fileAllAccess, user)
+	for _, c := range []struct {
+		name string
+		sd   []byte
+		want bool
+	}{
+		{"own", testSD(user, seDACLPresent|seDACLProtected, ace), true},
+		{"own, any DACL", testSD(user, seDACLPresent, ace, testACE(0, 0, fileAllAccess, other)), true},
+		{"other", testSD(other, seDACLPresent|seDACLProtected, ace), false},
+		{"no owner", testSD(nil, seDACLPresent|seDACLProtected, ace), false},
+		{"short", testSD(user, seDACLPresent)[:sdHeaderSize-1], false},
+	} {
+		if got := ownerIs(c.sd, user); got != c.want {
+			t.Errorf("%s: ownerIs = %v, want %v", c.name, got, c.want)
+		}
+	}
 }
