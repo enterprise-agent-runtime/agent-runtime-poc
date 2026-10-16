@@ -65,6 +65,10 @@ type Client struct {
 	err     error // non-nil once closed; wraps ErrClosed
 
 	done chan struct{} // closed when the read loop has returned
+
+	// afterWrite, when set (tests only, before any call), runs after a
+	// request's write and its context watch have ended.
+	afterWrite func()
 }
 
 type reply struct {
@@ -210,7 +214,18 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 
 	msg, err := json.Marshal(execproto.Message{JSONRPC: execproto.JSONRPCVersion, ID: json.RawMessage(strconv.FormatInt(id, 10)), Method: method, Params: p})
 	if err == nil {
+		// A write blocks while the executor does not read, and every other
+		// call queues behind it on the writer. If ctx ends meanwhile, the
+		// connection is torn down: a partly written frame cannot be taken
+		// back, the same rule as a write error (CWE-1088).
+		// A ctx that ends just as a write completes may still tear down:
+		// conservative, never a partial frame.
+		stop := context.AfterFunc(ctx, func() { c.fail(ctx.Err()) })
 		err = c.w.WriteFrame(msg)
+		stop()
+		if c.afterWrite != nil {
+			c.afterWrite()
+		}
 	}
 	if err != nil {
 		c.forget(id)

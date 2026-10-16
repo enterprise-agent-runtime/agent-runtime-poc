@@ -270,6 +270,11 @@ func TestClient_ContextClosesClient(t *testing.T) {
 // ctx.Err() and leaves the connection usable; its late response is dropped.
 func TestClient_CallContextCancel(t *testing.T) {
 	c, p := newPair(t, nil)
+	// Cancel only once the request is fully written and its write watch has
+	// ended: cancelling during the write tears the connection down
+	// (TestClient_WriteHonoursContext), which is not what this test is about.
+	written := make(chan struct{}, 2)
+	c.afterWrite = func() { written <- struct{}{} }
 	ctx, cancel := context.WithCancel(context.Background())
 	gotFirst := make(chan struct{})
 	finish := p.serve(func() error {
@@ -295,6 +300,7 @@ func TestClient_CallContextCancel(t *testing.T) {
 		errc <- err
 	}()
 	<-gotFirst
+	<-written
 	cancel()
 	if err := <-errc; !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled call: %v, want context.Canceled", err)
@@ -534,5 +540,53 @@ func TestClient_TypedMethods(t *testing.T) {
 	c, _ := newPair(t, nil)
 	if err := c.FS(ctx, execproto.MethodSpawn, execproto.SpawnParams{}, nil); err == nil {
 		t.Error("FS sent a method outside exec.fs.*")
+	}
+}
+
+// TestClient_WriteHonoursContext guards the review finding on bcfa1fc
+// (CWE-1088): an executor that stops reading left Call blocked in
+// WriteFrame past its deadline, and every other call queued on the writer
+// behind it, so Wait, Signal and Shutdown could not meet theirs either. A
+// context that ends during a write now tears the connection down: a
+// partially written frame cannot be taken back, so this is the same rule
+// as a write error. The peer here never reads.
+func TestClient_WriteHonoursContext(t *testing.T) {
+	c, _ := newPair(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	errc := make(chan error, 1)
+	go func() { errc <- c.Call(ctx, execproto.MethodWait, execproto.WaitParams{Handle: "ph_1"}, nil) }()
+	const queued = 3
+	qerrs := make(chan error, queued)
+	for range queued {
+		go func() {
+			_, err := c.Signal(context.Background(), execproto.SignalParams{Handle: "ph_1", Signal: execproto.SignalKILL})
+			qerrs <- err
+		}()
+	}
+
+	select {
+	case err := <-errc:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Call blocked in a write: %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(hangGuard):
+		t.Fatal("Call still blocked in a write after its deadline")
+	}
+	select {
+	case <-c.Done():
+	case <-time.After(hangGuard):
+		t.Fatal("the client is still open after a write was abandoned")
+	}
+	for range queued {
+		select {
+		case err := <-qerrs:
+			if !errors.Is(err, ErrClosed) {
+				t.Errorf("call queued behind the blocked write: %v, want ErrClosed", err)
+			}
+		case <-time.After(hangGuard):
+			t.Fatal("a call queued behind the blocked write is still blocked")
+		}
 	}
 }
