@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -138,19 +139,16 @@ func run() int {
 		slog.Error("api", "error", err.Error())
 		return 1
 	}
-	// Token file first, then bind, so any client that can connect can read
-	// the token (A05 §3.1).
-	if err := writeToken(l.Token(), token, platform.WriteOwnerOnly); err != nil {
-		slog.Error("refusing to serve", "error", err.Error())
-		return 1
-	}
-	ln, err := platform.Listen(home)
+	// Bind first, exclusively, then write the token: a second daemon must
+	// fail before it can replace the live daemon's token (WH-1+2; this
+	// reverses A05 §3.1's token-then-bind order).
+	ln, err := listenThenPublish(home, l.Token(), token, platform.Listen, platform.WriteOwnerOnly)
 	if errors.Is(err, platform.ErrDaemonRunning) {
 		fmt.Fprintln(os.Stderr, "wardend: already running for", home)
 		return 3
 	}
 	if err != nil {
-		slog.Error("cannot listen", "endpoint", platform.Endpoint(home), "error", err.Error())
+		slog.Error("refusing to serve", "endpoint", platform.Endpoint(home), "error", err.Error())
 		return 1
 	}
 	_ = platform.WriteOwnerOnly(l.PID(), []byte(strconv.Itoa(os.Getpid())))
@@ -251,4 +249,22 @@ func writeToken(path, token string, write func(string, []byte) error) error {
 		return fmt.Errorf("the token file %s does not hold the token just written", path)
 	}
 	return nil
+}
+
+// listenThenPublish binds the daemon endpoint, which only one daemon per
+// home can hold (platform.Listen creates it exclusively), and only then
+// writes and verifies the token file (writeToken). A second daemon fails
+// with ErrDaemonRunning before it can touch the live daemon's token
+// (WH-1+2). Clients that connect in between find no token, or a stale one,
+// and retry: startDaemon polls, and a client sees ErrNotRunning.
+func listenThenPublish(home, tokenPath, token string, listen func(string) (net.Listener, error), write func(string, []byte) error) (net.Listener, error) {
+	ln, err := listen(home)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeToken(tokenPath, token, write); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
 }

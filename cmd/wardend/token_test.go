@@ -46,3 +46,37 @@ func TestWriteToken_VerifiesBeforeServing(t *testing.T) {
 		t.Fatal("token file holding another value accepted")
 	}
 }
+
+// TestListenThenPublish_SecondDaemonKeepsToken guards WH-1+2 (re-review of
+// 330a5ed, confirmed race, pre-existing): wardend wrote its token file
+// before Listen told it another daemon was running, and exited 3 without
+// restoring it, so any second wardend (run by hand, or two autostarts at
+// once) replaced the live daemon's token and locked its clients out. The
+// endpoint is now bound first, exclusively; only its owner writes the token.
+func TestListenThenPublish_SecondDaemonKeepsToken(t *testing.T) {
+	home := t.TempDir()
+	l := platform.Layout{Home: home}
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	const live = "bGl2ZS1kYWVtb24tdG9rZW4tZm9yLXRlc3RzLW9ubHk"
+	ln, err := listenThenPublish(home, l.Token(), live, platform.Listen, platform.WriteOwnerOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	before, err := os.ReadFile(l.Token())
+	if err != nil || string(before) != live {
+		t.Fatalf("token after the first daemon: %q %v", before, err)
+	}
+	if ln2, err := listenThenPublish(home, l.Token(), "c2Vjb25kLWRhZW1vbi10b2tlbi1mb3ItdGVzdHMtb25seQ", platform.Listen, platform.WriteOwnerOnly); !errors.Is(err, platform.ErrDaemonRunning) {
+		if ln2 != nil {
+			ln2.Close()
+		}
+		t.Fatalf("second daemon: %v; want ErrDaemonRunning", err)
+	}
+	after, err := os.ReadFile(l.Token())
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("second daemon changed the token file: %q -> %q (%v)", before, after, err)
+	}
+}

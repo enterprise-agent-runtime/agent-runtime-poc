@@ -122,24 +122,54 @@ func startDaemon(ctx context.Context, l platform.Layout) error {
 	if err := l.Ensure(); err != nil {
 		return err
 	}
-	_ = os.Remove(l.Token())
+	// The token file is not removed here: a daemon that won the endpoint a
+	// moment ago may just have written it, and the new wardend replaces a
+	// stale one itself once it holds the endpoint (WH-1+2).
 	pid, err := platform.SpawnDaemon(exe, nil, filepath.Join(l.Logs(), "wardend.log"), nil)
 	if err != nil {
 		return fmt.Errorf("start wardend: %w", err)
 	}
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		if c, err := api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil); err == nil {
-			c.Close()
-			fmt.Fprintf(os.Stderr, "started wardend (pid %d)\n", pid)
-			return nil
-		}
-		if !platform.Alive(pid) {
-			return fmt.Errorf("wardend exited during start; see %s", filepath.Join(l.Logs(), "wardend.log"))
-		}
-		time.Sleep(150 * time.Millisecond)
+	pause := func() { time.Sleep(150 * time.Millisecond) }
+	ours, err := waitUp(ctx, l, dialCLI, func() bool { return platform.Alive(pid) }, 100, 20, pause)
+	if err != nil {
+		return fmt.Errorf("%w; see %s", err, filepath.Join(l.Logs(), "wardend.log"))
 	}
-	return fmt.Errorf("wardend did not come up within 15 s; see %s", filepath.Join(l.Logs(), "wardend.log"))
+	if ours {
+		fmt.Fprintf(os.Stderr, "started wardend (pid %d)\n", pid)
+	} else {
+		fmt.Fprintln(os.Stderr, "wardend was started concurrently by another client")
+	}
+	return nil
+}
+
+// waitUp polls until a daemon answers, at most tries times. The spawned
+// wardend may exit (code 3) because another one won the endpoint; that one
+// binds before it writes its token (WH-1+2), so a client can see no token
+// or a stale one for a moment. Polling therefore goes on for graceTries
+// more attempts after ours has exited; ours reports whether the daemon
+// that answered is the one we spawned (still alive).
+func waitUp(ctx context.Context, l platform.Layout, dial dialFunc, alive func() bool, tries, graceTries int, pause func()) (ours bool, err error) {
+	grace := -1
+	for i := 0; i < tries; i++ {
+		c, err := dial(ctx, l)
+		if err == nil {
+			if c != nil {
+				c.Close()
+			}
+			return grace < 0, nil
+		}
+		if grace < 0 && !alive() {
+			grace = graceTries
+		}
+		if grace == 0 {
+			return false, errors.New("wardend exited during start")
+		}
+		if grace > 0 {
+			grace--
+		}
+		pause()
+	}
+	return false, errors.New("wardend did not come up within 15 s")
 }
 
 // do connects (starting the daemon if needed), calls one method and

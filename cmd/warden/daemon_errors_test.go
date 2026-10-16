@@ -110,3 +110,35 @@ func TestNotRunningOnlyOnErrNotRunning(t *testing.T) {
 		})
 	}
 }
+
+// TestWaitUp_ToleratesLostRace: when two clients start wardend at once, the
+// one whose wardend lost the endpoint (exit 3) keeps polling for a grace
+// period and attaches to the winner, which binds before it writes its token
+// (WH-1+2); it fails only if no daemon answers within the grace. Counted
+// attempts, no clock.
+func TestWaitUp_ToleratesLostRace(t *testing.T) {
+	l := platform.Layout{Home: t.TempDir()}
+	dead := func() bool { return false }
+	n := 0
+	answersAt := func(k int) dialFunc {
+		return func(context.Context, platform.Layout) (*api.Client, error) {
+			n++
+			if n >= k {
+				return nil, nil
+			}
+			return nil, errNotRunningDial
+		}
+	}
+	n = 0
+	if ours, err := waitUp(context.Background(), l, answersAt(4), dead, 100, 5, func() {}); err != nil || ours {
+		t.Fatalf("winner answers on attempt 4 after ours died: ours %v err %v; want attached to the other daemon", ours, err)
+	}
+	n = 0
+	if _, err := waitUp(context.Background(), l, answersAt(50), dead, 100, 5, func() {}); err == nil || !strings.Contains(err.Error(), "exited during start") {
+		t.Fatalf("nobody answers within the grace: %v", err)
+	}
+	n = 0
+	if ours, err := waitUp(context.Background(), l, answersAt(3), func() bool { return true }, 100, 5, func() {}); err != nil || !ours {
+		t.Fatalf("ours answers: ours %v err %v", ours, err)
+	}
+}
