@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,17 +60,16 @@ func TestListenThenPublish_SecondDaemonKeepsToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	const live = "bGl2ZS1kYWVtb24tdG9rZW4tZm9yLXRlc3RzLW9ubHk"
-	ln, unlock, err := listenThenPublish(home, l.Token(), live, platform.LockDaemon, platform.Listen, platform.WriteOwnerOnly)
+	ln, err := listenThenPublish(home, l.Token(), live, platform.Listen, platform.WriteOwnerOnly)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer unlock()
 	defer ln.Close()
 	before, err := os.ReadFile(l.Token())
 	if err != nil || string(before) != live {
 		t.Fatalf("token after the first daemon: %q %v", before, err)
 	}
-	if ln2, _, err := listenThenPublish(home, l.Token(), "c2Vjb25kLWRhZW1vbi10b2tlbi1mb3ItdGVzdHMtb25seQ", platform.LockDaemon, platform.Listen, platform.WriteOwnerOnly); !errors.Is(err, platform.ErrDaemonRunning) {
+	if ln2, err := listenThenPublish(home, l.Token(), "c2Vjb25kLWRhZW1vbi10b2tlbi1mb3ItdGVzdHMtb25seQ", platform.Listen, platform.WriteOwnerOnly); !errors.Is(err, platform.ErrDaemonRunning) {
 		if ln2 != nil {
 			ln2.Close()
 		}
@@ -111,38 +109,4 @@ func TestRemoveOwnToken_LeavesAnotherDaemonsToken(t *testing.T) {
 		t.Fatalf("daemon A's own token file left after shutdown (%v)", err)
 	}
 	removeOwnToken(l.Token(), a) // already gone: nothing to do, no panic
-}
-
-// TestListenThenPublish_RefusesWhileLocked guards WH-4 (WH-1+2 review,
-// CWE-367): after a crash two wardends could both see the stale socket,
-// both remove it and both bind, the second removing the first one's fresh
-// socket. While another daemon holds run/wardend.lock, startup stops with
-// ErrDaemonRunning (exit 3) before Listen, so the stale-socket removal is
-// never reached, and no token is written.
-func TestListenThenPublish_RefusesWhileLocked(t *testing.T) {
-	home := t.TempDir()
-	l := platform.Layout{Home: home}
-	if err := l.Ensure(); err != nil {
-		t.Fatal(err)
-	}
-	held, err := platform.LockDaemon(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer held()
-	listened := false
-	listen := func(h string) (net.Listener, error) {
-		listened = true
-		return platform.Listen(h)
-	}
-	ln, _, err := listenThenPublish(home, l.Token(), "bG9ja2VkLW91dC10b2tlbi1mb3ItdGVzdHMtb25seS14", platform.LockDaemon, listen, platform.WriteOwnerOnly)
-	if ln != nil {
-		ln.Close()
-	}
-	if !errors.Is(err, platform.ErrDaemonRunning) || listened {
-		t.Fatalf("startup while the lock is held: err %v, Listen reached %v; want ErrDaemonRunning before Listen", err, listened)
-	}
-	if _, err := os.Lstat(l.Token()); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("token file written while another daemon holds the lock (%v)", err)
-	}
 }
