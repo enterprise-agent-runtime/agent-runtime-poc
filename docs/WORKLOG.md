@@ -22,6 +22,26 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-024 · 2026-10-16 · M2-11: the egress proxy core
+
+- **Asked:** M2 plan task M2-11, with the owner's proxy decisions of 2026-10-16 (proxy stricter than A07, all three; an unconditional IP floor). Delivered under "merge each task when its review passes".
+- **Task:** The per-task egress proxy that is the only network exit for sandboxed processes: one canonical target, deny by default, SSRF and rebinding protection, CONNECT and plain HTTP, one event per attempt.
+- **How:**
+  - **Target and ranges:** `Normalize` to one host:port key; refuse non-canonical literals and non-ASCII names (D-059); resolve once, drop denied ranges and host addresses, dial the checked IP.
+  - **Decision:** exact-match allowlist, then the `Decider` (`StaticDecider` in M2, D-058); private literals only per C-69.
+  - **Limits and events** (D-060): in-flight cap, post-evaluation slot, stall timeouts, detached event writes.
+  - **Commits:** `7ad63b0`, `eac0d47`, `f713670`, `41a09ae`, `bb6ef92`, `7b189e2`, `71a358f`.
+- **Rules kept:**
+  - INV-J: no listener in the package; tests use `net.Pipe` and in-memory listeners only.
+  - No global mutable state; no new dependency; test first, mutation checks every round; no wall-clock assertions.
+- **Rules changed or bent:**
+  - **A07 §7 contradicted** by the owner's floor and operator-only literals (C-69).
+  - **Stricter than A07** in nine places (C-70), each the owner's decision or a review finding.
+  - **The operator entry only lifts the range check:** I chose the stricter of two readings of the owner's decision after the round-2 review showed the other one bypasses the allowlist, the Decider and ID-12. The owner can loosen it.
+  - **Tool hazard:** the editing tool turned the escape for U+202E into a real RIGHT-TO-LEFT OVERRIDE in a comment and a test; caught and replaced with numeric runes.
+- **Verified:** three review rounds, code and security together, with an SSRF matrix and flood measurements; `make check` green; `-race -count=20` in WSL2.
+- **Left:** see the M2-11 entry in PROGRESS (M3 items, the burst-summary timer, the port-0 schema question in C-70).
+
 ## W-023 · 2026-10-16 · M2-12: the sandbox Spec, its mounts and its environment
 
 - **Asked:** M2 plan task M2-12. Delivered under "merge each task when its review passes".

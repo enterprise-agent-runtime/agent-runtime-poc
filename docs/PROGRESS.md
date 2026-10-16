@@ -79,7 +79,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **Group C** (proxy; no Docker):
 
-- [ ] **M2-11** normalize, range check, allowlist, CONNECT and plain HTTP, events
+- [x] **M2-11** Egress proxy core: normalize, range check, allowlist, CONNECT and plain HTTP, events (D-058, D-059, D-060, C-69, C-70).
+  - **Pieces:** `internal/proxy`: `Normalize`, the range and floor checks, exact-match `Allowlist`, the `Decider` hand-off with `StaticDecider`, CONNECT with the SNI check, plain HTTP, limits, `proxy.connect`/`proxy.denied` events. No listener (INV-J): `Serve` takes one the caller owns.
+  - **Commits:** `7ad63b0`, `eac0d47`, `f713670`, `41a09ae`, `bb6ef92`, `7b189e2`, `71a358f`.
+  - **Review:** three rounds. They found events lost at shutdown (CWE-778), an unbounded flood before evaluation (CWE-770), an operator entry acting as a standalone allow (CWE-863), operator entries in transition ranges (CWE-918), misleading shutdown reasons and an uncapped method. The SSRF matrix (every literal encoding, zone ids, mapped/NAT64/6to4/Teredo, DNS rebinding) was refused throughout. 47 + 7 + 7 mutants caught; `-race -count=20` in WSL2; coverage 92.6%.
+  - **Left for M3:** the PDP behind `Decider`, the 120 s approval hold, the deny cache and per-host rate-limit summaries.
+  - **Minor, left:** the burst summary is flushed only at the next accept or at shutdown (delayed, not lost; a 10 s timer would make it timely), and the flush runs in the accept loop (a slow store delays only the task's own accepts).
+  - **Accepted residual:** no tunnel inspection after a valid ClientHello, so domain fronting through the inner Host is possible.
 - [ ] **M2-12a** per-task Unix listener for L1
 
 **Group D** (L1 sandbox, WSL2):
