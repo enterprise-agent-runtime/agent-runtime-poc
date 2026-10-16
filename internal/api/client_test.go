@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -122,5 +125,43 @@ func TestDial_RefusesOversizedToken(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "larger than") {
 		t.Fatalf("Dial error = %v; want a size refusal", err)
+	}
+}
+
+// TestDialError_Wording guards WH-1+2 (re-review of 330a5ed): the transport
+// prefixed every Dial failure with "wardend is not running (…)", so an
+// endpoint that exists but refuses this user (ACCESS_DENIED, EACCES), or
+// one served by another user (WH-3's ErrEndpointNotOwned), read as "not
+// running". Only a missing or refusing endpoint says so and is
+// ErrNotRunning; the others say what happened and keep their cause.
+func TestDialError_Wording(t *testing.T) {
+	const ep = `\.\pipe\warden-test`
+	errNotOwned := errors.New("endpoint is served by another user") // stands in for platform.ErrEndpointNotOwned
+	transport := func(err error) error { return fmt.Errorf("wardend is not running (%s): %w", ep, err) }
+	cases := []struct {
+		name       string
+		err        error
+		notRunning bool
+		mention    string
+	}{
+		{"missing", transport(&fs.PathError{Op: "open", Path: ep, Err: fs.ErrNotExist}), true, "not running"},
+		{"refused", transport(syscall.ECONNREFUSED), true, "not running"},
+		{"access denied", transport(&fs.PathError{Op: "open", Path: ep, Err: fs.ErrPermission}), false, "access denied"},
+		{"not owned", errNotOwned, false, "another user"},
+	}
+	for _, c := range cases {
+		got := dialError(ep, c.err)
+		if errors.Is(got, ErrNotRunning) != c.notRunning {
+			t.Errorf("%s: ErrNotRunning = %v, want %v (%v)", c.name, !c.notRunning, c.notRunning, got)
+		}
+		if !strings.Contains(got.Error(), c.mention) || (!c.notRunning && strings.Contains(got.Error(), "not running")) {
+			t.Errorf("%s: %q; want it to say %q and not \"not running\"", c.name, got, c.mention)
+		}
+		if !errors.Is(got, c.err) && !errors.Is(got, errors.Unwrap(c.err)) {
+			t.Errorf("%s: cause lost: %v", c.name, got)
+		}
+	}
+	if got := dialError(ep, errNotOwned); !errors.Is(got, errNotOwned) {
+		t.Errorf("endpoint-not-owned identity lost: %v", got)
 	}
 }

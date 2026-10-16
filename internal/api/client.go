@@ -57,10 +57,7 @@ func Dial(ctx context.Context, l platform.Layout, name, version string, onNotify
 	}
 	nc, err := platform.Dial(ctx, l.Home)
 	if err != nil {
-		if platform.EndpointMissing(err) {
-			return nil, notRunning{err}
-		}
-		return nil, err
+		return nil, dialError(platform.Endpoint(l.Home), err)
 	}
 	return Handshake(ctx, nc, tok, name, version, onNotify)
 }
@@ -209,3 +206,24 @@ type notRunning struct{ err error }
 
 func (e notRunning) Error() string   { return e.err.Error() }
 func (e notRunning) Unwrap() []error { return []error{ErrNotRunning, e.err} }
+
+// dialError classifies a transport Dial error. Only a missing or refusing
+// endpoint is ErrNotRunning, worded "wardend is not running"; anything else
+// says what happened, without the transport's "not running" prefix, and
+// keeps its cause (WH-1+2). Context errors pass through unchanged.
+func dialError(endpoint string, err error) error {
+	if platform.EndpointMissing(err) {
+		return notRunning{err}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	cause := err
+	if u := errors.Unwrap(err); u != nil && strings.HasPrefix(err.Error(), "wardend is not running (") {
+		cause = u
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("cannot connect to wardend at %s: access denied; the endpoint exists but refuses this user: %w", endpoint, cause)
+	}
+	return fmt.Errorf("cannot connect to wardend at %s: %w", endpoint, cause)
+}
