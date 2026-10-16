@@ -22,6 +22,25 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-018 · 2026-10-16 · M2-4b: the deny-list moves to a stdlib-only leaf; archtest enforces R6
+
+- **Asked:** Task M2-4b, which M2-4's review added to the plan. Under the new R4 rule, `internal/sandbox` and `internal/policy` could not import `internal/exec/denylist`, but INV-I needs the same list at the policy, executor and mount layers. Delivered under "merge each task when its review passes".
+- **Task:** Move the deny-list to where every layer may import it, and make the move safe to rely on.
+- **How:** `git mv internal/exec/denylist internal/execproto/denylist`. Only the package doc comment changed, and the tests are unchanged. A new archtest rule enforces A02 R6: non-test files in `internal/execproto/...` import only the standard library. The review found that `import "C"` counted as standard library, so cgo is now excluded; this also tightens R3. Commits `a99c8e9` and `26c4f4d`.
+- **Rules kept:**
+  - A pure move: the API and the tests are unchanged.
+  - Each new rule has fixtures that failed before, plus a revert check.
+  - `make check` green.
+  - No new dependency.
+- **Rules changed or bent:**
+  - **CLAUDE.md §6** gains the R6 sentence (from design A02, under the owner's A02-layout decision).
+  - **Test files are exempt from R6** (A02's `!$test`, the same convention as R3). Decided by me; the golden schema tests need jsonschema.
+  - **D-014** gets a note about the new location.
+- **Verified:** Reviewed once and approved. Every mutation in the review failed the suite, and the real tree passes R6.
+- **Left:**
+  - R6 also forbids execproto from importing its own `denylist` subpackage. That would need a narrow allowance if the wire types ever need `denylist.Version`.
+  - A02 R6 also makes `internal/model` a stdlib-only leaf. That half is not enforced yet.
+
 ## W-017 · 2026-10-16 · M2-4: executor wire types, command profiles, shell-string detection
 
 - **Asked:** M2 plan task M2-4. During review the owner made three decisions (2026-10-16): the package follows design A02's layout; shell-string detection denies more than A06; interpreter strings stay at approval. Delivered under "merge each task when its review passes".
