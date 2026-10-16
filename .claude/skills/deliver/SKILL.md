@@ -38,6 +38,6 @@ For tasks with non-trivial logic, or at least once per group: `test-engineer` on
 
 ## 6. Record
 
-`docs-writer` ticks the task in `docs/PROGRESS.md` with the evidence and appends decisions. Then report to the owner in a few lines: what changed, what was found in review and how it was settled, and the concept worth knowing behind the trickiest part.
+`docs-writer` ticks the task in `docs/PROGRESS.md` with the evidence, appends decisions, and writes the task's `docs/WORKLOG.md` entry, including every rule kept, changed or bent, and why. Then report to the owner in a few lines: what changed, what was found in review and how it was settled, and the concept worth knowing behind the trickiest part.
 
 Do not push or open a PR here unless the owner asked; that is `/milestone-close` or an explicit request.
