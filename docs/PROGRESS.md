@@ -71,7 +71,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Left for M2-7:** refuse reads of regular files with `st_nlink > 1` (hard links, CWE-59); pass only `Tree.Resolve` output to `OpenCanonical`; temp names that cannot match the deny-list or the 8.3 rule (e.g. `.warden-tmp-<rand>`); reject `Resolved.Root != worktree` for model-originated calls.
   - **Left for L2 (owner sign-off):** a spawned process in Windows L2 can still open `ENV~1` past the `/dev/null` mask; disable 8.3 names on the sessions volume or have doctor refuse.
   - **Low:** `strings.ToLower` does not fold U+017F (matters on case-insensitive APFS).
-- [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
+- [x] **M2-7** fs operations: read, list, search, write, patch, stat (D-066, D-067; the 4096-file patch cap of D-048).
+  - **Pieces:** `internal/exec` `RegisterFS` and the six methods on M2-6's `Tree.Resolve`/`OpenCanonical`; the patch parser; `execproto` limits pinned to the fs schema.
+  - **Commits:** `81383d6`, `c4dfd8d`, `c61eac0`, `4266b30`, `5500a26`.
+  - **Review:** two rounds plus a small fix. No escape, deny-list bypass or content leak was found; round 1 found three bounds failures (a patch result over the frame after the files were written, unbounded search, a quadratic parse) and a search that could read scratch through a swapped link. 62 + 21 mutants (survivors layered or equivalent); FuzzPatch 47M execs; `-race` in WSL2; coverage 91%%.
+  - **Left for M2-10:** `warden-exec` calls `Tree.SweepTemps` at start-up; a concurrency cap on fs calls (N searches cost N x 31 s of CPU).
+  - **Left for M3:** the daemon rejects `Resolved.Root != worktree` for model-originated calls (an absolute link in the worktree resolves read and stat into scratch).
+  - **Low, left:** list and search fail `too_large` instead of truncating when hostile long names push the result over the frame; reads under a directory named `.env` are allowed while writes refuse such prefixes; U+017F and HFS+ ignorable code points (carried from M2-6).
 - [ ] **M2-8** proc operations, rlimits and output cap
 - [ ] **M2-9** git.run
 - [ ] **M2-10** the `cmd/warden-exec` binary and the forwarder

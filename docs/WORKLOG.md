@@ -22,6 +22,24 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-028 · 2026-10-16 · M2-7: the executor's file methods
+
+- **Asked:** M2 plan task M2-7, with the follow-ups M2-6's review assigned to it. Delivered under "merge each task when its review passes".
+- **Task:** exec.fs.read, list, search, write, patch and stat inside the sandbox, on top of M2-6's resolve and race-free open, so that no model-chosen call escapes the roots, reads a deny-listed file or leaves a half-applied change.
+- **How:**
+  - **Semantics** (D-066): regular-file and hard-link checks, atomic writes with checked parents, a strict all-or-nothing patch.
+  - **Bounds** (D-067): the patch result sized before staging, search bounded by program size, file cost and a deadline, a linear patch parser.
+  - **Commits:** `81383d6`, `c4dfd8d`, `c61eac0`, `4266b30`, `5500a26`.
+- **Rules kept:**
+  - Only `Tree.Resolve` output reaches `OpenCanonical`; R3 imports; every error has an A06 §4.4 code and a fixed detail.
+  - Test first, mutation checks every round, FuzzPatch committed; no wall-clock assertions (the search deadline uses an injectable clock).
+- **Rules changed or bent:**
+  - **Hard links refused as `deny_list`**, stricter than A06 (which names no rule for them). Decided by me after M2-6's review read `.env` through one.
+  - **Search fails `timeout` after 30 s with no partial results** (A06 lists the code but no value).
+  - **Editing hazards:** the tools turned an escape for U+2028 into the invisible character and collapsed a `\\` in a heredoc; both were caught and the runes are now built numerically. One test file was edited with Python, which the implementer role discourages on Windows; checked afterwards for encoding and line endings.
+- **Verified:** two review rounds, code and security together, with probes for escapes, swaps at commit, rollback, FIFOs, hard links, frame overflow, regex cost and parser complexity; `make check` green; `-race` in WSL2.
+- **Left:** see the M2-7 entry in PROGRESS (the start-up sweep and an fs concurrency cap in M2-10, the scratch-root check in M3).
+
 ## W-027 · 2026-10-16 · M2-12a: the per-task Unix socket for the L1 egress proxy
 
 - **Asked:** M2 plan task M2-12a. Delivered under "merge each task when its review passes".
