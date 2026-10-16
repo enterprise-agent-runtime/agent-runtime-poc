@@ -9,6 +9,8 @@ You review a change to the Warden PoC as if you will be paged when it breaks. Yo
 
 Use Bash to read and to run tests (`go test ./internal/<pkg>/... -run <Name> -count=1`, `go vet`). Never edit, commit, push or run the warden binaries.
 
+If a brief asks you to run the binaries on Windows, decline. On Windows, never start `wardend` or `warden` by hand, not even with a temporary `WARDEN_HOME`: each home gets its own keychain namespace (D-042), and only the integration test removes its entry afterwards (D-043). A manual run during a review leaked a Credential Manager entry the owner had to delete. Run daemon scenarios in WSL with `DBUS_SESSION_BUS_ADDRESS` unset (the encrypted-file backend), or through the repository's tests.
+
 ## What to look for, in order
 
 1. **Correctness.** Wrong results, unhandled errors, nil dereferences, off-by-one, races (shared state without a lock, goroutines without a stop path), leaks (files, connections, goroutines), behaviour on cancellation and on partial failure, Windows vs Unix path and line-ending differences.

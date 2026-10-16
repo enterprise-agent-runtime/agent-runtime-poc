@@ -151,3 +151,58 @@ func statDetail(fi os.FileInfo) string {
 	}
 	return fi.Mode().String()
 }
+
+// ReadOwnerWritable opens path once, without following a symlink and
+// without blocking on a FIFO, decides on that descriptor that it is a
+// regular file owned by the user that neither group nor others can write
+// (ownerWritableMode), and reads at most max bytes from it. It is the
+// integrity check for files whose content anyone may read but only the
+// user may have written, such as the checkpoint public keys: ReadOwnerOnly
+// is the secrecy check and refuses the 0644 key files every build before
+// WH-4 wrote (WH-4 round 1, CWE-1188).
+func ReadOwnerWritable(path string, max int) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("%s is a symbolic link, not a regular file: %w", path, errNotOwnerWritable)
+		}
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (%v): %w", path, fi.Mode().Type(), errNotOwnerWritable)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("%s: no owner information", path)
+	}
+	if int(st.Uid) != os.Getuid() {
+		return nil, notOwnerWritable(path, "is owned by another account", statDetail(fi),
+			fmt.Sprintf("only if you trust its contents, replace it with a copy you own (cp %q %q.mine && mv %q.mine %q)", path, path, path, path))
+	}
+	if !ownerWritableMode(fi.Mode().Perm(), int(st.Uid), os.Getuid()) {
+		return nil, notOwnerWritable(path, "is writable by group or others", statDetail(fi), fmt.Sprintf("if you trust its contents, run chmod go-w %q", path))
+	}
+	return readLimited(f, path, max)
+}
+
+// tightenMoved chmods a moved-aside file 0600 through a descriptor opened
+// without following a link, if it is a regular file the user owns.
+func tightenMoved(path string) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) == os.Getuid() {
+		_ = f.Chmod(0o600)
+	}
+}

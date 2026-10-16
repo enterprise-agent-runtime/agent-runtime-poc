@@ -40,13 +40,12 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 - [x] **WH-2** Owner-only also requires owner == current user (CWE-283); the client reads the token once on a no-follow handle before dialling; bind before token, autostart only on `ErrNotRunning` (D-051, D-053, C-66, C-67).
   - **Commits:** `c8f81ca`, `4e452d5`, `19b0043`, `eebe8d7`, `330a5ed`, `9730d41`, `6e0f286`, `160d10e`, `5533efd`.
   - **Review:** three rounds, code and security together. An earlier round reproduced a second daemon overwriting the live token; round 3 approved after 40 crash-and-race trials with no anomaly and every earlier probe (symlink, FIFO, junction, loose marker, planted temp name) refused.
-- [ ] **WH-4** Follow-ups from the WH-1+2 review (all minor or low, none a confidentiality issue):
-  - Unix: the spawned wardend is released, not reaped, so a zombie looks alive and a failed start costs 16 s and the wrong message; reap it and test with a real child that exits 3.
-  - Shutdown removes the token file without checking it is still this daemon's (CWE-367); compare before removing.
-  - Unix Listen's stale-socket path is not exclusive under a race (CWE-367); hold a `run/wardend.lock` flock for the daemon's lifetime.
-  - Windows: a directory created earlier under an elevated token is owned by Administrators and refused with a confusing message; name elevation in it.
-  - `PublicKeys` should accept only owner-only `keys/*.pub` (CWE-732).
-  - `ensureDir`'s link message still names only the home and run directory.
+- [x] **WH-4** Follow-ups from the WH-1+2 review (D-063, D-064, C-72, C-73).
+  - **What landed:** the spawned wardend is reaped (a failed start reports its exit status in about 3 s); a lifetime lock `run/wardend.lock` taken before any write and released last; the token removed at shutdown only if it is still ours; the elevation hint for Administrators-owned directories; checkpoint key files trusted for integrity (owner, no foreign writer), a refused one moved aside; the link message covers every directory.
+  - **Commits:** `c8af1c6`, `cdee732`, `f943167`, `df340eb`, `d1e409c`, `05dcff2`.
+  - **Review:** two rounds. Round 1 found the first key-file check refused every 0644 key an older build wrote, stopping an upgraded headless home (reproduced), and the lock taken after keys and migrations. Round 2 approved; each test fails on revert.
+  - **Low, left:** `writePublicKey` moves a key aside on any read error, including a transient Windows sharing violation (move only on the integrity refusal or a parse failure); the "store closes before unlock" order is checked by reading, not by a test; on Windows a scanner holding `wardend.lock` open reports "already running" (retry briefly); the CLI sends a malformed token and gets -32602 instead of -32001 (validate the pattern first); a sudo-owned directory on Unix could get a hint like the elevation one.
+  - **For M6 (desktop):** with `--token-stdin` a losing sidecar exits 3 without reading stdin, so the desktop's write may fail with EPIPE; attach on exit 3 as D-053 says.
 - [x] **WH-3** The client verifies that the endpoint's server is the current user before sending the token, on Windows and on Unix (D-049).
   - **Daemon side:** the socket directory must be owned by the uid; the macOS peer check is on.
   - **New test:** the Windows pipe DACL is owner-only, which was a missing M1 transport test.

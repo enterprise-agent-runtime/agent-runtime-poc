@@ -35,8 +35,11 @@ func Endpoint(home string) string {
 
 // Listen binds the daemon socket (mode 0600 in a 0700 directory the current
 // user owns, ensureSocketDir). A stale socket is removed only when nothing
-// answers on it; a live one means another daemon is running. Connections
-// from other users are dropped (newPeerListener).
+// answers on it; a live one means another daemon is running. That check
+// and the removal are not atomic: two callers can both find the socket
+// stale, and the second removes the first one's fresh socket. Only the
+// caller holding LockDaemon may call Listen, which makes it exclusive per
+// home (WH-4). Connections from other users are dropped (newPeerListener).
 func Listen(home string) (net.Listener, error) {
 	p := Endpoint(home)
 	if err := ensureSocketDir(filepath.Dir(p), os.Getuid()); err != nil {
