@@ -5,6 +5,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -43,8 +44,36 @@ func writeOwnerOnly(path string, data []byte, h writeHooks) error {
 	return nil
 }
 
-// ensureOwnerOnlyDir creates dir 0700.
-func ensureOwnerOnlyDir(dir string) error { return os.MkdirAll(dir, 0o700) }
+// mkdirOwnerOnly creates dir (not its parents) 0700; an existing dir is
+// fs.ErrExist.
+func mkdirOwnerOnly(dir string) error { return os.Mkdir(dir, 0o700) }
+
+// protectDir chmods an existing directory 0700 through a descriptor opened
+// on the directory itself (O_NOFOLLOW|O_DIRECTORY), after checking on that
+// descriptor that uid owns it: another account's directory is refused, not
+// re-permissioned (WH-1+2 review of c8f81ca).
+func protectDir(dir string, uid int) error {
+	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("%s: no owner information", dir)
+	}
+	if int(st.Uid) != uid {
+		return fmt.Errorf("%s is owned by uid %d, not by you (uid %d); use a directory of your own", dir, st.Uid, uid)
+	}
+	return f.Chmod(0o700)
+}
+
+// isLink reports a symbolic link.
+func isLink(fi fs.FileInfo) bool { return fi.Mode()&os.ModeSymlink != 0 }
 
 // OwnerOnly reports whether path, not followed if it is a symlink, is owned
 // by the current uid and not readable or writable by group or others. A

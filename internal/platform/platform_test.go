@@ -215,3 +215,41 @@ func TestWriteOwnerOnly_TempNameRandomAndExclusive(t *testing.T) {
 		t.Errorf("%s created through a planted temp file (%v)", q, err)
 	}
 }
+
+// TestEnsure_RefusesForeignDirectory guards the review of c8f81ca (WH-1+2):
+// Ensure replaced the owner and DACL of whatever existing directory
+// WARDEN_HOME named (D:\work, say). An existing directory that is not empty,
+// not the default home and has no .warden-home marker is refused, and its
+// permissions are left exactly as they were. Ensure leaves the marker,
+// owner-only, in every home it creates or accepts.
+func TestEnsure_RefusesForeignDirectory(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "work")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "notes.txt"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := ownerOnlyDetail(work)
+	err := Layout{Home: work}.Ensure()
+	if err == nil || !strings.Contains(err.Error(), "is not a Warden home") {
+		t.Fatalf("Ensure on a foreign directory = %v; want a refusal", err)
+	}
+	if after := ownerOnlyDetail(work); after != before {
+		t.Fatalf("foreign directory re-permissioned:\nbefore %s\nafter  %s", before, after)
+	}
+	if _, err := os.Lstat(filepath.Join(work, "run")); !os.IsNotExist(err) {
+		t.Fatalf("run created in a refused home (%v)", err)
+	}
+
+	home := filepath.Join(t.TempDir(), "home")
+	if err := (Layout{Home: home}).Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := OwnerOnly(filepath.Join(home, HomeMarker)); err != nil || !ok {
+		t.Fatalf("marker owner-only %v %v", ok, err)
+	}
+	if err := (Layout{Home: home}).Ensure(); err != nil { // accepted again by its marker
+		t.Fatalf("second Ensure: %v", err)
+	}
+}

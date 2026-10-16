@@ -5,6 +5,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -57,5 +58,63 @@ func TestReadOwnerOnly_RefusesSymlinkAndFIFO(t *testing.T) {
 	}
 	if _, err := ReadOwnerOnly(fifo, 4096); err == nil {
 		t.Fatal("ReadOwnerOnly read a FIFO")
+	}
+}
+
+// TestEnsure_ExistingWardenHomeTightened: an existing Warden home (it has the
+// marker) left 0777 is chmod-ed 0700, with run (WH-1+2 review of c8f81ca).
+func TestEnsure_ExistingWardenHomeTightened(t *testing.T) {
+	l := Layout{Home: filepath.Join(t.TempDir(), "home")}
+	if err := os.MkdirAll(l.Run(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(l.Home, HomeMarker), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{l.Home, l.Run()} {
+		if err := os.Chmod(d, 0o777); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{l.Home, l.Run()} {
+		if fi, err := os.Lstat(d); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Errorf("%s: mode %v %v; want 0700", d, fi.Mode(), err)
+		}
+	}
+}
+
+// TestEnsure_RefusesForeignOwnerAndSymlink: a home owned by another uid is
+// refused, not chmod-ed (the seam passes a uid that is not the owner, since
+// the test cannot chown without root); a home that is a symlink is refused
+// and its target left alone (WH-1+2 review of c8f81ca).
+func TestEnsure_RefusesForeignOwnerAndSymlink(t *testing.T) {
+	l := Layout{Home: filepath.Join(t.TempDir(), "home")}
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.ensure(os.Getuid() + 1); err == nil || !strings.Contains(err.Error(), "owned by uid") {
+		t.Fatalf("Ensure for another uid = %v; want an ownership refusal", err)
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(dir, "home")
+	if err := os.Symlink(target, home); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Layout{Home: home}).Ensure(); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Ensure on a symlink home = %v; want a symlink refusal", err)
+	}
+	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("symlink target re-permissioned to %v", fi.Mode())
 	}
 }

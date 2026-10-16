@@ -75,15 +75,36 @@ func (l Layout) Token() string { return l.path("run", "token") }
 // PID is the daemon pid file.
 func (l Layout) PID() string { return l.path("run", "wardend.pid") }
 
-// Ensure creates the home and its directories owner-only. The home and run
-// directories get an explicit owner-only descriptor on Windows, inherited by
-// what is created in them (WH-1+2); the others are 0700 and, on Windows,
-// inherit the home's.
-func (l Layout) Ensure() error {
-	for _, d := range []string{l.Home, l.Run()} {
-		if err := ensureOwnerOnlyDir(d); err != nil {
+// Ensure creates the home and its directories owner-only (design core §10;
+// WH-1+2). The home and run directories get an explicit owner-only
+// descriptor on Windows (0700 on Unix), inherited by what is created in
+// them; the others are 0700 and, on Windows, inherit the home's.
+//
+// An existing directory is re-permissioned only if it is a Warden home:
+// the platform default home, one holding HomeMarker, or an empty one. Any
+// other existing directory (WARDEN_HOME=D:\work, say) is refused, as is a
+// home that is a symlink, junction or other reparse point: Ensure never
+// silently takes over a directory it did not make. Ensure leaves the marker,
+// owner-only, in every home it creates or accepts.
+func (l Layout) Ensure() error { return l.ensure(os.Getuid()) }
+
+// ensure is Ensure for a given owner uid (Unix; a test seam, since a test
+// cannot chown without root).
+func (l Layout) ensure(uid int) error {
+	if err := ensureDir(l.Home, uid, l.acceptHome); err != nil {
+		return err
+	}
+	marker := filepath.Join(l.Home, HomeMarker)
+	if _, err := os.Lstat(marker); errors.Is(err, fs.ErrNotExist) {
+		if err := WriteOwnerOnly(marker, []byte("This directory is a Warden home.\n")); err != nil {
 			return err
 		}
+	} else if err != nil {
+		return err
+	}
+	// run follows the home's rule; the home is accepted by now.
+	if err := ensureDir(l.Run(), uid, func(string, fs.FileInfo) error { return nil }); err != nil {
+		return err
 	}
 	for _, d := range []string{l.DB(), l.Blobs(), l.Keys(), l.Exports(), l.Logs(), l.Cache()} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -91,6 +112,59 @@ func (l Layout) Ensure() error {
 		}
 	}
 	return nil
+}
+
+// ensureDir creates dir owner-only, or makes an existing dir that accept
+// allows owner-only. A symlink, junction or other reparse point, or a
+// non-directory, is refused before accept is asked.
+func ensureDir(dir string, uid int, accept func(string, fs.FileInfo) error) error {
+	fi, err := os.Lstat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+			return err
+		}
+		err = mkdirOwnerOnly(dir)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		fi, err = os.Lstat(dir) // created meanwhile: judged like any existing dir
+	}
+	if err != nil {
+		return err
+	}
+	if isLink(fi) {
+		return fmt.Errorf("%s is a symbolic link, junction or other reparse point; a Warden home and its run directory must be real directories", dir)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s exists and is not a directory", dir)
+	}
+	if err := accept(dir, fi); err != nil {
+		return err
+	}
+	return protectDir(dir, uid)
+}
+
+// acceptHome allows an existing home directory to be made owner-only: the
+// platform default home, one holding HomeMarker, or an empty one.
+func (l Layout) acceptHome(dir string, _ fs.FileInfo) error {
+	if def, err := DefaultHome(); err == nil && sameHome(dir, def) {
+		return nil
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, HomeMarker)); err == nil && fi.Mode().IsRegular() {
+		return nil
+	}
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Readdirnames(1); errors.Is(err, io.EOF) {
+		return nil
+	}
+	return fmt.Errorf("%s %s exists and is not a Warden home; use an empty or new directory", EnvHome, dir)
 }
 
 // CheckOwnerOnly returns an error unless path is owner-only (OwnerOnly).
@@ -223,3 +297,7 @@ func Arch() string { return runtime.GOARCH }
 func EndpointMissing(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED)
 }
+
+// HomeMarker is the file Ensure leaves in every Warden home it creates or
+// accepts; an existing directory without it is not re-permissioned.
+const HomeMarker = ".warden-home"

@@ -21,6 +21,7 @@ var (
 	procSetFileSecurityW        = advapi32.NewProc("SetFileSecurityW")
 	procGetFileSecurityW        = advapi32.NewProc("GetFileSecurityW")
 	procGetKernelObjectSecurity = advapi32.NewProc("GetKernelObjectSecurity")
+	procSetKernelObjectSecurity = advapi32.NewProc("SetKernelObjectSecurity")
 )
 
 const (
@@ -123,38 +124,59 @@ func writeOwnerOnly(path string, data []byte, h writeHooks) error {
 	return nil
 }
 
-// ensureOwnerOnlyDir creates dir with the owner-only descriptor, its ACE
-// inherited by children (OI|CI), or gives an existing dir that descriptor.
-// MkdirAll's mode means nothing on Windows, so without this the home and run
-// directories kept the DACL inherited from %LOCALAPPDATA% (WH-1+2,
-// CWE-276). SetFileSecurity does not propagate to children that already
-// exist; the token file carries its own descriptor regardless.
-func ensureOwnerOnlyDir(dir string) error {
+// mkdirOwnerOnly creates dir (not its parents) with the owner-only
+// descriptor, its ACE inherited by children (OI|CI), set by CreateDirectory
+// itself. An existing dir is fs.ErrExist.
+func mkdirOwnerOnly(dir string) error {
 	sd, err := ownerOnlySecurityDescriptor("OICI")
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
-			return err
-		}
-		p, err := syscall.UTF16PtrFromString(dir)
-		if err != nil {
-			return err
-		}
-		err = syscall.CreateDirectory(p, securityAttributes(sd))
-		runtime.KeepAlive(sd)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, syscall.ERROR_ALREADY_EXISTS) {
-			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
-		}
-		// Created concurrently: give it the descriptor below.
-	} else if err != nil {
+	p, err := syscall.UTF16PtrFromString(dir)
+	if err != nil {
 		return err
 	}
-	return setSecurity(dir, sd)
+	err = syscall.CreateDirectory(p, securityAttributes(sd))
+	runtime.KeepAlive(sd)
+	if err != nil {
+		return &os.PathError{Op: "mkdir", Path: dir, Err: err}
+	}
+	return nil
+}
+
+// protectDir gives an existing directory the owner-only descriptor through
+// a handle opened on the directory itself (FILE_FLAG_OPEN_REPARSE_POINT), so
+// a junction swapped in at the path is refused, never followed. MkdirAll's
+// mode means nothing on Windows (WH-1+2, CWE-276). SetKernelObjectSecurity
+// does not propagate to children that already exist. uid is Unix-only.
+func protectDir(dir string, _ int) error {
+	sd, err := ownerOnlySecurityDescriptor("OICI")
+	if err != nil {
+		return err
+	}
+	h, attrs, err := openNoFollow(dir, readControl|writeDAC|writeOwner)
+	if err != nil {
+		return err
+	}
+	defer syscall.CloseHandle(h)
+	if attrs&syscall.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	r, _, e := procSetKernelObjectSecurity.Call(uintptr(h), ownerOnlyInformation|protectedDACLSecurityInformation, uintptr(unsafe.Pointer(&sd[0])))
+	runtime.KeepAlive(sd)
+	if r == 0 {
+		return &os.PathError{Op: "SetKernelObjectSecurity", Path: dir, Err: e}
+	}
+	return nil
+}
+
+// isLink reports a symlink, junction or any other reparse point.
+func isLink(fi fs.FileInfo) bool {
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return true
+	}
+	d, ok := fi.Sys().(*syscall.Win32FileAttributeData)
+	return ok && d.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 const (
@@ -271,7 +293,7 @@ func ReadOwnerOnly(path string, max int) ([]byte, error) {
 	return readLimited(f, path, max)
 }
 
-// dirOwnerOnly is OwnerOnly for a directory written by ensureOwnerOnlyDir.
+// dirOwnerOnly is OwnerOnly for a directory written by mkdirOwnerOnly or protectDir.
 func dirOwnerOnly(path string) (bool, error) {
 	sid, err := currentUserSID()
 	if err != nil {

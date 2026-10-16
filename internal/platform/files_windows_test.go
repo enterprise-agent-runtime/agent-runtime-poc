@@ -101,15 +101,25 @@ func TestWriteOwnerOnly_DescriptorFromCreation(t *testing.T) {
 
 // TestEnsure_HomeAndRunOwnerOnly guards WH-1+2 (b) (CWE-276): Ensure used
 // MkdirAll alone, whose mode means nothing on Windows, so the home and run
-// directories kept the DACL inherited from %LOCALAPPDATA%. Both a new home
-// and one that already exists with an inherited DACL end up owned by the
-// user with a protected owner-only DACL inherited by their children.
+// directories kept the DACL inherited from %LOCALAPPDATA%. A new home, an
+// empty one, and an existing Warden home (it has the marker) with an
+// inherited DACL end up owned by the user with a protected owner-only DACL
+// inherited by their children. Other existing directories are refused
+// (TestEnsure_RefusesForeignDirectory).
 func TestEnsure_HomeAndRunOwnerOnly(t *testing.T) {
-	for name, pre := range map[string]bool{"new home": false, "existing home": true} {
+	for name, pre := range map[string]string{"new home": "", "empty home": "empty", "existing Warden home": "marker"} {
 		t.Run(name, func(t *testing.T) {
 			l := Layout{Home: filepath.Join(t.TempDir(), "home")}
-			if pre {
+			if pre != "" {
+				if err := os.MkdirAll(l.Home, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if pre == "marker" {
 				if err := os.MkdirAll(l.Run(), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(l.Home, HomeMarker), nil, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -186,7 +196,7 @@ func currentUserSDDLSID() (string, error) {
 func TestReadOwnerOnly_RefusesJunction(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
-	if err := ensureOwnerOnlyDir(target); err != nil { // owner-only, so only the link is wrong
+	if err := mkdirOwnerOnly(target); err != nil { // owner-only, so only the link is wrong
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "token")
@@ -237,5 +247,33 @@ func makeJunction(t *testing.T, link, target string) {
 	var n uint32
 	if err := syscall.DeviceIoControl(h, 0x000900A4, &buf[0], uint32(len(buf)), nil, 0, &n, nil); err != nil { // FSCTL_SET_REPARSE_POINT
 		t.Fatalf("FSCTL_SET_REPARSE_POINT: %v", err)
+	}
+}
+
+// TestEnsure_RefusesJunctionHome guards the review of c8f81ca (WH-1+2):
+// SetFileSecurity follows a junction, so Ensure on a home that is one would
+// re-permission its target. A reparse point as the home is refused and the
+// target is left alone.
+func TestEnsure_RefusesJunctionHome(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before, err := pathSecurity(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(dir, "home")
+	makeJunction(t, home, target)
+	if err := (Layout{Home: home}).Ensure(); err == nil || !strings.Contains(err.Error(), "reparse point") {
+		t.Fatalf("Ensure on a junction home = %v; want a refusal", err)
+	}
+	after, err := pathSecurity(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("junction target re-permissioned: %s", sddlDetail(after))
 	}
 }
