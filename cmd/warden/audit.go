@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -115,7 +116,11 @@ func renderEvents(w io.Writer, events []json.RawMessage) {
 		_ = json.Unmarshal(e, &h)
 		p := string(termsafe.EscapeJSON(h.Payload))
 		if len(p) > 160 {
-			p = p[:160] + "…"
+			cut := 160 // on a UTF-8 boundary, so no broken character reaches the terminal
+			for cut > 0 && !utf8.RuneStart(p[cut]) {
+				cut--
+			}
+			p = p[:cut] + "…"
 		}
 		fmt.Fprintf(w, "%6d %s %-20s %s\n", h.Seq, h.TS, h.Type, p)
 	}

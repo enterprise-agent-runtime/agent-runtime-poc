@@ -43,8 +43,12 @@ func main() {
 	}
 }
 
-// describe renders API errors with their reason.
-func describe(err error) string {
+// describe renders API errors with their reason, sanitized for the
+// terminal: an error message can carry a model endpoint's or the Docker
+// engine's text (CWE-150, M2-3).
+func describe(err error) string { return termsafe.SanitizeDetail(describeRaw(err)) }
+
+func describeRaw(err error) string {
 	if code, d, ok := api.DataOf(err); ok {
 		msg := err.Error()
 		if i := strings.Index(msg, "] "); i >= 0 {
