@@ -18,8 +18,8 @@ import (
 	"strings"
 )
 
-// Service is the keychain service name for every Warden item.
-const Service = "warden"
+// The keychain service name is per home (platform.KeychainService): "warden"
+// for the default home, "warden-<suffix>" for any other WARDEN_HOME (M2-1).
 
 // Ref is a parsed secret:// reference (A15 §3.1).
 type Ref struct {
