@@ -205,6 +205,11 @@ func doctorCmd() *cobra.Command {
 		}}
 }
 
+// daemonStopTimeout bounds how long "warden daemon stop" waits for wardend
+// to exit after system.shutdown (M2-1). wardend gives its server 5 s to
+// drain, so this leaves room for the store and log to close.
+const daemonStopTimeout = 10 * time.Second
+
 func daemonCmd() *cobra.Command {
 	d := &cobra.Command{Use: "daemon", Short: "Start, stop or inspect wardend"}
 	d.AddCommand(&cobra.Command{Use: "start", Short: "Start wardend in the background", RunE: func(cmd *cobra.Command, _ []string) error {
@@ -221,7 +226,7 @@ func daemonCmd() *cobra.Command {
 		}
 		return startDaemon(ctx, l)
 	}})
-	d.AddCommand(&cobra.Command{Use: "stop", Short: "Stop wardend (system.shutdown)", RunE: func(cmd *cobra.Command, _ []string) error {
+	d.AddCommand(&cobra.Command{Use: "stop", Short: "Stop wardend (system.shutdown) and wait until it has exited", RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
 		c, err := connect(ctx, false)
@@ -230,10 +235,31 @@ func daemonCmd() *cobra.Command {
 			return nil
 		}
 		defer c.Close()
+		// Watch the process before asking it to stop: wardend removes its
+		// pid file while shutting down, and on Windows the handle taken now
+		// is immune to pid reuse (M2-1).
+		l, _ := layout()
+		var w *platform.Watch
+		if pid, err := l.DaemonPID(); err != nil {
+			fmt.Fprintf(os.Stderr, "warden: cannot read the wardend pid (%v); not waiting for it to exit\n", err)
+		} else if w, err = platform.WatchProcess(pid); err != nil {
+			fmt.Fprintf(os.Stderr, "warden: cannot watch wardend (%v); not waiting for it to exit\n", err)
+		} else {
+			defer w.Close()
+		}
 		if err := c.Call(ctx, "system.shutdown", map[string]any{"confirm": true}, nil); err != nil {
 			return err
 		}
-		fmt.Println("wardend stopping")
+		c.Close() // do not hold a connection open while the server drains
+		if w == nil {
+			fmt.Println("wardend stopping")
+			return nil
+		}
+		if err := w.Wait(daemonStopTimeout); err != nil {
+			fmt.Fprintf(os.Stderr, "warden: wardend (pid %d) did not exit within %s of system.shutdown; it may still hold files under %s\n", w.Pid, daemonStopTimeout, l.Home)
+			return exitError{1}
+		}
+		fmt.Println("wardend stopped")
 		return nil
 	}})
 	d.AddCommand(&cobra.Command{Use: "status", Short: "Report whether wardend is running (exit 1 if not)", RunE: func(cmd *cobra.Command, _ []string) error {

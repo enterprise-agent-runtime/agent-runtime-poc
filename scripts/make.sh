@@ -113,7 +113,7 @@ cover)
 	go test -count=1 -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
 	;;
-integration) go test -count=1 -tags integration ./... ;;
+integration) build && go test -count=1 -tags integration ./... ;; # the L3 tests run the built wardend (bin/)
 escape-check) not_yet escape-check M2 ;;
 smoke) not_yet smoke M4 ;;
 fixtures) not_yet fixtures M4 ;;
