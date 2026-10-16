@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -366,5 +367,65 @@ func TestWireTypesHaveNoEmbeddedFields(t *testing.T) {
 	}
 	if len(seen) < 20 {
 		t.Fatalf("walked only %d types", len(seen))
+	}
+}
+
+// TestDecodeSecretEnvManyKeysFast: secret_env holds at most one variable
+// (proc.json maxProperties 1). The case-variant check compared every pair
+// of keys, so a frame with 100k keys took 84 s of CPU (re-review of
+// 3ddbd15); the count is now checked first.
+func TestDecodeSecretEnvManyKeysFast(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"call_id":"call_1","argv":["go"],"timeout_ms":1000,"secret_env":{`)
+	for i := 0; i < 100000; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `"K%d":"v"`, i)
+	}
+	b.WriteString(`},"authz":{"decision_id":"dec_1","profile":"","approved":true,"kind":"harness"}}`)
+	start := time.Now()
+	err := Decode([]byte(b.String()), new(SpawnParams))
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Error("Decode accepted 100000 secret_env keys")
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("Decode took %v for a 100k-key secret_env", elapsed)
+	}
+	two := `{"call_id":"call_1","argv":["go"],"timeout_ms":1000,"secret_env":{"A":"1","B":"2"},"authz":{"decision_id":"dec_1","profile":"","approved":true,"kind":"harness"}}`
+	if err := Decode([]byte(two), new(SpawnParams)); err == nil {
+		t.Error("Decode accepted two secret_env keys (maxProperties 1)")
+	}
+}
+
+// TestDecodeArraysBounded: no A06 array holds more than 2000 items (list
+// max_entries), argv at most 1024. Without a cap, 2.7M empty arrays under
+// argv allocated 621 MiB before the decoder refused them (re-review of
+// 3ddbd15); a value of the wrong kind is now refused at once, and any
+// array longer than MaxArrayLen is refused.
+func TestDecodeArraysBounded(t *testing.T) {
+	spawn := func(argv string) string {
+		return `{"call_id":"call_1","argv":` + argv + `,"timeout_ms":1000,"authz":{"decision_id":"dec_1","profile":"","approved":false,"kind":"tool"}}`
+	}
+	nested := "[" + strings.TrimSuffix(strings.Repeat("[],", 2700000), ",") + "]"
+	long := `["go"` + strings.Repeat(`,"x"`, MaxArrayLen) + "]"
+	ok := `["go"` + strings.Repeat(`,"x"`, 1023) + "]"
+	const budget = 64 << 20
+	for name, raw := range map[string]string{"2.7M empty arrays": spawn(nested), "MaxArrayLen+1 strings": spawn(long)} {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		err := Decode([]byte(raw), new(SpawnParams))
+		runtime.ReadMemStats(&after)
+		if err == nil {
+			t.Errorf("%s: Decode accepted it", name)
+		}
+		if got := after.TotalAlloc - before.TotalAlloc; got > budget {
+			t.Errorf("%s: Decode allocated %d MiB, budget %d MiB", name, got>>20, budget>>20)
+		}
+	}
+	if err := Decode([]byte(spawn(ok)), new(SpawnParams)); err != nil {
+		t.Errorf("1024-element argv refused: %v", err)
 	}
 }

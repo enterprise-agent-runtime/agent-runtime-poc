@@ -63,6 +63,7 @@ func IsShellString(argv []string) bool {
 			return hasCommandOption(b, rest)
 		}
 		n, shellString, isWrapper := wrapperArgs(b, rest)
+		n = min(max(n, 0), len(rest)) // every parser clamps too; this one guards the slice below
 		switch {
 		case !isWrapper:
 			return false // the command, and not a shell
@@ -281,7 +282,7 @@ func watchOptions(args []string) (n int, exec bool) {
 			}
 		}
 	}
-	return j, exec
+	return min(j, len(args)), exec
 }
 
 // IsShellStringResolved is IsShellString applied twice: to argv as given,

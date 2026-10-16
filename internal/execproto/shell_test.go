@@ -1,6 +1,9 @@
 package execproto
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Shell strings are how WRD-16 §4.3 S1 is attacked: a prompt-injected
 // `curl … | sh` only works if a shell gets a command string. WRD-16 §9 says
@@ -290,4 +293,66 @@ func TestIsShellString_CommandPosition(t *testing.T) {
 			t.Errorf("%s: IsShellString(%q) = %v, want %v", tc.name, tc.argv, got, tc.want)
 		}
 	}
+}
+
+// TestIsShellString_NoPanicAtEndOfArgv: an option that takes an argument,
+// given as the last element, made watchOptions count one element past the
+// end and IsShellString slice out of range (re-review of 3ddbd15). A
+// panic in the executor's spawn path kills the request goroutine; in the
+// PDP it is a denial of service. These must return, and return false
+// (there is no command to run).
+func TestIsShellString_NoPanicAtEndOfArgv(t *testing.T) {
+	for _, argv := range [][]string{
+		{"watch", "-x", "-n"},
+		{"watch", "-xn"},
+		{"watch", "-x", "--interval"},
+		{"nohup", "watch", "-x", "-q"},
+		{"timeout", "-s"},
+		{"timeout", "-k", "5"},
+		{"nice", "-n"},
+		{"env", "-u"},
+		{"env", "-C"},
+		{"flock", "-w"},
+		{"flock", "-w", "5"},
+		{"xargs", "-I"},
+		{"chrt", "-T"},
+		{"ionice", "-c"},
+		{"stdbuf", "-o"},
+		{"time", "-f"},
+		{"exec", "-a"},
+		{"prlimit", "-p"},
+	} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("IsShellString(%q) panicked: %v", argv, r)
+				}
+			}()
+			if IsShellString(argv) {
+				t.Errorf("IsShellString(%q) = true, want false (no command)", argv)
+			}
+		}()
+	}
+}
+
+// FuzzIsShellString: the matcher runs on argv the model chose, in the
+// executor and in the PDP, so it must never panic and must be a pure
+// function. The seed corpus runs in every go test; `go test -fuzz` explores
+// further. Elements are separated by NUL, which argv cannot contain.
+func FuzzIsShellString(f *testing.F) {
+	for _, s := range []string{
+		"sh\x00-c\x00id", "watch\x00-x\x00-n", "watch\x00-xn", "nohup\x00watch\x00-x\x00-q",
+		"env\x00-iS\x00sh -c id", "flock\x00f\x00-c\x00id", "timeout\x00-s", "env\x00-u",
+		"pwsh\x00-enc\x00x", "script\x00-q\x00/dev/null\x00watch\x00id", "", "\x00", "-",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		argv := strings.Split(s, "\x00")
+		first := IsShellString(argv)
+		if IsShellString(argv) != first {
+			t.Fatalf("IsShellString(%q) is not deterministic", argv)
+		}
+		_ = IsShellStringResolved("/bin/sh", argv)
+	})
 }

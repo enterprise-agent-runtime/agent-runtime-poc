@@ -14,10 +14,9 @@ import (
 // the key check on hostile input.
 const MaxDepth = 64
 
-// errStopWalk ends the key check early without an error: the JSON value
-// does not have the kind the Go type expects, so the real decoder will
-// refuse the message anyway, and there is nothing useful to walk below.
-var errStopWalk = errors.New("stop")
+// MaxArrayLen is the most elements Decode accepts in one array. The largest
+// A06 array holds 2000 (exec.fs.list max_entries); argv holds at most 1024.
+const MaxArrayLen = 4096
 
 // checkKeys walks the JSON text alongside the Go type it will be decoded
 // into and refuses what encoding/json would silently accept: a duplicate
@@ -27,7 +26,9 @@ var errStopWalk = errors.New("stop")
 // the field). Objects decoded by their own UnmarshalJSON, maps, and
 // json.RawMessage get the duplicate check only; their decoders check the
 // rest (ParseProfiles, SecretEnv.UnmarshalJSON). It also refuses nesting
-// deeper than MaxDepth.
+// deeper than MaxDepth, arrays longer than MaxArrayLen, and an array or
+// object where the Go type cannot hold one (the decoder would refuse it
+// too, but only after allocating its way through all of it).
 //
 // The cost is linear in the input: the path to the current value is a
 // stack of keys, joined into a string only for an error message (the first
@@ -39,7 +40,7 @@ func checkKeys(data []byte, t reflect.Type) error {
 	w.dec.UseNumber()
 	err := w.walk(t)
 	var syn *json.SyntaxError
-	if errors.Is(err, errStopWalk) || errors.As(err, &syn) {
+	if errors.As(err, &syn) {
 		return nil // reported, with position, by the real decode
 	}
 	return err
@@ -79,10 +80,13 @@ func (w *keyWalker) walk(t reflect.Type) error {
 	case '[':
 		elem, ok := arrayShape(t)
 		if !ok {
-			return errStopWalk
+			return fmt.Errorf("an array where %s is expected, at %s", t, w.at())
 		}
 		w.path = append(w.path, "[]")
-		for w.dec.More() {
+		for count := 0; w.dec.More(); count++ {
+			if count == MaxArrayLen {
+				return fmt.Errorf("array longer than %d at %s", MaxArrayLen, w.at())
+			}
 			if err := w.walk(elem); err != nil {
 				return err
 			}
@@ -91,7 +95,7 @@ func (w *keyWalker) walk(t reflect.Type) error {
 	case '{':
 		fields, elem, strict, ok := objectShape(t)
 		if !ok {
-			return errStopWalk
+			return fmt.Errorf("an object where %s is expected, at %s", t, w.at())
 		}
 		seen := map[string]bool{}
 		for w.dec.More() {

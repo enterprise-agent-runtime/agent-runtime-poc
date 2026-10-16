@@ -108,25 +108,24 @@ func (e SecretEnv) reveal() map[string]string {
 	return e.vals()
 }
 
+// MaxSecretEnvKeys is proc.json secret_env maxProperties.
+const MaxSecretEnvKeys = 1
+
 // UnmarshalJSON reads an object of strings; null is empty. Exact duplicate
 // keys are refused earlier, by Decode's key check (which gives maps the
-// duplicate check only). Keys that differ only in case ("TOKEN", "token")
-// are distinct to encoding/json, so they are refused here: environment
-// variable names are case-insensitive on Windows, and which value would win
-// is up to the platform.
+// duplicate check only). More than MaxSecretEnvKeys keys are refused here,
+// before anything looks at them: an earlier pairwise case-variant check
+// cost O(n²) and took 84 s for 100k keys. With one key there are no case
+// variants ("TOKEN" and "token" would set one variable on Windows, where
+// names are case-insensitive); should the limit ever grow, compare
+// case-folded keys through a map, linearly.
 func (e *SecretEnv) UnmarshalJSON(data []byte) error {
 	var m map[string]string
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		for _, prev := range keys {
-			if strings.EqualFold(k, prev) {
-				return fmt.Errorf("secret_env keys %q and %q differ only in case", prev, k)
-			}
-		}
-		keys = append(keys, k)
+	if len(m) > MaxSecretEnvKeys {
+		return fmt.Errorf("secret_env has %d keys, at most %d allowed", len(m), MaxSecretEnvKeys)
 	}
 	*e = NewSecretEnv(m)
 	return nil
