@@ -48,7 +48,7 @@ var listenAllowed = "; allowed only in " + strings.Join(listenDirs, ", ") + " an
 // dotWatchedExec and dotWatchedListen are the packages whose identifiers the rules look for. A
 // dot-import makes them unqualified, so Scan cannot resolve their uses and
 // the rules would be blind; such an import is therefore a violation itself.
-var dotWatchedExec = []string{"os/exec", "golang.org/x/sys/execabs", "net/http/cgi", "os", "syscall", "golang.org/x/sys/unix", "golang.org/x/sys/windows"}
+var dotWatchedExec = []string{"os/exec", "golang.org/x/sys/execabs", "net/http/cgi", "go/build", "go/importer", "plugin", "os", "syscall", "golang.org/x/sys/unix", "golang.org/x/sys/windows"}
 var dotWatchedListen = []string{"net", "net/http", "crypto/tls"}
 
 // rawSocketPkgs expose Bind and Listen on raw sockets, bypassing package net,
@@ -109,8 +109,9 @@ var osDirs = []string{"internal/platform", "internal/sandbox", "internal/secrets
 // execImports start processes and are allowed, like os/exec itself, only in
 // execPackages with a //sandboxed justification: golang.org/x/sys/execabs is
 // a drop-in for os/exec (its Cmd is exec.Cmd), and net/http/cgi runs its
-// handler programs through os/exec.
-var execImports = []string{"os/exec", "golang.org/x/sys/execabs", "net/http/cgi"}
+// handler programs through os/exec; go/build and go/importer run go list and
+// pkg-config through os/exec; plugin loads and runs code at run time.
+var execImports = []string{"os/exec", "golang.org/x/sys/execabs", "net/http/cgi", "go/build", "go/importer", "plugin"}
 
 // processStarters are the calls that create a process without os/exec.
 var processStarters = map[string]map[string]bool{

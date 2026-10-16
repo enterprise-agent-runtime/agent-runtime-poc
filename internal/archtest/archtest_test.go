@@ -225,6 +225,16 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		"INV-H internal/store/dotexecabs.go",      // execabs imported outside the sandbox packages
 		"INV-H internal/store/dotexecabs.go",      // import . "golang.org/x/sys/execabs"
 		"INV-H internal/store/execabs.go",         // execabs outside the sandbox packages
+		// Final review: go/build and go/importer run go list and pkg-config
+		// through os/exec, and plugin loads code at run time; all three are
+		// execImports (internal/sandbox/ok/plugin.go is justified and allowed).
+		"INV-H internal/store/dotgobuild.go",      // go/build imported outside the sandbox packages
+		"INV-H internal/store/dotgobuild.go",      // import . "go/build"
+		"INV-H internal/store/dotgoimporter.go",   // go/importer imported outside the sandbox packages
+		"INV-H internal/store/dotgoimporter.go",   // import . "go/importer"
+		"INV-H internal/store/imp_go_build.go",    // go/build
+		"INV-H internal/store/imp_go_importer.go", // go/importer
+		"INV-H internal/store/imp_plugin.go",      // plugin
 		"imports internal/policy/bad.go",          // policy importing a provider
 		"imports internal/providers/bad/bad.go",   // third-party import in a provider
 		"imports internal/providers/bad/bad.go",   // provider importing internal/store
@@ -461,6 +471,13 @@ replace example.com/ok2 v1.0.0 => example.com/fork2 v1.0.1
 		{"tab and comment", "module\twarden.dev/warden\t// x\n", "warden.dev/warden", false},
 		{"no module line", "go 1.26\n", "", true},
 		{"empty module", "module // nothing\n", "", true},
+		// Final review: "replace(" with no space opened no block, so the
+		// local replace inside it passed. And any "=>" the parser does not
+		// recognise as a replace is refused, so the next unforeseen syntax
+		// fails closed.
+		{"replace( without space", "module warden.dev/warden\n\nreplace(\n\twarden.dev/hid => ./_hid\n)\n", "warden.dev/warden", true},
+		{"=> outside a replace", "module warden.dev/warden\n\nrequire (\n\texample.com/x => ./x\n)\n", "warden.dev/warden", true},
+		{"module replace in replace(", "module warden.dev/warden\n\nreplace(\n\texample.com/a => example.com/b v1.0.0\n)\n", "warden.dev/warden", false},
 	} {
 		_, module, err := scanTree(fstest.MapFS{"go.mod": {Data: []byte(tc.gomod)}})
 		if module != tc.module {

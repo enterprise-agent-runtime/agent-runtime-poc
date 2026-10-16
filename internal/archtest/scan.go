@@ -179,7 +179,8 @@ func readGoMod(src []byte) (string, []Violation) {
 	block := ""
 	for i, raw := range strings.Split(string(src), "\n") {
 		line, _, _ := strings.Cut(raw, "//")
-		fields := strings.Fields(line)
+		// "(" and ")" are tokens of their own: "replace(" opens a block too.
+		fields := strings.Fields(strings.NewReplacer("(", " ( ", ")", " ) ").Replace(line))
 		if len(fields) == 0 {
 			continue
 		}
@@ -199,6 +200,11 @@ func readGoMod(src []byte) (string, []Violation) {
 			module = strings.Trim(fields[1], `"`)
 		case fields[0] == "replace":
 			spec = fields[1:]
+		}
+		if spec == nil && strings.Contains(line, "=>") {
+			// Fail closed: an arrow the parser did not read as a replace is
+			// syntax it does not understand.
+			bad = append(bad, Violation{"go.mod", i + 1, "scan", "\"=>\" outside a replace directive archtest can read: " + strings.TrimSpace(line)})
 		}
 		if spec == nil {
 			continue
