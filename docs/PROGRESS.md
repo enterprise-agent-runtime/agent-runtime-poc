@@ -85,7 +85,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Left for M3:** the PDP behind `Decider`, the 120 s approval hold, the deny cache and per-host rate-limit summaries.
   - **Minor, left:** the burst summary is flushed only at the next accept or at shutdown (delayed, not lost; a 10 s timer would make it timely), and the flush runs in the accept loop (a slow store delays only the task's own accepts).
   - **Accepted residual:** no tunnel inspection after a valid ClientHello, so domain fronting through the inner Host is possible.
-- [ ] **M2-12a** per-task Unix listener for L1
+- [x] **M2-12a** Per-task Unix listener for L1 (D-065, C-74).
+  - **Pieces:** `internal/platform` `ListenTaskSocket`, `TaskSocket`, `SweepTaskSockets` (Linux and macOS; unsupported elsewhere); `internal/sandbox` `OpenProxy`, `ProxyListener`, `SweepProxySockets`.
+  - **Commits:** `2aa3972`, `2cc6c6c`.
+  - **Review:** one round, approved; its one low finding (a swapped directory during bind could make the refusal delete another session's live socket) was fixed before merge. 33 mutants caught; `-race -count=20` in WSL2. Cross-user cases use seams: no second uid is available without sudo.
+  - **Left for M2-15 (wiring):** call `SweepProxySockets(home)` once in wardend after `platform.Listen` succeeds and before any sandbox; `Manager.Create` calls `OpenProxy` before launch, binds `pl.Path()` at `/run/warden/proxy.sock`, and closes it on every failure path; `Destroy` closes it before `sandbox.destroy`.
+  - **Left for session creation:** make `<home>/sessions` and S owner-only (D-052's `Ensure` does not manage `sessions/`); otherwise `OpenProxy` fails closed with `sandbox_unavailable`.
+  - **Low, left:** check ancestors above the home, or do every operation relative to an `os.OpenRoot` of `S/scratch`; a `hook-<n>.sock` (A12 §7.3) needs its own sweep pattern; archtest could list `net.ListenUnix` for consistency (it only accepts unix networks, so not a gap).
 
 **Group D** (L1 sandbox, WSL2):
 

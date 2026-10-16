@@ -22,6 +22,24 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-027 · 2026-10-16 · M2-12a: the per-task Unix socket for the L1 egress proxy
+
+- **Asked:** M2 plan task M2-12a. Delivered under "merge each task when its review passes".
+- **Task:** The socket through which a sandboxed process reaches its task's egress proxy in L1: never reachable by another account, not even briefly, and removed without touching anything that is not ours.
+- **How:**
+  - **Socket** (D-065): bound inside an owner-only directory chain and verified after bind and after chmod; peer uid checked on accept; removed by inode identity; a startup sweep for stale sockets.
+  - **Lifecycle:** `sandbox.OpenProxy` ties the proxy to the Spec's sandbox and flushes events before the socket goes.
+  - **Commits:** `2aa3972`, `2cc6c6c`.
+- **Rules kept:**
+  - INV-J: a literal `net.Listen("unix", ...)`, no archtest change; no TCP anywhere (the upstream dial is injected over `net.Pipe`).
+  - OS tags only in `internal/platform` and `internal/sandbox`; no umask change; no new dependency.
+  - Test first against stubs that follow A07 literally; 33 mutants caught.
+- **Rules changed or bent:**
+  - **A07 §2 not followed literally** (C-74): no bind-then-chmod window, no `$TMPDIR` fallback, lifecycle in `internal/sandbox`. Decided by me, confirmed by the review.
+  - **Unknown peers are refused**, stricter than the daemon socket's listener.
+- **Verified:** one review round with a small fix; probes in WSL2 for swaps during bind, pre-planted entries, the sweep, and fake peers of other uids (no second uid without sudo); `make check` green.
+- **Left:** see the M2-12a entry in PROGRESS (wiring in M2-15, owner-only session directories, ancestor checks).
+
 ## W-026 · 2026-10-16 · WH-4: one daemon per home from start to exit; key files trusted for integrity
 
 - **Asked:** the WH-4 follow-ups recorded when WH-1+2 merged. Delivered under "merge each task when its review passes".
