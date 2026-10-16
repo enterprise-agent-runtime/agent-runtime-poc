@@ -131,8 +131,16 @@ func Resolve(roots []Root, method string, root execproto.RootName, input string)
 	}
 
 	// Step 3: lexical clean. An escape is an error, never the root.
+	// rel never starts with "/" here (rootOf strips the slashes after the
+	// root, and relative input has none), but a leading "/" or a ".."
+	// segment left after Clean is refused as an escape whatever produced
+	// it: path.Clean of a rooted path silently drops a leading "..", which
+	// is exactly the clamp step 3 forbids (CWE-22).
+	if strings.HasPrefix(rel, "/") {
+		return execproto.Resolved{}, execproto.NewError(execproto.ErrPathEscape, "path escapes the root")
+	}
 	c := path.Clean(rel)
-	if c == ".." || strings.HasPrefix(c, "../") {
+	if hasDotDot(c) {
 		return execproto.Resolved{}, execproto.NewError(execproto.ErrPathEscape, "path escapes the root")
 	}
 	if c == "." {
@@ -151,7 +159,13 @@ func Resolve(roots []Root, method string, root execproto.RootName, input string)
 // canonical path after the symlink walk, so a link named "notes.txt" that
 // points at ".env" or ".git/config" is refused as what it reaches.
 // res.DenyMatch keeps the first match.
+//
+// The .git ban is checked first, so a write to an 8.3 segment (which the
+// deny-list matches too) is reported as the .git refusal it may be.
 func checkResult(acc methodAccess, res *execproto.Resolved, rel string) error {
+	if acc.write && touchesGit(rel) {
+		return execproto.NewError(execproto.ErrOutsideRoots, "writes to .git are not allowed")
+	}
 	if pat, ok := denylist.Match(rel); ok && rel != "" {
 		if !acc.reportDeny {
 			return execproto.NewError(execproto.ErrDenyList, "path matches the platform deny-list")
@@ -160,10 +174,17 @@ func checkResult(acc methodAccess, res *execproto.Resolved, rel string) error {
 			res.DenyMatch = &pat
 		}
 	}
-	if acc.write && touchesGit(rel) {
-		return execproto.NewError(execproto.ErrOutsideRoots, "writes to .git are not allowed")
-	}
 	return nil
+}
+
+// hasDotDot reports a ".." segment anywhere in a slash path.
+func hasDotDot(p string) bool {
+	for _, s := range strings.Split(p, "/") {
+		if s == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // touchesGit reports whether a root-relative path has a ".git" segment. A06
@@ -172,10 +193,12 @@ func checkResult(acc methodAccess, res *execproto.Resolved, rel string) error {
 // rule is applied per segment. Any segment counts, not only the first, so a
 // nested repository's hooks cannot be planted either, and the comparison
 // ignores case because macOS and Windows file systems do (CLAUDE.md §9 rule
-// 6).
+// 6). An NTFS 8.3 short-name segment counts too: GIT~1 is .git on a volume
+// with short names, and the string does not say which long name an alias
+// stands for (CWE-41; git's CVE-2014-9390).
 func touchesGit(rel string) bool {
 	for _, s := range strings.Split(rel, "/") {
-		if strings.EqualFold(s, ".git") {
+		if strings.EqualFold(s, ".git") || denylist.IsShortName(s) {
 			return true
 		}
 	}
@@ -217,7 +240,9 @@ func rootOf(roots []Root, p string) (Root, string, bool) {
 		switch {
 		case p == r.Path:
 		case strings.HasPrefix(p, r.Path+"/"):
-			tail = p[len(r.Path)+1:]
+			// Further slashes are dropped: a tail kept as "/../x" would be
+			// cleaned to "/x" and the escape in "/work//../x" lost (CWE-22).
+			tail = strings.TrimLeft(p[len(r.Path)+1:], "/")
 		default:
 			continue
 		}

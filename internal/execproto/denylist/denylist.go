@@ -57,7 +57,51 @@ func Match(p string) (string, bool) {
 			return pat, true
 		}
 	}
+	for _, s := range segs {
+		if IsShortName(s) {
+			return ShortNameMatch, true
+		}
+	}
 	return "", false
+}
+
+// ShortNameMatch is what Match reports for a path with an NTFS 8.3
+// short-name segment (see IsShortName).
+const ShortNameMatch = "8.3-short-name"
+
+// IsShortName reports whether one path segment has the form of an NTFS 8.3
+// short name: a base of at most 8 characters made of a non-empty prefix
+// without "." or "~", then "~" and 1-6 digits, and optionally "." and an
+// extension of at most 3 characters without "." (an empty one too: Windows
+// drops a trailing dot). Case does not matter; the shape has no letters.
+//
+// NTFS creates such an alias for long names by default on the system drive,
+// and opening the alias opens the file: ENV~1 is .env, GIT~1 is .git,
+// KUBE~1 is .kube, CREDEN~1.JSO is credentials.json (CWE-41; git refuses
+// git~1 for the same reason, CVE-2014-9390, CVE-2019-1353). On Windows L2
+// the worktree is a bind mount from NTFS. Which long name an alias stands
+// for depends on the volume, so it cannot be mapped back here: every
+// segment of this shape is denied, at all three INV-I layers through Match.
+// Real files named like this ("draft~1.txt") are denied too; that is the
+// accepted false positive.
+func IsShortName(seg string) bool {
+	base, ext, hasExt := strings.Cut(seg, ".")
+	if hasExt && (len(ext) > 3 || strings.Contains(ext, ".")) {
+		return false
+	}
+	if len(base) > 8 {
+		return false
+	}
+	prefix, digits, ok := strings.Cut(base, "~")
+	if !ok || prefix == "" || len(digits) == 0 || len(digits) > 6 {
+		return false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // MatchUnder additionally denies anything under one of the given absolute

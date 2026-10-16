@@ -74,6 +74,15 @@ func TestResolve(t *testing.T) {
 		{"write escape", write, "", "a/../../x", want{}, execproto.ErrPathEscape},
 		{"backslash dotdot", read, "", `..\..\x`, want{}, execproto.ErrPathEscape},
 		{"backslash inner escape", read, "", `a\..\..\x`, want{}, execproto.ErrPathEscape},
+		// Review of ab63720 (CWE-22): a doubled slash after the root left a
+		// tail starting with "/", and path.Clean then ate the "..", so
+		// "/work//../../etc/passwd" resolved to RelPath "/etc/passwd": an
+		// escape silently clamped, with no path_escape in the audit trail.
+		{"doubled slash after root then up", read, "", "/work//../../etc/passwd", want{}, execproto.ErrPathEscape},
+		{"doubled slash after root, dotdot", read, "", "/work//..", want{}, execproto.ErrPathEscape},
+		{"tripled slash after root, dotdot", stat, "", "/work///../x", want{}, execproto.ErrPathEscape},
+		{"doubled slash after root", read, "", "/work//x", want{"worktree", "x", "/work/x", ""}, 0},
+		{"doubled backslash after scratch", read, "", `\scratch\\vitest.json`, want{"scratch", "vitest.json", "/scratch/vitest.json", ""}, 0},
 
 		// Absolute paths outside the roots, and the Windows forms (step 2).
 		{"etc passwd", read, "", "/etc/passwd", want{}, execproto.ErrOutsideRoots},
@@ -135,6 +144,17 @@ func TestResolve(t *testing.T) {
 		{"read .git/config allowed", read, "", ".git/config", want{"worktree", ".git/config", "/work/.git/config", ""}, 0},
 		{"write .gitignore allowed", write, "", ".gitignore", want{"worktree", ".gitignore", "/work/.gitignore", ""}, 0},
 		{"write .github allowed", write, "", ".github/workflows/ci.yml", want{"worktree", ".github/workflows/ci.yml", "/work/.github/workflows/ci.yml", ""}, 0},
+
+		// NTFS 8.3 short names (CWE-41; git's CVE-2014-9390, CVE-2019-1353).
+		// On Windows L2 the worktree is a bind mount from NTFS, where ENV~1
+		// opens .env and GIT~1 is .git: the deny-list and the .git ban must
+		// refuse the alias too. A write cannot tell which long name an 8.3
+		// segment stands for, so it refuses every one as a possible .git.
+		{"8.3 alias of .env", read, "", "ENV~1", want{}, execproto.ErrDenyList},
+		{"8.3 alias of .kube", read, "", "KUBE~1/config", want{}, execproto.ErrDenyList},
+		{"8.3 alias of .git, write", write, "", "vendor/x/GIT~1/hooks/post-checkout", want{}, execproto.ErrOutsideRoots},
+		{"8.3 segment, write", write, "", "src/LONGFI~1.TS", want{}, execproto.ErrOutsideRoots},
+		{"tilde not 8.3, write", write, "", "src/a~b.ts", want{"worktree", "src/a~b.ts", "/work/src/a~b.ts", ""}, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,4 +210,53 @@ func TestResolve_MissingRoot(t *testing.T) {
 	if _, err := Resolve(roots, execproto.MethodFSRead, "", "/scratch/x"); !errors.Is(err, execproto.ErrOutsideRoots) {
 		t.Fatalf("absolute path into an absent scratch root: %v, want outside_roots", err)
 	}
+}
+
+// FuzzResolve checks the properties every successful Resolve must have,
+// whatever the input (A06 §5.1 step 5): RelPath is root-relative (no leading
+// "/"), has no ".." segment, and Canonical is exactly the root's path joined
+// with it. It exists because a doubled slash after the root once produced
+// RelPath "/etc/passwd" (review of ab63720, CWE-22), which no table row had
+// thought of. It must also never panic.
+func FuzzResolve(f *testing.F) {
+	for _, s := range []string{
+		"src/a.ts", "..", "/work//../../etc/passwd", "/work//..", "/work//x", `\work\\..\x`,
+		"/scratch//vitest.json", "a/../../x", `C:\x`, `\server\share`, ".env", "ENV~1", "/work", "/", ".",
+	} {
+		for _, m := range []string{execproto.MethodFSRead, execproto.MethodFSWrite, execproto.MethodFSList} {
+			f.Add(m, s)
+		}
+	}
+	roots := testRoots()
+	f.Fuzz(func(t *testing.T, method, input string) {
+		r, err := Resolve(roots, method, "", input)
+		if err != nil {
+			var e *execproto.Error
+			if !errors.As(err, &e) || e.Data.Code == "" {
+				t.Fatalf("Resolve(%q, %q): error %v has no executor code", method, input, err)
+			}
+			return
+		}
+		root, ok := findRoot(roots, r.Root)
+		if !ok {
+			t.Fatalf("Resolve(%q, %q) = %+v: unknown root", method, input, r)
+		}
+		for _, p := range []string{r.RelPath, r.RequestedRelPath} {
+			if strings.HasPrefix(p, "/") || p == "." {
+				t.Fatalf("Resolve(%q, %q) = %+v: path %q is not root-relative", method, input, r, p)
+			}
+			for _, seg := range strings.Split(p, "/") {
+				if seg == ".." || (seg == "" && p != "") {
+					t.Fatalf("Resolve(%q, %q) = %+v: path %q has segment %q", method, input, r, p, seg)
+				}
+			}
+		}
+		want := root.Path
+		if r.RelPath != "" {
+			want += "/" + r.RelPath
+		}
+		if r.Canonical != want {
+			t.Fatalf("Resolve(%q, %q) = %+v: canonical %q, want %q", method, input, r, r.Canonical, want)
+		}
+	})
 }

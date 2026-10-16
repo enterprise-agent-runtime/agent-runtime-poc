@@ -106,3 +106,50 @@ func TestNormalize(t *testing.T) {
 		}
 	}
 }
+
+// TestMatch_ShortNames8dot3: NTFS gives long names an 8.3 alias by default
+// on C:, and opening the alias opens the file: ENV~1 is .env, GIT~1 is .git,
+// KUBE~1 is .kube, CREDEN~1.JSO is credentials.json (CWE-41; git refuses
+// git~1 for the same reason, CVE-2014-9390, CVE-2019-1353). A review of
+// ab63720 read a .env through ENV~1 on WSL2 drvfs over C:, past all three
+// INV-I layers, which share this matcher. The alias cannot be mapped back to
+// its long name without the volume, so every segment of 8.3 short-name form
+// is denied. Matching is case-insensitive like the rest of the list.
+func TestMatch_ShortNames8dot3(t *testing.T) {
+	cases := []struct {
+		path string
+		deny bool
+	}{
+		{"ENV~1", true},
+		{"env~1", true},
+		{"a/GIT~1/config", true},
+		{"KUBE~1/config", true},
+		{"CREDEN~1.JSO", true},
+		{"SERVI~12.JSO", true},
+		{"SERVIC~12.JSO", false}, // base of 9: Windows would have made SERVI~12
+		{"src/PROGRA~1/x.ts", true},
+		{"ENV~1.", true}, // Windows drops a trailing dot
+		{`C:\Users\ana\proj\ENV~1`, true},
+		{"progra~x", false},
+		{"a~b", false},
+		{"file~", false},
+		{"~1", false},
+		{"notes.txt", false},
+		{"README~1.markdown", false}, // extension longer than 3: not an 8.3 name
+		{"averylongname~1", false},   // base longer than 8: not an 8.3 name
+		{"a.b~1", false},             // the tilde is in the extension
+	}
+	for _, c := range cases {
+		if _, got := Match(c.path); got != c.deny {
+			t.Errorf("Match(%q) = %v, want %v", c.path, got, c.deny)
+		}
+	}
+	// MatchUnder goes through the same segment logic inside an allowed root.
+	wt := `C:\Users\ana\AppData\Local\Warden\sessions\01jax\worktree`
+	if _, got := MatchUnder(wt+`\ENV~1`, nil, []string{wt}); !got {
+		t.Error("MatchUnder: ENV~1 inside the worktree allowed")
+	}
+	if _, got := MatchUnder(wt+`\src\notes.txt`, nil, []string{wt}); got {
+		t.Error("MatchUnder: notes.txt inside the worktree denied")
+	}
+}

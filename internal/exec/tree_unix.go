@@ -302,6 +302,15 @@ func readlinkat(dirfd int, name string) (string, error) {
 // root fd with O_DIRECTORY | O_NOFOLLOW, and each fd's device is compared
 // with the root's in place of RESOLVE_NO_XDEV.
 //
+// It does not assume r came from Resolve. Besides the conflict checks, it
+// re-applies Resolve's own checks to the path it opens, judging by flags
+// alone: any write flag (O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND) is a
+// write, held to the exec.fs.write row of A06 §5.3 (worktree only, a
+// read-write root, no .git or 8.3 segment); anything else is a read, held to
+// the exec.fs.read row (worktree or scratch). A deny-list match is refused
+// for every flag set: opening is content access, while list and stat
+// report a match from Resolve without opening the entry.
+//
 // It only opens: the regular-file check and the O_NONBLOCK first open for
 // reads belong to the fs methods (A06 §5.2, M2-7).
 func (t *Tree) OpenCanonical(r execproto.Resolved, flags int) (*os.File, error) {
@@ -318,6 +327,17 @@ func (t *Tree) OpenCanonical(r execproto.Resolved, flags int) (*os.File, error) 
 		if c == "." || c == ".." {
 			return nil, conflict()
 		}
+	}
+	acc := access(execproto.MethodFSRead)
+	if flags&(unix.O_WRONLY|unix.O_RDWR|unix.O_CREAT|unix.O_TRUNC|unix.O_APPEND) != 0 {
+		acc = access(execproto.MethodFSWrite)
+	}
+	if !acc.permits(root.Root) {
+		return nil, execproto.NewError(execproto.ErrOutsideRoots, "root not allowed for this access")
+	}
+	var discard execproto.Resolved
+	if err := checkResult(acc, &discard, strings.Join(comps, "/")); err != nil {
+		return nil, err
 	}
 	flags |= unix.O_NOFOLLOW | unix.O_CLOEXEC
 	name := root.Path

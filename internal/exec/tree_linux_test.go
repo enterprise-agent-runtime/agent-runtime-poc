@@ -186,14 +186,117 @@ func symlinkOutsideRefused(t *testing.T, mode openMode) {
 	_, _, err = f.read(execproto.MethodFSRead, "dangling")
 	wantCode(t, "read dangling", err, execproto.ErrNotFound)
 
-	// OpenCanonical trusts nothing in a Resolved: one naming a symlink, a
-	// ".." or an absolute path is refused, whatever produced it.
+	// OpenCanonical does not rely on the walk having run: a Resolved naming
+	// a symlink, a ".." or an absolute path is refused, whatever produced
+	// it. forgedResolvedRechecked covers the deny-list, .git and root checks.
 	for _, rel := range []string{"abs", "rel", "outdir/secret", "in", "../outside/secret", "sub/../../outside/secret", "/etc/passwd"} {
 		fh, err := f.tree.OpenCanonical(execproto.Resolved{Root: execproto.RootWorktree, RelPath: rel}, unix.O_RDONLY)
 		if err == nil {
 			fh.Close()
 		}
 		wantCode(t, "OpenCanonical of forged "+rel, err, execproto.ErrConflict)
+	}
+}
+
+// forgedResolvedRechecked: OpenCanonical re-applies the checks Resolve made
+// on the path it is about to open, so a Resolved that skipped Resolve (a
+// caller bug in M2-7, or one built by hand) cannot open a deny-listed file,
+// write into .git, write outside the worktree or into a read-only root, or
+// open a root no fs method may address (review of ab63720, finding 5).
+// Opening is content access, so the deny-list refuses here for every flag
+// set; list and stat report a match from Resolve without opening the file.
+func forgedResolvedRechecked(t *testing.T, mode openMode) {
+	f := newFixture(t, mode)
+	f.file("work/ENV~1", "an 8.3 alias stand-in")
+	open := func(tree *Tree, root execproto.RootName, rel string, flags int) error {
+		fh, err := tree.OpenCanonical(execproto.Resolved{Root: root, RelPath: rel}, flags)
+		if err == nil {
+			fh.Close()
+		}
+		return err
+	}
+	wt := execproto.RootWorktree
+	wantCode(t, "forged read of .env", open(f.tree, wt, ".env", unix.O_RDONLY), execproto.ErrDenyList)
+	wantCode(t, "forged read of ENV~1", open(f.tree, wt, "ENV~1", unix.O_RDONLY), execproto.ErrDenyList)
+	wantCode(t, "forged write into .git", open(f.tree, wt, ".git/config", unix.O_WRONLY|unix.O_CREAT), execproto.ErrOutsideRoots)
+	wantCode(t, "forged write into scratch", open(f.tree, execproto.RootScratch, "vitest.json", unix.O_WRONLY), execproto.ErrOutsideRoots)
+	wantCode(t, "forged truncate into scratch", open(f.tree, execproto.RootScratch, "vitest.json", unix.O_RDONLY|unix.O_TRUNC), execproto.ErrOutsideRoots)
+	if err := open(f.tree, execproto.RootScratch, "vitest.json", unix.O_RDONLY); err != nil {
+		t.Errorf("read of scratch/vitest.json: %v", err)
+	}
+	if err := open(f.tree, wt, "sub/f.txt", unix.O_RDWR); err != nil {
+		t.Errorf("read-write of a worktree file: %v", err)
+	}
+
+	ro, err := OpenTree([]Root{
+		{Name: execproto.RootWorktree, Path: f.work, Mode: execproto.RootRO},
+		{Name: execproto.RootCache, Path: f.scratch, Mode: execproto.RootRW},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ro.Close() })
+	if mode == modeFallback {
+		ro.openat2 = f.tree.openat2
+	}
+	wantCode(t, "write into a read-only worktree", open(ro, wt, "sub/f.txt", unix.O_RDWR), execproto.ErrOutsideRoots)
+	wantCode(t, "read from cache", open(ro, execproto.RootCache, "vitest.json", unix.O_RDONLY), execproto.ErrOutsideRoots)
+	if err := open(ro, wt, "sub/f.txt", unix.O_RDONLY); err != nil {
+		t.Errorf("read from a read-only worktree: %v", err)
+	}
+}
+
+// TestOpenCanonical_FallbackNoXdev: without openat2, RESOLVE_NO_XDEV is
+// replaced by comparing every fd's st_dev with the root's (A06 §5.2: crossing
+// into a deny-list mask mount must fail, §11.3). A review of ab63720 found
+// the comparison untested: removing it left the suite green. Real mount
+// points need no privilege to cross: /dev/shm (tmpfs) under /dev (devtmpfs)
+// as the final component, /proc under / as an intermediate one.
+//
+// The intermediate check is not redundant with the final one: with O_CREAT
+// the final open would already have created the file inside the foreign
+// mount before its st_dev is seen, so the walk must stop at the crossing
+// directory. The /dev/shm/<name> create case checks that no file appears.
+// The openat2 runs check the kernel's own refusal the same way.
+func TestOpenCanonical_FallbackNoXdev(t *testing.T) {
+	created := "warden-m2-6-xdev-" + strconv.Itoa(os.Getpid())
+	cases := []struct {
+		root, rel, mount string
+		flags            int
+	}{
+		{"/dev", "shm", "/dev/shm", unix.O_RDONLY},
+		{"/", "proc/version", "/proc", unix.O_RDONLY},
+		{"/dev", "shm/" + created, "/dev/shm", unix.O_WRONLY | unix.O_CREAT | unix.O_EXCL},
+	}
+	for _, c := range cases {
+		for _, mode := range []openMode{modeFallback, modeOpenat2} {
+			t.Run(c.rel+map[openMode]string{modeFallback: "/fallback", modeOpenat2: "/openat2"}[mode], func(t *testing.T) {
+				var parent, child unix.Stat_t
+				if unix.Stat(c.root, &parent) != nil || unix.Stat(c.mount, &child) != nil || parent.Dev == child.Dev {
+					t.Skipf("%s is not a separate mount below %s here", c.mount, c.root)
+				}
+				t.Cleanup(func() { _ = os.Remove("/dev/shm/" + created) })
+				tree, err := OpenTree([]Root{{Name: execproto.RootWorktree, Path: c.root, Mode: execproto.RootRW}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tree.Close()
+				switch {
+				case mode == modeFallback:
+					tree.openat2 = func(int, string, int) (int, error) { return -1, unix.ENOSYS }
+				case !tree.Openat2():
+					t.Skip("openat2 unavailable on this kernel")
+				}
+				fh, err := tree.OpenCanonical(execproto.Resolved{Root: execproto.RootWorktree, RelPath: c.rel}, c.flags)
+				if err == nil {
+					fh.Close()
+				}
+				wantCode(t, "open across "+c.mount, err, execproto.ErrConflict)
+				if _, err := os.Lstat("/dev/shm/" + created); err == nil {
+					t.Fatalf("a refused open created /dev/shm/%s inside the foreign mount", created)
+				}
+			})
+		}
 	}
 }
 
@@ -323,6 +426,10 @@ func TestOpenCanonical_SymlinkSwapIsConflict(t *testing.T) {
 	symlinkSwapIsConflict(t, modeOpenat2)
 }
 
+func TestOpenCanonical_ForgedResolvedRechecked(t *testing.T) {
+	forgedResolvedRechecked(t, modeOpenat2)
+}
+
 // TestOpenCanonical_Fallback runs the three cases above through the
 // component walk, by injecting an openat2 that fails ENOSYS as kernels
 // before 5.6 do. It also checks that the walk really ran (the injected
@@ -331,6 +438,7 @@ func TestOpenCanonical_Fallback(t *testing.T) {
 	t.Run("SymlinkOutsideRefused", func(t *testing.T) { symlinkOutsideRefused(t, modeFallback) })
 	t.Run("SymlinkLoop", func(t *testing.T) { symlinkLoop(t, modeFallback) })
 	t.Run("SymlinkSwapIsConflict", func(t *testing.T) { symlinkSwapIsConflict(t, modeFallback) })
+	t.Run("ForgedResolvedRechecked", func(t *testing.T) { forgedResolvedRechecked(t, modeFallback) })
 	t.Run("walk is taken", func(t *testing.T) {
 		f := newFixture(t, modeFallback)
 		asked := 0
