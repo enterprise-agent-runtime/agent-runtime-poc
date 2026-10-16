@@ -52,6 +52,8 @@ lint() {
 	scripts/lint-exec.sh || return 1
 	step "Claude Code guard hooks"
 	bash .claude/hooks/test-hooks.sh || return 1
+	step "CI required-tests check"
+	bash scripts/test-ci-require-tests.sh || return 1
 	step "API schemas and YAML examples"
 	local schema_pkgs=()
 	for d in internal/api internal/config; do [ -d "$d" ] && schema_pkgs+=("./$d/...")
