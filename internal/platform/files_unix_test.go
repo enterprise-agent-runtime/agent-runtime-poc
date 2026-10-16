@@ -95,7 +95,7 @@ func TestEnsure_RefusesForeignOwnerAndSymlink(t *testing.T) {
 	if err := l.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.ensure(os.Getuid() + 1); err == nil || !strings.Contains(err.Error(), "owned by uid") {
+	if err := l.ensure(identity{uid: os.Getuid() + 1}); err == nil || !strings.Contains(err.Error(), "owned by uid") {
 		t.Fatalf("Ensure for another uid = %v; want an ownership refusal", err)
 	}
 
@@ -116,5 +116,44 @@ func TestEnsure_RefusesForeignOwnerAndSymlink(t *testing.T) {
 	}
 	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o755 {
 		t.Fatalf("symlink target re-permissioned to %v", fi.Mode())
+	}
+}
+
+// TestEnsure_ExistingSubdirsTightened guards WH-1+2 (re-review of 330a5ed,
+// P9): Ensure tightened only home and run, so a pre-planted 0777 keys/ stayed
+// 0777, and keys/checkpoint*.pub are trusted. Every existing directory
+// Ensure manages goes through the same check: 0700 if ours, refused if it is
+// a symlink.
+func TestEnsure_ExistingSubdirsTightened(t *testing.T) {
+	l := Layout{Home: filepath.Join(t.TempDir(), "home")}
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{l.Keys(), l.DB(), l.Blobs(), l.Logs(), l.Cache(), l.Exports()} {
+		if err := os.Chmod(d, 0o777); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{l.Keys(), l.DB(), l.Blobs(), l.Logs(), l.Cache(), l.Exports()} {
+		if fi, err := os.Lstat(d); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Errorf("%s: mode %v %v; want 0700", d, fi.Mode(), err)
+		}
+	}
+
+	elsewhere := filepath.Join(t.TempDir(), "keys")
+	if err := os.Mkdir(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(l.Keys()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, l.Keys()); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Ensure(); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Ensure with keys/ a symlink = %v; want a refusal", err)
 	}
 }

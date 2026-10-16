@@ -271,3 +271,28 @@ func TestWriteOwnerOnly_FailedWriteLeavesNothing(t *testing.T) {
 		t.Fatalf("left behind: %v %v", left, err)
 	}
 }
+
+// TestEnsure_LooseMarkerIsNoProof guards WH-1+2 (re-review of 330a5ed): a
+// .warden-home that others can write proves nothing, since anyone who can
+// write the directory could have planted it. The marker counts only if it
+// passes ReadOwnerOnly; otherwise the directory is refused like any other.
+func TestEnsure_LooseMarkerIsNoProof(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.Mkdir(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(home, HomeMarker)
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(marker, 0o644); err != nil { // past the umask; on Windows the DACL is inherited
+		t.Fatal(err)
+	}
+	before := ownerOnlyDetail(home)
+	if err := (Layout{Home: home}).Ensure(); err == nil || !strings.Contains(err.Error(), "is not a Warden home") {
+		t.Fatalf("Ensure with a loose marker = %v; want a refusal", err)
+	}
+	if after := ownerOnlyDetail(home); after != before {
+		t.Fatalf("home re-permissioned:\nbefore %s\nafter  %s", before, after)
+	}
+}

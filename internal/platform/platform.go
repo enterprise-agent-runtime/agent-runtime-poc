@@ -86,12 +86,18 @@ func (l Layout) PID() string { return l.path("run", "wardend.pid") }
 // home that is a symlink, junction or other reparse point: Ensure never
 // silently takes over a directory it did not make. Ensure leaves the marker,
 // owner-only, in every home it creates or accepts.
-func (l Layout) Ensure() error { return l.ensure(os.Getuid()) }
+func (l Layout) Ensure() error {
+	me, err := currentIdentity()
+	if err != nil {
+		return err
+	}
+	return l.ensure(me)
+}
 
-// ensure is Ensure for a given owner uid (Unix; a test seam, since a test
-// cannot chown without root).
-func (l Layout) ensure(uid int) error {
-	if err := ensureDir(l.Home, uid, l.acceptHome); err != nil {
+// ensure is Ensure for a given owner (the uid on Unix, the SID on Windows):
+// a test seam, since a test cannot give a directory to another account.
+func (l Layout) ensure(me identity) error {
+	if err := ensureDir(l.Home, me, l.acceptHome); err != nil {
 		return err
 	}
 	marker := filepath.Join(l.Home, HomeMarker)
@@ -102,12 +108,12 @@ func (l Layout) ensure(uid int) error {
 	} else if err != nil {
 		return err
 	}
-	// run follows the home's rule; the home is accepted by now.
-	if err := ensureDir(l.Run(), uid, func(string, fs.FileInfo) error { return nil }); err != nil {
-		return err
-	}
-	for _, d := range []string{l.DB(), l.Blobs(), l.Keys(), l.Exports(), l.Logs(), l.Cache()} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
+	// Every directory Ensure manages follows the home's rule (the home is
+	// accepted by now): created owner-only, or an existing one checked for
+	// links and ownership and made owner-only. keys/ holds the trusted
+	// checkpoint keys, so a pre-planted loose keys/ must not survive (P9).
+	for _, d := range []string{l.Run(), l.DB(), l.Blobs(), l.Keys(), l.Exports(), l.Logs(), l.Cache()} {
+		if err := ensureDir(d, me, func(string, fs.FileInfo) error { return nil }); err != nil {
 			return err
 		}
 	}
@@ -117,7 +123,7 @@ func (l Layout) ensure(uid int) error {
 // ensureDir creates dir owner-only, or makes an existing dir that accept
 // allows owner-only. A symlink, junction or other reparse point, or a
 // non-directory, is refused before accept is asked.
-func ensureDir(dir string, uid int, accept func(string, fs.FileInfo) error) error {
+func ensureDir(dir string, me identity, accept func(string, fs.FileInfo) error) error {
 	fi, err := os.Lstat(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
@@ -144,7 +150,7 @@ func ensureDir(dir string, uid int, accept func(string, fs.FileInfo) error) erro
 	if err := accept(dir, fi); err != nil {
 		return err
 	}
-	return protectDir(dir, uid)
+	return protectDir(dir, me)
 }
 
 // acceptHome allows an existing home directory to be made owner-only: the
@@ -153,7 +159,8 @@ func (l Layout) acceptHome(dir string, _ fs.FileInfo) error {
 	if def, err := DefaultHome(); err == nil && sameHome(dir, def) {
 		return nil
 	}
-	if fi, err := os.Lstat(filepath.Join(dir, HomeMarker)); err == nil && fi.Mode().IsRegular() {
+	// A marker others can write proves nothing: it must pass ReadOwnerOnly.
+	if _, err := ReadOwnerOnly(filepath.Join(dir, HomeMarker), 4<<10); err == nil {
 		return nil
 	}
 	f, err := os.Open(dir)

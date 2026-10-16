@@ -153,8 +153,8 @@ func mkdirOwnerOnly(dir string) error {
 // a handle opened on the directory itself (FILE_FLAG_OPEN_REPARSE_POINT), so
 // a junction swapped in at the path is refused, never followed. MkdirAll's
 // mode means nothing on Windows (WH-1+2, CWE-276). SetKernelObjectSecurity
-// does not propagate to children that already exist. uid is Unix-only.
-func protectDir(dir string, _ int) error {
+// does not propagate to children that already exist.
+func protectDir(dir string, me identity) error {
 	sd, err := ownerOnlySecurityDescriptor("OICI")
 	if err != nil {
 		return err
@@ -167,12 +167,30 @@ func protectDir(dir string, _ int) error {
 	if attrs&syscall.FILE_ATTRIBUTE_DIRECTORY == 0 {
 		return fmt.Errorf("%s is not a directory", dir)
 	}
+	// The owner is compared on the same handle before anything changes:
+	// another account's directory is refused, not taken over (WH-1+2).
+	cur, err := handleSecurity(h)
+	if err != nil {
+		return &os.PathError{Op: "GetKernelObjectSecurity", Path: dir, Err: err}
+	}
+	if !ownerIs(cur, me.sid) {
+		return fmt.Errorf("%s is owned by another account (%s), not by you; use a directory of your own", dir, sddlDetail(cur))
+	}
 	r, _, e := procSetKernelObjectSecurity.Call(uintptr(h), ownerOnlyInformation|protectedDACLSecurityInformation, uintptr(unsafe.Pointer(&sd[0])))
 	runtime.KeepAlive(sd)
 	if r == 0 {
 		return &os.PathError{Op: "SetKernelObjectSecurity", Path: dir, Err: e}
 	}
 	return nil
+}
+
+// identity is the account Ensure protects directories for: the SID of the
+// process token user.
+type identity struct{ sid []byte }
+
+func currentIdentity() (identity, error) {
+	sid, err := currentUserSID()
+	return identity{sid: sid}, err
 }
 
 // isLink reports a symlink, junction or any other reparse point.

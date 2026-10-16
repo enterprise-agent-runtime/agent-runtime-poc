@@ -46,7 +46,12 @@ func ownerOnlyDirDACL(sd, sid []byte) bool {
 }
 
 func ownerOnlySD(sd, sid []byte, aceFlags byte) bool {
-	return len(sd) >= sdHeaderSize && sidAt(sd, binary.LittleEndian.Uint32(sd[4:]), sid) && singleACEDACL(sd, sid, aceFlags)
+	return ownerIs(sd, sid) && singleACEDACL(sd, sid, aceFlags)
+}
+
+// ownerIs reports whether the descriptor's owner is exactly sid.
+func ownerIs(sd, sid []byte) bool {
+	return len(sd) >= sdHeaderSize && sidAt(sd, binary.LittleEndian.Uint32(sd[4:]), sid)
 }
 
 // singleACEDACL is the DACL half of ownerOnlySD: present, protected, one

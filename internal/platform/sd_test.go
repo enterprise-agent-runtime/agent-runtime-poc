@@ -351,3 +351,27 @@ func TestOwnerOnlyMode(t *testing.T) {
 		}
 	}
 }
+
+// TestOwnerIs: protectDir on Windows refuses a directory whose owner is not
+// the user before changing it (WH-1+2 re-review of 330a5ed); the owner is
+// read with the same bounds checks as ownerOnlyDACL.
+func TestOwnerIs(t *testing.T) {
+	user := testSID(5, 21, 1111, 2222, 3333, 1001)
+	other := testSID(5, 21, 1111, 2222, 3333, 1002)
+	ace := testACE(0, 0, fileAllAccess, user)
+	for _, c := range []struct {
+		name string
+		sd   []byte
+		want bool
+	}{
+		{"own", testSD(user, seDACLPresent|seDACLProtected, ace), true},
+		{"own, any DACL", testSD(user, seDACLPresent, ace, testACE(0, 0, fileAllAccess, other)), true},
+		{"other", testSD(other, seDACLPresent|seDACLProtected, ace), false},
+		{"no owner", testSD(nil, seDACLPresent|seDACLProtected, ace), false},
+		{"short", testSD(user, seDACLPresent)[:sdHeaderSize-1], false},
+	} {
+		if got := ownerIs(c.sd, user); got != c.want {
+			t.Errorf("%s: ownerIs = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

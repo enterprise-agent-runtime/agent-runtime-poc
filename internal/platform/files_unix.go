@@ -52,7 +52,8 @@ func mkdirOwnerOnly(dir string) error { return os.Mkdir(dir, 0o700) }
 // on the directory itself (O_NOFOLLOW|O_DIRECTORY), after checking on that
 // descriptor that uid owns it: another account's directory is refused, not
 // re-permissioned (WH-1+2 review of c8f81ca).
-func protectDir(dir string, uid int) error {
+func protectDir(dir string, me identity) error {
+	uid := me.uid
 	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
 	if err != nil {
 		return err
@@ -71,6 +72,11 @@ func protectDir(dir string, uid int) error {
 	}
 	return f.Chmod(0o700)
 }
+
+// identity is the account Ensure protects directories for: the uid.
+type identity struct{ uid int }
+
+func currentIdentity() (identity, error) { return identity{uid: os.Getuid()}, nil }
 
 // isLink reports a symbolic link.
 func isLink(fi fs.FileInfo) bool { return fi.Mode()&os.ModeSymlink != 0 }

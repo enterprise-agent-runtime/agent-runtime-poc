@@ -119,7 +119,7 @@ func TestEnsure_HomeAndRunOwnerOnly(t *testing.T) {
 				if err := os.MkdirAll(l.Run(), 0o700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(l.Home, HomeMarker), nil, 0o600); err != nil {
+				if err := WriteOwnerOnly(filepath.Join(l.Home, HomeMarker), nil); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -275,5 +275,63 @@ func TestEnsure_RefusesJunctionHome(t *testing.T) {
 	}
 	if string(before) != string(after) {
 		t.Fatalf("junction target re-permissioned: %s", sddlDetail(after))
+	}
+}
+
+// TestEnsure_ExistingSubdirsAndForeignOwner guards WH-1+2 (re-review of
+// 330a5ed): every existing directory Ensure manages (keys/ holds the trusted
+// checkpoint keys) gets the owner-only descriptor, a junction there is
+// refused, and protectDir compares the directory's owner with the user
+// before changing anything, so another account's directory is refused, not
+// taken over. The owner seam passes Administrators as "the user", since a
+// test cannot give a directory to another account.
+func TestEnsure_ExistingSubdirsAndForeignOwner(t *testing.T) {
+	l := Layout{Home: filepath.Join(t.TempDir(), "home")}
+	if err := os.MkdirAll(l.Home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{l.Keys(), l.DB(), l.Blobs()} { // inherited DACLs
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := WriteOwnerOnly(filepath.Join(l.Home, HomeMarker), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{l.Keys(), l.DB(), l.Blobs(), l.Logs(), l.Cache(), l.Exports()} {
+		if ok, err := dirOwnerOnly(d); err != nil || !ok {
+			t.Errorf("%s: owner-only %v %v; read back %s", d, ok, err, ownerOnlyDetail(d))
+		}
+	}
+
+	admins, err := syscall.StringToSid("S-1-5-32-544")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := identity{sid: unsafe.Slice((*byte)(unsafe.Pointer(admins)), syscall.GetLengthSid(admins))}
+	before, err := pathSecurity(l.Home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.ensure(other); err == nil || !strings.Contains(err.Error(), "is owned by") {
+		t.Fatalf("Ensure for another owner = %v; want an ownership refusal", err)
+	}
+	if after, _ := pathSecurity(l.Home); string(after) != string(before) {
+		t.Fatalf("home changed for a foreign owner: %s", sddlDetail(after))
+	}
+
+	if err := os.RemoveAll(l.Keys()); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "keys")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	makeJunction(t, l.Keys(), target)
+	if err := l.Ensure(); err == nil || !strings.Contains(err.Error(), "reparse point") {
+		t.Fatalf("Ensure with keys/ a junction = %v; want a refusal", err)
 	}
 }
