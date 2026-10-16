@@ -30,6 +30,7 @@ const (
 	maxDialAddrs          = 4
 	responseHeaderTimeout = 60 * time.Second
 	refusalWriteTimeout   = 10 * time.Second
+	eventTimeout          = 5 * time.Second
 	maxEventHost          = 253
 )
 
@@ -374,8 +375,22 @@ func (p *TaskProxy) writeStatus(c net.Conn, status int, body string) {
 	_ = c.SetWriteDeadline(time.Time{})
 }
 
+// eventContext detaches event writing from the connection's context. The
+// final proxy.connect of a tunnel is written when the tunnel closes, and
+// at sandbox.destroy that close is caused by cancelling Serve's context; a
+// write with that context is refused by the store and the event, with its
+// byte counts, is lost (CWE-778; A07 §2 "Close" requires every proxy event
+// to be written before sandbox.destroy). The values (ids, deadlines of
+// callers) are kept; only cancellation is dropped, and eventTimeout bounds
+// the write instead.
+func eventContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), eventTimeout)
+}
+
 func (p *TaskProxy) emitDenied(ctx context.Context, ev DeniedEvent) {
 	ev.SandboxID = p.cfg.SandboxID
+	ctx, cancel := eventContext(ctx)
+	defer cancel()
 	if err := p.cfg.Events.ProxyDenied(ctx, ev); err != nil {
 		p.log.Error("proxy.denied not written", "err", err)
 	}
@@ -383,6 +398,8 @@ func (p *TaskProxy) emitDenied(ctx context.Context, ev DeniedEvent) {
 
 func (p *TaskProxy) emitConnect(ctx context.Context, ev ConnectEvent) {
 	ev.SandboxID = p.cfg.SandboxID
+	ctx, cancel := eventContext(ctx)
+	defer cancel()
 	if err := p.cfg.Events.ProxyConnect(ctx, ev); err != nil {
 		p.log.Error("proxy.connect not written", "err", err)
 	}

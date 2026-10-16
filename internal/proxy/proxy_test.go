@@ -582,3 +582,53 @@ func TestServeConn_EventPerAttempt(t *testing.T) {
 		}
 	}
 }
+
+// TestServe_CancelDuringTunnelKeepsProxyConnect guards a confirmed bug
+// (review of 7ad63b0, CWE-778): the final proxy.connect of a tunnel still
+// open at sandbox.destroy was emitted with the cancelled Serve context, so
+// the store refused it and the tunnel's byte counts were lost (A07 §2
+// "Close": every proxy event is written before sandbox.destroy). The sink
+// here refuses a done context exactly like the store.
+func TestServe_CancelDuringTunnelKeepsProxyConnect(t *testing.T) {
+	h := newHarness(t, "registry.npmjs.org:443")
+	h.res.set("registry.npmjs.org", addrs("104.16.1.34"))
+	hello := clientHello("registry.npmjs.org")
+	got := make(chan struct{})
+	h.dial.upstream = func(c net.Conn) {
+		defer c.Close()
+		buf := make([]byte, len(hello))
+		if _, err := io.ReadFull(c, buf); err == nil {
+			close(got)
+		}
+		_, _ = io.Copy(io.Discard, c) // hold the tunnel open until closed
+	}
+	ln := newPipeListener()
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- h.p.Serve(ctx, ln) }()
+	c := ln.dial(t)
+	defer c.Close()
+	resp, _ := send(t, c, "CONNECT registry.npmjs.org:443 HTTP/1.1\r\n\r\n")
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	go func() { _, _ = c.Write(hello) }()
+	select {
+	case <-got:
+	case <-time.After(10 * time.Second):
+		t.Fatal("upstream never received the ClientHello")
+	}
+	cancel() // sandbox.destroy while the tunnel is open
+	select {
+	case <-served:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return")
+	}
+	conns, denies := h.sink.snapshot()
+	if len(conns) != 1 || len(denies) != 0 || h.sink.refused != 0 {
+		t.Fatalf("events %+v / %+v, %d refused for a done context; want exactly one proxy.connect", conns, denies, h.sink.refused)
+	}
+	if conns[0].BytesUp != int64(len(hello)) || conns[0].Error != "" {
+		t.Errorf("proxy.connect = %+v; want bytes_up %d and no error (shutdown is not an upstream reset)", conns[0], len(hello))
+	}
+}

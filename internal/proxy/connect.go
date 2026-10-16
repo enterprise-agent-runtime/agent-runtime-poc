@@ -55,7 +55,7 @@ func (p *TaskProxy) connect(ctx context.Context, c net.Conn, br *bufio.Reader, a
 	n, err := up.Write(rec)
 	ev.BytesUp = int64(n)
 	if err == nil {
-		up2, down, code := relay(c, br, up)
+		up2, down, code := relay(ctx, c, br, up)
 		ev.BytesUp += up2
 		ev.BytesDown = down
 		ev.Error = code
@@ -83,8 +83,9 @@ type closeWriter interface{ CloseWrite() error }
 // directions end. EOF in one direction is propagated as a half-close when
 // the connection supports it, and closes both otherwise. A tunnel with no
 // bytes in either direction for idleTimeout is closed (A07 §10). It
-// returns the byte counts and the A07 §9 error value ("" for a normal end).
-func relay(client net.Conn, cr io.Reader, up net.Conn) (bytesUp, bytesDown int64, code string) {
+// returns the byte counts and the A07 §9 error value ("" for a normal end,
+// including a close because ctx ended).
+func relay(ctx context.Context, client net.Conn, cr io.Reader, up net.Conn) (bytesUp, bytesDown int64, code string) {
 	var (
 		last     atomic.Int64 // unix nanoseconds of the last byte either way
 		closing  atomic.Bool  // we closed the connections; later errors are ours
@@ -132,7 +133,7 @@ func relay(client net.Conn, cr io.Reader, up net.Conn) (bytesUp, bytesDown int64
 	switch {
 	case idle.Load():
 		code = ConnErrIdleTimeout
-	case upstream.Load():
+	case upstream.Load() && ctx.Err() == nil: // a shutdown close is not an upstream reset
 		code = ConnErrUpstreamReset
 	}
 	return bytesUp, bytesDown, code

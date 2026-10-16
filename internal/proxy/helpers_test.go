@@ -15,23 +15,35 @@ import (
 	"time"
 )
 
-// fakeSink records events in order.
+// fakeSink records events in order. Like the real store's Append, it
+// refuses to write with a context that is already done, so a test fails if
+// the proxy emits an event with a cancelled context (CWE-778: the event
+// would be lost in production).
 type fakeSink struct {
 	mu       sync.Mutex
 	connects []ConnectEvent
 	denies   []DeniedEvent
+	refused  int
 }
 
-func (s *fakeSink) ProxyConnect(_ context.Context, ev ConnectEvent) error {
+func (s *fakeSink) ProxyConnect(ctx context.Context, ev ConnectEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		s.refused++
+		return err
+	}
 	s.connects = append(s.connects, ev)
 	return nil
 }
 
-func (s *fakeSink) ProxyDenied(_ context.Context, ev DeniedEvent) error {
+func (s *fakeSink) ProxyDenied(ctx context.Context, ev DeniedEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		s.refused++
+		return err
+	}
 	s.denies = append(s.denies, ev)
 	return nil
 }
