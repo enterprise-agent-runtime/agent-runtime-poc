@@ -3,6 +3,7 @@
 package exec
 
 import (
+	"context"
 	"os"
 
 	"warden.dev/warden/internal/execproto"
@@ -35,3 +36,38 @@ func (*Tree) Resolve(string, execproto.RootName, string) (execproto.Resolved, er
 
 // OpenCanonical always fails on this OS.
 func (*Tree) OpenCanonical(execproto.Resolved, int) (*os.File, error) { return nil, unsupported() }
+
+// The exec.fs methods always fail on this OS (fs_unix.go has them).
+
+// Read always fails on this OS.
+func (*Tree) Read(context.Context, execproto.ReadParams) (execproto.ReadResult, error) {
+	return execproto.ReadResult{}, unsupported()
+}
+
+// List always fails on this OS.
+func (*Tree) List(context.Context, execproto.ListParams) (execproto.ListResult, error) {
+	return execproto.ListResult{}, unsupported()
+}
+
+// Search always fails on this OS.
+func (*Tree) Search(context.Context, execproto.SearchParams) (execproto.SearchResult, error) {
+	return execproto.SearchResult{}, unsupported()
+}
+
+// Write always fails on this OS.
+func (*Tree) Write(context.Context, execproto.WriteParams) (execproto.WriteResult, error) {
+	return execproto.WriteResult{}, unsupported()
+}
+
+// Patch always fails on this OS.
+func (*Tree) Patch(context.Context, execproto.PatchParams) (execproto.PatchResult, error) {
+	return execproto.PatchResult{}, unsupported()
+}
+
+// Stat always fails on this OS.
+func (*Tree) Stat(context.Context, execproto.StatParams) (execproto.StatResult, error) {
+	return execproto.StatResult{}, unsupported()
+}
+
+// SweepTemps does nothing on this OS.
+func (*Tree) SweepTemps() (int, error) { return 0, nil }
