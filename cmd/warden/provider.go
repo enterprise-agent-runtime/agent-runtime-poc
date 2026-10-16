@@ -3,12 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"warden.dev/warden/internal/platform"
+	"warden.dev/warden/internal/termsafe"
 )
 
 // preset is a known provider shape (WRD-16 §6.1).
@@ -125,7 +127,7 @@ func providerCmd() *cobra.Command {
 			}
 			if !asJSON {
 				fmt.Printf("added %s (%s, %s)\n", r.ProviderID, pr.protocol, pr.tier)
-				printTest(r.Test)
+				printTest(os.Stdout, r.Test)
 			}
 			return nil
 		}}
@@ -150,7 +152,7 @@ func providerCmd() *cobra.Command {
 				return err
 			}
 			if !asJSON {
-				printTest(r)
+				printTest(os.Stdout, r)
 			}
 			if r["ok"] != true {
 				return exitError{1}
@@ -166,15 +168,7 @@ func providerCmd() *cobra.Command {
 			return err
 		}
 		if !asJSON {
-			if len(r.Providers)+len(r.Harnesses) == 0 {
-				fmt.Println("no providers configured; try: warden provider add anthropic --api-key, or warden provider add ollama")
-			}
-			for _, p := range r.Providers {
-				fmt.Printf("%-14s %-19s %-3v %-9v %-18v %v\n", p["provider_id"], p["protocol"], p["tier"], p["auth_mode"], p["status"], p["models"])
-			}
-			for _, h := range r.Harnesses {
-				fmt.Printf("%-14s %-19s T4  %-9v %-18v vendor_terms=%v\n", h["harness_id"], h["kind"], h["billing"], h["status"], h["vendor_terms"])
-			}
+			renderProviderList(os.Stdout, r.Providers, r.Harnesses)
 		}
 		return nil
 	}})
@@ -198,20 +192,61 @@ func providerCmd() *cobra.Command {
 	return p
 }
 
-func printTest(r map[string]any) {
+// safe formats one value of an API result for the terminal. Results carry
+// text a remote party chose (a probe error is the model endpoint's message;
+// local servers' model ids are discovered from the endpoint), so every value
+// these renderers print passes termsafe.SanitizeDetail (CWE-150, M2-3).
+func safe(v any) string { return termsafe.SanitizeDetail(fmt.Sprint(v)) }
+
+// printTest prints a provider.test result.
+func printTest(w io.Writer, r map[string]any) {
 	if r == nil {
 		return
 	}
 	if r["ok"] == true {
-		fmt.Printf("probe ok (%v ms)\n", r["latency_ms"])
+		fmt.Fprintf(w, "probe ok (%s ms)\n", safe(r["latency_ms"]))
 	} else if e, ok := r["error"].(map[string]any); ok {
-		fmt.Printf("probe failed: %v: %v\n", e["code"], e["message"])
+		fmt.Fprintf(w, "probe failed: %s: %s\n", safe(e["code"]), safe(e["message"]))
 	}
 	if ms, ok := r["models"].([]any); ok {
 		for _, m := range ms {
-			mm := m.(map[string]any)
-			fmt.Printf("  %-32v tool_calling=%-8v structured=%-5v streaming=%-5v max_context=%v\n", mm["model_id"], mm["tool_calling"], mm["structured_output"], mm["streaming"], mm["max_context"])
+			mm, _ := m.(map[string]any)
+			fmt.Fprintf(w, "  %-32s tool_calling=%-8s structured=%-5s streaming=%-5s max_context=%s\n",
+				safe(mm["model_id"]), safe(mm["tool_calling"]), safe(mm["structured_output"]), safe(mm["streaming"]), safe(mm["max_context"]))
 		}
+	}
+}
+
+// renderProviderList prints provider.list.
+func renderProviderList(w io.Writer, providers, harnesses []map[string]any) {
+	if len(providers)+len(harnesses) == 0 {
+		fmt.Fprintln(w, "no providers configured; try: warden provider add anthropic --api-key, or warden provider add ollama")
+	}
+	for _, p := range providers {
+		fmt.Fprintf(w, "%-14s %-19s %-3s %-9s %-18s %s\n",
+			safe(p["provider_id"]), safe(p["protocol"]), safe(p["tier"]), safe(p["auth_mode"]), safe(p["status"]), safe(p["models"]))
+	}
+	for _, h := range harnesses {
+		fmt.Fprintf(w, "%-14s %-19s T4  %-9s %-18s vendor_terms=%s\n",
+			safe(h["harness_id"]), safe(h["kind"]), safe(h["billing"]), safe(h["status"]), safe(h["vendor_terms"]))
+	}
+}
+
+// renderModels prints provider.models.
+func renderModels(w io.Writer, classification string, admitted []string, models []map[string]any) {
+	if classification != "" {
+		fmt.Fprintf(w, "classification %s admits %v\n", classification, admitted)
+	}
+	for _, m := range models {
+		adm := "-"
+		if a, ok := m["admissible"].(bool); ok {
+			adm = map[bool]string{true: "admitted", false: "NOT ADMITTED"}[a]
+		}
+		reason := ""
+		if m["reason"] != nil {
+			reason = safe(m["reason"])
+		}
+		fmt.Fprintf(w, "%-34s %-7s %-3s %-13s %s\n", safe(m["model_id"]), safe(m["kind"]), safe(m["tier"]), adm, reason)
 	}
 }
 
@@ -250,20 +285,7 @@ func modelsCmd() *cobra.Command {
 			return err
 		}
 		if !asJSON {
-			if classification != "" {
-				fmt.Printf("classification %s admits %v\n", classification, r.AdmittedTiers)
-			}
-			for _, m := range r.Models {
-				adm := "-"
-				if a, ok := m["admissible"].(bool); ok {
-					adm = map[bool]string{true: "admitted", false: "NOT ADMITTED"}[a]
-				}
-				reason := ""
-				if m["reason"] != nil {
-					reason = fmt.Sprint(m["reason"])
-				}
-				fmt.Printf("%-34v %-7v %-3v %-13s %s\n", m["model_id"], m["kind"], m["tier"], adm, reason)
-			}
+			renderModels(os.Stdout, classification, r.AdmittedTiers, r.Models)
 		}
 		return nil
 	}}

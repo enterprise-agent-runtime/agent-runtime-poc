@@ -19,6 +19,7 @@ import (
 	"warden.dev/warden/internal/api"
 	"warden.dev/warden/internal/buildinfo"
 	"warden.dev/warden/internal/platform"
+	"warden.dev/warden/internal/termsafe"
 )
 
 // exitError carries a process exit code.
@@ -42,8 +43,12 @@ func main() {
 	}
 }
 
-// describe renders API errors with their reason.
-func describe(err error) string {
+// describe renders API errors with their reason, sanitized for the
+// terminal: an error message can carry a model endpoint's or the Docker
+// engine's text (CWE-150, M2-3).
+func describe(err error) string { return termsafe.SanitizeDetail(describeRaw(err)) }
+
+func describeRaw(err error) string {
 	if code, d, ok := api.DataOf(err); ok {
 		msg := err.Error()
 		if i := strings.Index(msg, "] "); i >= 0 {
@@ -134,15 +139,24 @@ func do(cmd *cobra.Command, method string, params any, out any) error {
 		return err
 	}
 	if asJSON {
-		var v any
-		_ = json.Unmarshal(raw, &v)
-		b, _ := json.MarshalIndent(v, "", "  ")
-		fmt.Println(string(b))
+		printJSON(os.Stdout, raw)
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)
 	}
 	return nil
+}
+
+// printJSON is the --json output of every command. encoding/json escapes C0
+// controls but writes DEL, C1 controls and bidi characters raw, and results
+// carry text the daemon did not write (Docker engine answers, provider
+// errors, tool output), so the bytes pass termsafe.EscapeJSON before they
+// reach the terminal (CWE-150, M2-3 review).
+func printJSON(w io.Writer, raw json.RawMessage) {
+	var v any
+	_ = json.Unmarshal(raw, &v)
+	b, _ := json.MarshalIndent(v, "", "  ")
+	fmt.Fprintln(w, string(termsafe.EscapeJSON(b)))
 }
 
 func versionCmd() *cobra.Command {
@@ -165,17 +179,19 @@ func versionCmd() *cobra.Command {
 	}}
 }
 
+type doctorCheck struct {
+	ID       string  `json:"id"`
+	Status   string  `json:"status"`
+	Title    string  `json:"title"`
+	Detail   string  `json:"detail"`
+	FixHint  *string `json:"fix_hint"`
+	Blocking bool    `json:"blocking"`
+}
+
 type doctorResult struct {
-	Status   string `json:"status"`
-	Blocking bool   `json:"blocking"`
-	Checks   []struct {
-		ID       string  `json:"id"`
-		Status   string  `json:"status"`
-		Title    string  `json:"title"`
-		Detail   string  `json:"detail"`
-		FixHint  *string `json:"fix_hint"`
-		Blocking bool    `json:"blocking"`
-	} `json:"checks"`
+	Status   string        `json:"status"`
+	Blocking bool          `json:"blocking"`
+	Checks   []doctorCheck `json:"checks"`
 }
 
 func doctorCmd() *cobra.Command {
@@ -186,24 +202,32 @@ func doctorCmd() *cobra.Command {
 				return err
 			}
 			if !asJSON {
-				for _, c := range r.Checks {
-					mark := map[string]string{"ok": "ok  ", "warn": "WARN", "fail": "FAIL"}[c.Status]
-					block := ""
-					if c.Blocking && c.Status == "fail" {
-						block = " [blocking]"
-					}
-					fmt.Printf("%s  %-17s %s: %s%s\n", mark, c.ID, c.Title, c.Detail, block)
-					if c.FixHint != nil && c.Status != "ok" {
-						fmt.Printf("      fix: %s\n", *c.FixHint)
-					}
-				}
-				fmt.Printf("\noverall: %s%s\n", r.Status, map[bool]string{true: " (blocking: no task can start)", false: ""}[r.Blocking])
+				renderDoctor(os.Stdout, r)
 			}
 			if r.Blocking {
 				return exitError{1}
 			}
 			return nil
 		}}
+}
+
+// renderDoctor prints the human form of system.doctor. Detail and FixHint
+// carry text the daemon did not write (Docker engine fields, error text from
+// whatever answers on the Docker endpoint), so they are sanitized before
+// reaching the terminal (CWE-150, M2-3).
+func renderDoctor(w io.Writer, r doctorResult) {
+	for _, c := range r.Checks {
+		mark := map[string]string{"ok": "ok  ", "warn": "WARN", "fail": "FAIL"}[c.Status]
+		block := ""
+		if c.Blocking && c.Status == "fail" {
+			block = " [blocking]"
+		}
+		fmt.Fprintf(w, "%s  %-17s %s: %s%s\n", mark, c.ID, c.Title, termsafe.SanitizeDetail(c.Detail), block)
+		if c.FixHint != nil && c.Status != "ok" {
+			fmt.Fprintf(w, "      fix: %s\n", termsafe.SanitizeDetail(*c.FixHint))
+		}
+	}
+	fmt.Fprintf(w, "\noverall: %s%s\n", r.Status, map[bool]string{true: " (blocking: no task can start)", false: ""}[r.Blocking])
 }
 
 // daemonStopTimeout bounds how long "warden daemon stop" waits for wardend
