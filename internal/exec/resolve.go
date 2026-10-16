@@ -1,6 +1,5 @@
-// Package exec is the executor server that runs inside the sandbox as
-// warden-exec (WRD-04 §5, WRD-16 §9, design A06). This file is the pure,
-// OS-independent part of path resolution: design A06 §5.1 steps 1-3 and 6
+// Path resolution for the executor (WRD-04 §5, WRD-16 §9, design A06; the
+// package doc is in server.go). This file is the pure, OS-independent part: design A06 §5.1 steps 1-3 and 6
 // (input validation, root choice, lexical clean, deny-list) and the
 // per-method root table of §5.3. The symlink walk of step 4 and the
 // race-free open of §5.2 need the file system and live in tree_unix.go
@@ -16,6 +15,7 @@
 // (internal/execproto/denylist, docs/DECISIONS-poc.md D-014). An attempted
 // escape is an error with an A06 §4.4 code, never clamped to the root, so the
 // attempt reaches the audit trail as a sandbox.violation (A06 §5.4).
+
 package exec
 
 import (
