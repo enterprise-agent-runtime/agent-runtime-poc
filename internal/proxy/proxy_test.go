@@ -113,6 +113,16 @@ func TestConnect_DeniedEmitsProxyDenied(t *testing.T) {
 		{"origin form", "GET /secret/path HTTP/1.1\r\nHost: registry.npmjs.org\r\n\r\n", 400, ReasonUnsupportedMethod, "", 0, "", false},
 		{"upgrade", "GET http://plain.example/ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", 501, ReasonUnsupportedMethod, "plain.example", 80, "", false},
 		{"http2 preface", "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", 400, ReasonUnsupportedMethod, "", 0, "", false},
+		// Methods must match ^[A-Z]+$ (review of 7ad63b0): a lower-case or
+		// odd token is not a method any client sends, and it never reaches
+		// an event.
+		{"lower-case method", "get http://plain.example/ HTTP/1.1\r\n\r\n", 400, ReasonUnsupportedMethod, "", 0, "", false},
+		{"token method", "X-Y http://plain.example/ HTTP/1.1\r\n\r\n", 400, ReasonUnsupportedMethod, "", 0, "", false},
+		{"lower-case connect", "connect registry.npmjs.org:443 HTTP/1.1\r\n\r\n", 400, ReasonUnsupportedMethod, "", 0, "", false},
+		// Userinfo never reaches proxy.denied.host (INV-C hygiene), and
+		// non-ASCII is escaped.
+		{"userinfo in target", "CONNECT user:pw@registry.npmjs.org:443 HTTP/1.1\r\n\r\n", 400, ReasonInvalidTarget, "registry.npmjs.org", 443, "", false},
+		{"non-ASCII target", "CONNECT bücher.example:443 HTTP/1.1\r\n\r\n", 400, ReasonInvalidTarget, "b" + string(rune(92)) + "u00fccher.example", 443, "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

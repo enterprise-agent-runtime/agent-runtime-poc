@@ -19,15 +19,28 @@
 //     no wildcard, suffix or CIDR entries (A07 §5.1); Allowlist.Add refuses
 //     a key containing "*".
 //   - The proxy resolves a name once, drops every address in a denied range
-//     (A07 §7, including IPv4-mapped, NAT64 and 6to4 embeddings) and dials
-//     the checked address, never the name, so a second DNS answer cannot
-//     change where the connection goes (DNS rebinding).
+//     (A07 §7 plus the owner's 2026-10-16 additions, including IPv4-mapped,
+//     NAT64 and 6to4 embeddings) and every address of the host's own
+//     interfaces, and dials the checked address, never the name, so a
+//     second DNS answer cannot change where the connection goes (DNS
+//     rebinding).
+//   - A floor (loopback, unspecified, link-local, cloud metadata) is never
+//     dialed, whatever allowed it. Other denied-range literals open only
+//     through Config.OperatorLiteralAllow, never through the allowlist, a
+//     grant or the Decider (owner decision 2026-10-16, contradicting A07 §7).
 //   - A CONNECT tunnel to a DNS name must open with a TLS ClientHello whose
-//     server_name equals that name (A07 §3.2 step 6); anything else closes
-//     the tunnel with sni_mismatch or not_tls. TLS is never terminated.
+//     server_name equals that name (A07 §3.2 step 6), and no ClientHello may
+//     carry encrypted_client_hello (owner decision 2026-10-16); anything else
+//     closes the tunnel with sni_mismatch or not_tls. TLS is never
+//     terminated, so after a valid ClientHello the tunnel is not inspected
+//     (domain fronting through the inner Host is an accepted residual).
 //   - Every attempt ends in exactly one proxy.connect or proxy.denied event
-//     through the injected EventSink. Events carry host, port, method and
-//     counters only: never paths, query strings, headers or bodies.
+//     through the injected EventSink, written with a context that shutdown
+//     does not cancel. Events carry host, port, method and counters only:
+//     never paths, query strings, headers, bodies or userinfo.
+//   - Per task at most Limits.MaxConns connections run past evaluation, and
+//     tunnels and plain-HTTP bodies that stall for Limits.IdleTimeout are
+//     closed (A07 §10).
 //
 // The package opens no listener (CLAUDE.md §5 INV-J): Serve takes a
 // net.Listener the caller owns (a per-task Unix socket in L1, M2-12a; the
@@ -35,6 +48,5 @@
 //
 // M2 ships StaticDecider, which denies every destination that is not on the
 // allowlist. The PDP hand-off and the 120 s approval hold (A07 §6), the deny
-// cache, rate-limit summaries and the per-task connection limit arrive with
-// the policy engine in M3.
+// cache and rate-limit summaries arrive with the policy engine in M3.
 package proxy

@@ -14,10 +14,11 @@ import (
 // connect handles "CONNECT host:port" (A07 §3.2). The request target is
 // authoritative; the Host header is ignored.
 func (p *TaskProxy) connect(ctx context.Context, c net.Conn, br *bufio.Reader, authority, callID string) {
-	t, v, up, ip, ok := p.admit(ctx, c, authority, "CONNECT", callID)
+	t, v, up, ip, release, ok := p.admit(ctx, c, authority, "CONNECT", callID)
 	if !ok {
 		return
 	}
+	defer release()
 	defer up.Close()
 	stop := context.AfterFunc(ctx, func() { _ = up.Close() })
 	defer stop()
@@ -61,7 +62,7 @@ func (p *TaskProxy) connect(ctx context.Context, c net.Conn, br *bufio.Reader, a
 	n, err := up.Write(rec)
 	ev.BytesUp = int64(n)
 	if err == nil {
-		up2, down, code := relay(ctx, c, br, up)
+		up2, down, code := relay(ctx, c, br, up, p.limits.IdleTimeout)
 		ev.BytesUp += up2
 		ev.BytesDown = down
 		ev.Error = code
@@ -91,7 +92,7 @@ type closeWriter interface{ CloseWrite() error }
 // bytes in either direction for idleTimeout is closed (A07 §10). It
 // returns the byte counts and the A07 §9 error value ("" for a normal end,
 // including a close because ctx ended).
-func relay(ctx context.Context, client net.Conn, cr io.Reader, up net.Conn) (bytesUp, bytesDown int64, code string) {
+func relay(ctx context.Context, client net.Conn, cr io.Reader, up net.Conn, idleTimeout time.Duration) (bytesUp, bytesDown int64, code string) {
 	var (
 		last     atomic.Int64 // unix nanoseconds of the last byte either way
 		closing  atomic.Bool  // we closed the connections; later errors are ours
@@ -108,16 +109,28 @@ func relay(ctx context.Context, client net.Conn, cr io.Reader, up net.Conn) (byt
 	}
 	touch := func() { last.Store(time.Now().UnixNano()) }
 	touch()
-	var watchdog *time.Timer
-	watchdog = time.AfterFunc(idleTimeout, func() {
-		if quiet := time.Since(time.Unix(0, last.Load())); quiet < idleTimeout {
-			watchdog.Reset(idleTimeout - quiet)
-			return
+	// The idle watchdog: closes both sides once no byte has moved either
+	// way for idleTimeout, and stops when the relay ends.
+	relayDone := make(chan struct{})
+	defer close(relayDone)
+	go func() {
+		t := time.NewTimer(idleTimeout)
+		defer t.Stop()
+		for {
+			select {
+			case <-relayDone:
+				return
+			case <-t.C:
+				quiet := time.Since(time.Unix(0, last.Load()))
+				if quiet >= idleTimeout {
+					idle.Store(true)
+					closeBoth()
+					return
+				}
+				t.Reset(idleTimeout - quiet)
+			}
 		}
-		idle.Store(true)
-		closeBoth()
-	})
-	defer watchdog.Stop()
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(2)

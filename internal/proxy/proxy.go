@@ -10,13 +10,15 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
-// A07 §10 limits. Configuration may only lower them; M2 has no
-// configuration, so they are the values used.
+// A07 §10 limits. Configuration may only lower them; Config.Limits
+// lowers MaxConns, ConnWait and IdleTimeout, the rest are fixed.
 const (
 	headerTimeout         = 10 * time.Second
 	headerLimit           = 16 << 10
@@ -31,6 +33,10 @@ const (
 	responseHeaderTimeout = 60 * time.Second
 	refusalWriteTimeout   = 10 * time.Second
 	eventTimeout          = 5 * time.Second
+	maxConns              = 64
+	connWait              = 10 * time.Second
+	acceptBackoffMin      = 5 * time.Millisecond
+	acceptBackoffMax      = time.Second
 	maxEventHost          = 253
 )
 
@@ -71,6 +77,17 @@ type Config struct {
 	// among them is dropped (owner decision 2026-10-16). nil: the system's
 	// (net.InterfaceAddrs).
 	InterfaceAddrs func() ([]netip.Addr, error)
+	// Limits lowers the A07 §10 limits; zero fields and values above the
+	// A07 defaults mean the default (limits may only be lowered).
+	Limits Limits
+}
+
+// Limits are the per-task resource limits of A07 §10 that tests and
+// configuration may lower.
+type Limits struct {
+	MaxConns    int           // concurrent connections past evaluation; 64
+	ConnWait    time.Duration // how long connection 65 waits for a slot; 10 s
+	IdleTimeout time.Duration // tunnel idle, plain-HTTP body and response stall; 300 s
 }
 
 // TaskProxy is the proxy of one sandbox (A07 §12). There is deliberately
@@ -86,6 +103,8 @@ type TaskProxy struct {
 	injector CredentialInjector
 	operator map[string]bool // OperatorLiteralAllow, fixed at New
 	ifaddrs  func() ([]netip.Addr, error)
+	limits   Limits
+	sem      chan struct{} // one token per admitted connection (A07 §10)
 
 	dnsMu sync.Mutex
 	dns   map[string]dnsEntry
@@ -132,21 +151,54 @@ func New(cfg Config) (*TaskProxy, error) {
 	if p.log == nil {
 		p.log = slog.New(slog.DiscardHandler)
 	}
+	p.limits = lowerOnly(cfg.Limits)
+	p.sem = make(chan struct{}, p.limits.MaxConns)
 	return p, nil
 }
 
+// lowerOnly applies A07 §10's rule that limits may only be lowered: a
+// field that is not positive, or above the A07 default, is the default.
+func lowerOnly(l Limits) Limits {
+	if l.MaxConns <= 0 || l.MaxConns > maxConns {
+		l.MaxConns = maxConns
+	}
+	if l.ConnWait <= 0 || l.ConnWait > connWait {
+		l.ConnWait = connWait
+	}
+	if l.IdleTimeout <= 0 || l.IdleTimeout > idleTimeout {
+		l.IdleTimeout = idleTimeout
+	}
+	return l
+}
+
 // Serve accepts connections from ln, one goroutine each, until ctx ends or
-// ln fails. The caller owns ln (INV-J: this package opens no listener).
-// When ctx ends, Serve closes ln and every open connection, waits for the
-// handlers and returns nil.
+// ln fails permanently. The caller owns ln (INV-J: this package opens no
+// listener). A temporary accept error (EMFILE, ENFILE, ECONNABORTED and the
+// like) is retried with backoff from 5 ms to 1 s, so a moment without file
+// descriptors does not end the task's egress for good. When ctx ends,
+// Serve closes ln and every open connection, waits for the handlers and
+// returns nil.
 func (p *TaskProxy) Serve(ctx context.Context, ln net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(ctx, func() { _ = ln.Close() })
 	defer stop()
 	var wg sync.WaitGroup
+	var backoff time.Duration
 	for {
 		c, err := ln.Accept()
+		if err != nil && ctx.Err() == nil && isTemporary(err) {
+			backoff = min(max(2*backoff, acceptBackoffMin), acceptBackoffMax)
+			p.log.Warn("proxy accept failed; retrying", "err", err, "backoff", backoff)
+			t := time.NewTimer(backoff)
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+				t.Stop()
+			}
+			continue
+		}
+		backoff = 0
 		if err != nil {
 			parentDone := ctx.Err() != nil
 			cancel()
@@ -194,6 +246,12 @@ func (p *TaskProxy) ServeConn(ctx context.Context, c net.Conn) {
 	}
 	_ = c.SetReadDeadline(time.Time{})
 	lr.unlimit()
+	if !validMethod(req.Method) {
+		// net/http accepts any token; no client sends one that is not
+		// upper-case letters, and the raw token never reaches an event.
+		p.refuse(ctx, c, http.StatusBadRequest, "", DeniedEvent{Reason: ReasonUnsupportedMethod, CallID: callID})
+		return
+	}
 
 	switch {
 	case req.Method == http.MethodConnect:
@@ -227,8 +285,21 @@ const RuleOperatorLiteral = "operator.literal-allow"
 // resolve and range-check, dial the checked address. On a refusal it has
 // already answered the client and written proxy.denied; on a dial failure
 // it has answered 502 and written proxy.connect{error: dial_failed}. ok
-// reports whether the caller has an upstream connection to use.
-func (p *TaskProxy) admit(ctx context.Context, c net.Conn, authority, method, callID string) (t Target, v verdict, up net.Conn, ip netip.Addr, ok bool) {
+// reports whether the caller has an upstream connection to use; it must
+// then call release when the connection ends.
+//
+// Between evaluation and resolution the connection takes one of the task's
+// MaxConns slots (A07 §10), waiting at most ConnWait; a refusal from
+// policy never uses a slot, so denials cannot starve allowed traffic.
+func (p *TaskProxy) admit(ctx context.Context, c net.Conn, authority, method, callID string) (t Target, v verdict, up net.Conn, ip netip.Addr, release func(), ok bool) {
+	t, v, up, ip, ok = p.admitSlot(ctx, c, authority, method, callID)
+	if !ok {
+		return t, v, nil, ip, nil, false
+	}
+	return t, v, up, ip, func() { <-p.sem }, true
+}
+
+func (p *TaskProxy) admitSlot(ctx context.Context, c net.Conn, authority, method, callID string) (t Target, v verdict, up net.Conn, ip netip.Addr, ok bool) {
 	t, err := Normalize(authority)
 	if err != nil {
 		var de *DenyError
@@ -251,6 +322,16 @@ func (p *TaskProxy) admit(ctx context.Context, c net.Conn, authority, method, ca
 		p.refuse(ctx, c, http.StatusForbidden, t.Key(), ev)
 		return t, v, nil, ip, false
 	}
+	if !p.acquire(ctx) {
+		ev.Reason = ReasonTooManyConnections
+		p.refuse(ctx, c, http.StatusServiceUnavailable, t.Key(), ev)
+		return t, v, nil, ip, false
+	}
+	defer func() {
+		if !ok { // refused or failed after taking the slot: give it back
+			<-p.sem
+		}
+	}()
 	addrs, de := p.resolve(ctx, t, v)
 	if de != nil {
 		ev.Reason = de.Reason
@@ -492,20 +573,6 @@ func (l *limitReader) Read(b []byte) (int, error) {
 
 func (l *limitReader) unlimit() { l.unlimited = true }
 
-// rawHostPort splits an authority that failed normalisation for the event:
-// the host capped at 253 bytes, the port when it parses.
-func rawHostPort(authority string) (string, uint16) {
-	host, portText, err := net.SplitHostPort(authority)
-	if err != nil {
-		host, portText = authority, ""
-	}
-	if len(host) > maxEventHost {
-		host = host[:maxEventHost]
-	}
-	port, _ := parsePort(portText)
-	return host, port
-}
-
 // urlHostPort is the target of an absolute-form request that is refused
 // before evaluation, canonical when it normalises.
 func urlHostPort(req *http.Request) (string, uint16) {
@@ -556,4 +623,103 @@ func systemInterfaceAddrs() ([]netip.Addr, error) {
 		}
 	}
 	return out, nil
+}
+
+// rawHostPort splits an authority that failed normalisation for the event.
+// Userinfo is cut at the last "@" first, so "user:pw@host:443" gives
+// "host" and 443 and no credential reaches the audit chain (INV-C); the
+// host is then escaped and capped by eventHost; the port is kept when it
+// parses.
+func rawHostPort(authority string) (string, uint16) {
+	if i := strings.LastIndexByte(authority, '@'); i >= 0 {
+		authority = authority[i+1:]
+	}
+	host, portText, err := net.SplitHostPort(authority)
+	if err != nil {
+		host, portText = authority, ""
+	}
+	port, _ := parsePort(portText)
+	return eventHost(host), port
+}
+
+// eventHost makes attacker-supplied host text safe for proxy.denied.host:
+// it drops everything up to the last "@", writes printable ASCII as is,
+// escapes a backslash as \\, a byte of invalid UTF-8 as \xNN and every
+// other rune as a Go escape (x-hex for control bytes, or backslash-u and four hex digits for
+// e-acute or RIGHT-TO-LEFT OVERRIDE), and stops before the escape
+// that would exceed maxEventHost bytes, so an escape is never split.
+func eventHost(s string) string {
+	if i := strings.LastIndexByte(s, '@'); i >= 0 {
+		s = s[i+1:]
+	}
+	var b strings.Builder
+	for len(s) > 0 {
+		r, size := utf8.DecodeRuneInString(s)
+		var piece string
+		switch {
+		case r == utf8.RuneError && size == 1:
+			piece = fmt.Sprintf(`\x%02x`, s[0])
+		case r == '\\':
+			piece = `\\`
+		case r >= 0x20 && r < 0x7f:
+			piece = string(r)
+		default:
+			q := strconv.QuoteRuneToASCII(r) // 'x' with escapes inside
+			piece = q[1 : len(q)-1]
+		}
+		if b.Len()+len(piece) > maxEventHost {
+			break
+		}
+		b.WriteString(piece)
+		s = s[size:]
+	}
+	return b.String()
+}
+
+// validMethod reports whether m matches ^[A-Z]+$.
+func validMethod(m string) bool {
+	if m == "" {
+		return false
+	}
+	for i := 0; i < len(m); i++ {
+		if m[i] < 'A' || m[i] > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// acquire takes one of the task's connection slots, waiting at most
+// ConnWait (A07 §10: the 65th connection waits up to 10 s, then 503).
+func (p *TaskProxy) acquire(ctx context.Context) bool {
+	select {
+	case p.sem <- struct{}{}:
+		return true
+	default:
+	}
+	t := time.NewTimer(p.limits.ConnWait)
+	defer t.Stop()
+	select {
+	case p.sem <- struct{}{}:
+		return true
+	case <-t.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// isTemporary reports whether an accept error is worth retrying: it says
+// so itself (syscall.Errno does for EMFILE, ENFILE, ECONNABORTED, EAGAIN,
+// EINTR and others) or is a timeout. net.ErrClosed is never temporary.
+func isTemporary(err error) bool {
+	if errors.Is(err, net.ErrClosed) {
+		return false
+	}
+	var t interface{ Temporary() bool }
+	if errors.As(err, &t) && t.Temporary() {
+		return true
+	}
+	var to interface{ Timeout() bool }
+	return errors.As(err, &to) && to.Timeout()
 }

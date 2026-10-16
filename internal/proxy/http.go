@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // cleanHeader returns a copy of h without the headers A07 §3.3 removes in
@@ -50,10 +52,11 @@ func (p *TaskProxy) plain(ctx context.Context, c net.Conn, req *http.Request, ca
 	if port == "" {
 		port = "80"
 	}
-	t, v, up, ip, ok := p.admit(ctx, c, net.JoinHostPort(u.Hostname(), port), req.Method, callID)
+	t, v, up, ip, release, ok := p.admit(ctx, c, net.JoinHostPort(u.Hostname(), port), req.Method, callID)
 	if !ok {
 		return
 	}
+	defer release()
 	start := p.now()
 	ev := ConnectEvent{Host: t.Host, Port: t.Port, Method: req.Method, Rule: v.rule, DecisionID: v.decisionID,
 		CallID: callID, IP: ip.String()}
@@ -81,7 +84,7 @@ func (p *TaskProxy) plain(ctx context.Context, c net.Conn, req *http.Request, ca
 			return
 		}
 	}
-	upBody := &countingReader{r: req.Body}
+	upBody := &countingReader{r: req.Body, conn: c, idle: p.limits.IdleTimeout}
 	out := &http.Request{
 		Method:        req.Method,
 		URL:           &url.URL{Scheme: "http", Host: t.Key(), Path: u.Path, RawPath: u.RawPath, RawQuery: u.RawQuery},
@@ -121,38 +124,57 @@ func (p *TaskProxy) plain(ctx context.Context, c net.Conn, req *http.Request, ca
 			_ = up.Close()
 		}
 		p.log.Warn("proxy upstream request failed", "target", t.Key(), "err", err)
-		p.writeStatus(c, http.StatusBadGateway, "warden: egress to "+t.Key()+" failed: upstream_reset\n")
 		ev.Error = ConnErrUpstreamReset
+		if upBody.timedOut.Load() {
+			ev.Error = ConnErrIdleTimeout // the client stopped sending its body
+		}
+		p.writeStatus(c, http.StatusBadGateway, "warden: egress to "+t.Key()+" failed: "+ev.Error+"\n")
 		return
 	}
 	defer resp.Body.Close()
-	down := &countingReader{r: resp.Body}
+	down := &countingReader{r: resp.Body, conn: up, idle: p.limits.IdleTimeout}
 	resp.Header = cleanHeader(resp.Header)
 	resp.Trailer = nil
 	resp.Body = down
 	resp.Close = true
-	werr := resp.Write(c)
+	dw := &deadlineWriter{c: c, idle: p.limits.IdleTimeout}
+	werr := resp.Write(dw)
 	ev.BytesDown = down.n.Load()
-	if werr != nil && down.err != nil && !errors.Is(down.err, io.EOF) {
+	switch {
+	case down.timedOut.Load() || dw.timedOut:
+		ev.Error = ConnErrIdleTimeout // upstream stopped sending, or the client stopped reading
+	case werr != nil && down.err != nil && !errors.Is(down.err, io.EOF):
 		ev.Error = ConnErrUpstreamReset
 	}
 }
 
 // countingReader counts bytes read and remembers the last read error.
+// With conn set, every Read first moves conn's read deadline to idle from
+// now, so a peer that stops sending mid-body is cut off after idle without
+// progress (CWE-400); timedOut records that this is why the read failed.
 type countingReader struct {
-	r   io.Reader
-	n   atomic.Int64
-	err error
+	r        io.Reader
+	conn     net.Conn
+	idle     time.Duration
+	n        atomic.Int64
+	err      error
+	timedOut atomic.Bool
 }
 
 func (c *countingReader) Read(b []byte) (int, error) {
 	if c.r == nil {
 		return 0, io.EOF
 	}
+	if c.conn != nil {
+		_ = c.conn.SetReadDeadline(time.Now().Add(c.idle))
+	}
 	k, err := c.r.Read(b)
 	c.n.Add(int64(k))
 	if err != nil {
 		c.err = err
+		if isTimeout(err) {
+			c.timedOut.Store(true)
+		}
 	}
 	return k, err
 }
@@ -162,4 +184,33 @@ func (c *countingReader) Close() error {
 		return rc.Close()
 	}
 	return nil
+}
+
+// deadlineWriter moves the connection's write deadline to idle from now
+// before every Write, so a client that stops reading the response cannot
+// hold the connection and its slot forever.
+type deadlineWriter struct {
+	c        net.Conn
+	idle     time.Duration
+	timedOut bool
+}
+
+func (w *deadlineWriter) Write(b []byte) (int, error) {
+	_ = w.c.SetWriteDeadline(time.Now().Add(w.idle))
+	n, err := w.c.Write(b)
+	if isTimeout(err) {
+		w.timedOut = true
+	}
+	return n, err
+}
+
+// isTimeout reports a deadline expiry, whether it arrives as
+// os.ErrDeadlineExceeded or, re-wrapped by net/http, as a net.Error whose
+// Timeout is true.
+func isTimeout(err error) bool {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }

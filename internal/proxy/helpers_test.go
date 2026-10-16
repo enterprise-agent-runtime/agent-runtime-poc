@@ -60,6 +60,7 @@ type fakeResolver struct {
 	answers map[string][][]netip.Addr
 	fail    map[string]error
 	calls   map[string]int
+	def     []netip.Addr // answer for hosts with no queue; nil means NXDOMAIN
 }
 
 func newFakeResolver() *fakeResolver {
@@ -80,6 +81,9 @@ func (r *fakeResolver) LookupNetIP(_ context.Context, network, host string) ([]n
 		return nil, err
 	}
 	q := r.answers[host]
+	if len(q) == 0 && r.def != nil {
+		return r.def, nil
+	}
 	if len(q) == 0 {
 		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
 	}
