@@ -85,6 +85,15 @@ func TestDial_RefusesPipeOpenToOthers(t *testing.T) {
 			if !strings.Contains(err.Error(), "DACL is not owner-only") {
 				t.Fatalf("refused for another reason: %v", err)
 			}
+			// Close the listener before waiting for the count. Dial
+			// connects, reads the descriptor, refuses and closes at once;
+			// if all of that happens before go-winio's server calls
+			// ConnectNamedPipe, Windows reports the instance as closed
+			// and go-winio waits for a next client that never comes, so
+			// Accept would block forever (a 10-minute hang on the CI
+			// runner, 2026-10-16). Closing the listener makes Accept
+			// return; an accepted connection still drains to EOF.
+			l.Close()
 			if n := <-got; n != 0 {
 				t.Fatalf("%d bytes reached the squatted pipe", n)
 			}

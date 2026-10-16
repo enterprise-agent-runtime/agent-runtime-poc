@@ -174,7 +174,7 @@ func protectDir(dir string, me identity) error {
 		return &os.PathError{Op: "GetKernelObjectSecurity", Path: dir, Err: err}
 	}
 	if !ownerIs(cur, me.sid) {
-		return fmt.Errorf("%s is owned by another account (%s), not by you; use a directory of your own", dir, sddlDetail(cur))
+		return foreignOwnerError(dir, cur, sddlDetail(cur))
 	}
 	r, _, e := procSetKernelObjectSecurity.Call(uintptr(h), ownerOnlyInformation|protectedDACLSecurityInformation, uintptr(unsafe.Pointer(&sd[0])))
 	runtime.KeepAlive(sd)
@@ -396,4 +396,71 @@ func pathSecurity(path string) ([]byte, error) {
 		return nil, e
 	}
 	return buf, nil
+}
+
+// ReadOwnerWritable opens path once, without following a reparse point,
+// decides on that handle that it is a regular file owned by the user whose
+// DACL grants no write-type right to anyone but the user, SYSTEM and
+// Administrators (noForeignWriter), and reads at most max bytes from the
+// same handle. It is the integrity check for files anyone may read but only
+// the user may have written, such as the checkpoint public keys:
+// ReadOwnerOnly is the secrecy check and refuses the inherited-DACL key
+// files every build before WH-4 wrote (WH-4 round 1, CWE-1188).
+func ReadOwnerWritable(path string, max int) ([]byte, error) {
+	sid, err := currentUserSID()
+	if err != nil {
+		return nil, err
+	}
+	h, attrs, err := openNoFollow(path, syscall.GENERIC_READ|readControl)
+	if errors.Is(err, errReparsePoint) {
+		return nil, fmt.Errorf("%w: %w", err, errNotOwnerWritable)
+	}
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(h), path)
+	defer f.Close()
+	if attrs&syscall.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		return nil, fmt.Errorf("%s is a directory, not a regular file: %w", path, errNotOwnerWritable)
+	}
+	sd, err := handleSecurity(h)
+	if err != nil {
+		return nil, &os.PathError{Op: "GetKernelObjectSecurity", Path: path, Err: err}
+	}
+	if !ownerIs(sd, sid) {
+		return nil, notOwnerWritable(path, "is owned by another account", sddlDetail(sd),
+			fmt.Sprintf(`only if you trust its contents, take ownership of it (takeown /f "%s") and reset its permissions (icacls "%s" /reset)`, path, path))
+	}
+	if !noForeignWriter(sd, sid) {
+		return nil, notOwnerWritable(path, "grants write access to another account", sddlDetail(sd),
+			fmt.Sprintf(`if you trust its contents, reset its permissions to those of the owner-only keys directory (icacls "%s" /reset)`, path))
+	}
+	return readLimited(f, path, max)
+}
+
+// tightenMoved gives a moved-aside file the owner-only descriptor through a
+// handle on the file itself (never a reparse point's target), if it is a
+// regular file the user owns.
+func tightenMoved(path string) {
+	me, err := currentUserSID()
+	if err != nil {
+		return
+	}
+	sd, err := ownerOnlySecurityDescriptor("")
+	if err != nil {
+		return
+	}
+	h, attrs, err := openNoFollow(path, readControl|writeDAC|writeOwner)
+	if err != nil {
+		return
+	}
+	defer syscall.CloseHandle(h)
+	if attrs&syscall.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		return
+	}
+	if cur, err := handleSecurity(h); err != nil || !ownerIs(cur, me) {
+		return
+	}
+	_, _, _ = procSetKernelObjectSecurity.Call(uintptr(h), ownerOnlyInformation|protectedDACLSecurityInformation, uintptr(unsafe.Pointer(&sd[0])))
+	runtime.KeepAlive(sd)
 }

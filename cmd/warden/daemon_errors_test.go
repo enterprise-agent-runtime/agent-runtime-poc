@@ -118,7 +118,7 @@ func TestNotRunningOnlyOnErrNotRunning(t *testing.T) {
 // attempts, no clock.
 func TestWaitUp_ToleratesLostRace(t *testing.T) {
 	l := platform.Layout{Home: t.TempDir()}
-	dead := func() bool { return false }
+	dead := func() (platform.ExitStatus, bool) { return platform.ExitStatus{Code: 3}, true }
 	n := 0
 	answersAt := func(k int) dialFunc {
 		return func(context.Context, platform.Layout) (*api.Client, error) {
@@ -138,7 +138,7 @@ func TestWaitUp_ToleratesLostRace(t *testing.T) {
 		t.Fatalf("nobody answers within the grace: %v", err)
 	}
 	n = 0
-	if ours, err := waitUp(context.Background(), l, answersAt(3), func() bool { return true }, 100, 5, func() {}); err != nil || !ours {
+	if ours, err := waitUp(context.Background(), l, answersAt(3), func() (platform.ExitStatus, bool) { return platform.ExitStatus{}, false }, 100, 5, func() {}); err != nil || !ours {
 		t.Fatalf("ours answers: ours %v err %v", ours, err)
 	}
 }
