@@ -277,7 +277,7 @@ func TestIsShellString_CommandPosition(t *testing.T) {
 		{"taskset -c 0", []string{"taskset", "-c", "0", "sh", "-c", "id"}, true},
 		{"chrt -f 10", []string{"chrt", "-f", "10", "sh", "-c", "id"}, true},
 		{"ionice -c 2 -n 7", []string{"ionice", "-c", "2", "-n", "7", "sh", "-c", "id"}, true},
-		{"prlimit --pid", []string{"prlimit", "--nofile=1024", "sh", "-c", "id"}, true},
+		{"prlimit --nofile=", []string{"prlimit", "--nofile=1024", "sh", "-c", "id"}, true},
 		{"setsid -c is ctty", []string{"setsid", "-c", "npm", "test"}, false},
 		{"command -p", []string{"command", "-p", "sh", "-c", "id"}, true},
 		{"nohup --", []string{"nohup", "--", "sh", "-c", "id"}, true},
@@ -355,4 +355,43 @@ func FuzzIsShellString(f *testing.F) {
 		}
 		_ = IsShellStringResolved("/bin/sh", argv)
 	})
+}
+
+// TestIsShellString_IncompleteTablesFailClosed: the command-position walk
+// knows the common options of each wrapper, not all of them, and BSD/macOS
+// spell some differently (macOS is a supported sandbox). An option whose
+// argument the table does not know stops the walk on that argument. So
+// once argv[0] is a wrapper, A06's own rule also applies: a later element
+// whose basename is a shell, followed by a shell command option, is a
+// shell string (re-review of 3ddbd15, which found these missed).
+func TestIsShellString_IncompleteTablesFailClosed(t *testing.T) {
+	cases := []struct {
+		name string
+		argv []string
+		want bool
+	}{
+		{"BSD env -P altpath", []string{"env", "-P", "/usr/bin", "sh", "-c", "id"}, true},
+		{"GNU env -a argv0", []string{"env", "-a", "foo", "sh", "-c", "id"}, true},
+		{"GNU env --argv0", []string{"env", "--argv0", "foo", "sh", "-c", "id"}, true},
+		{"BSD xargs -J", []string{"xargs", "-J", "%", "sh", "-c", "id"}, true},
+		{"BSD xargs -R -I", []string{"xargs", "-R", "1", "-I", "%", "sh", "-c", "id"}, true},
+		{"prlimit -o", []string{"prlimit", "-o", "RES", "sh", "-c", "id"}, true},
+		{"an option no table knows", []string{"nice", "--frobnicate", "x", "sh", "-c", "id"}, true},
+		// BSD/macOS script takes a command operand after the file.
+		{"BSD script file command env -S", []string{"script", "-q", "/dev/null", "env", "-S", "sh -c id"}, true},
+		{"BSD script file command watch", []string{"script", "-q", "/dev/null", "watch", "id"}, true},
+		{"BSD script -t time file command", []string{"script", "-t", "0", "out", "sh", "-c", "id"}, true},
+		{"BSD script with an ordinary command", []string{"script", "-q", "out", "make", "test"}, false},
+		// The price, accepted by the owner: a wrapped command whose own
+		// arguments contain a shell name followed by something that looks
+		// like a shell command option.
+		{"documented: go test -run sh -count=1", []string{"timeout", "600", "go", "test", "-run", "sh", "-count=1", "./..."}, true},
+		// Not wrapped: the rule applies only when argv[0] is a wrapper.
+		{"not wrapped", []string{"go", "test", "-run", "sh", "-count=1", "./..."}, false},
+	}
+	for _, tc := range cases {
+		if got := IsShellString(tc.argv); got != tc.want {
+			t.Errorf("%s: IsShellString(%q) = %v, want %v", tc.name, tc.argv, got, tc.want)
+		}
+	}
 }

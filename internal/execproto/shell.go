@@ -32,15 +32,19 @@ import "strings"
 //   - a wrapper's own options build a shell string (owner): env -S, an -S
 //     cluster or attachment, --split-string[=…] or a prefix (env -S builds
 //     argv from a string); script with -c / --command anywhere (getopt
-//     permutes, and script takes no command operand); flock with -c /
-//     --command right after the lock file (util-linux's "+" optstring:
-//     options come first, and the command option is only special there);
-//     watch without -x / --exec, since watch runs its command through sh -c
-//     (with -x the walk continues at watch's command).
-//   - safety net: an element a wrapper's table consumed as an option
-//     argument or operand that names a shell followed by a command option
-//     still counts, so a table that is wrong about one option fails closed
-//     (chrt -i sh -c …, where newer chrt allows the priority to be omitted).
+//     permutes; otherwise the walk continues at the command operand that
+//     BSD and macOS script take after the file); flock with -c / --command
+//     right after the lock file (util-linux's "+" optstring: options come
+//     first, and the command option is only special there); watch without
+//     -x / --exec, since watch runs its command through sh -c (with -x the
+//     walk continues at watch's command).
+//   - fail closed: the wrapper tables know the common GNU, util-linux and
+//     BSD options, not every one, and an unknown option argument stops the
+//     walk early. So whenever argv[0] is a wrapper, A06's own rule also
+//     applies to every later element: one whose basename is a shell,
+//     followed by a shell command option, makes a shell string. The price
+//     is that a wrapped command whose arguments contain such a pair is
+//     refused too (timeout 600 go test -run sh -count=1 ./...).
 //
 // Names are compared with strings.EqualFold (owner): on macOS the default
 // file system is case-insensitive, so "BASH" and "ſh" (U+017F folds to s)
@@ -56,6 +60,34 @@ import "strings"
 // IsShellStringResolved again once argv[0] is resolved (A06 §6 step 3).
 // Empty argv is not a shell string; the shape check rejects it first.
 func IsShellString(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	if commandPositionShell(argv) {
+		return true
+	}
+	// Fail closed where a wrapper table is incomplete: once argv[0] is a
+	// wrapper, A06's own rule applies to every later element.
+	if _, _, isWrapper := wrapperArgs(baseName(argv[0]), argv[1:]); isWrapper {
+		return laterShell(argv[1:])
+	}
+	return false
+}
+
+// laterShell is A06 §6 step 2's wrapper rule: some element whose basename
+// is a shell is followed by a shell command option.
+func laterShell(args []string) bool {
+	for i, a := range args {
+		if b := baseName(a); isShell(b) && hasCommandOption(b, args[i+1:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// commandPositionShell walks the wrappers from argv[0] to the command they
+// run (A08 §2.4 step 4) and applies the shell rules there.
+func commandPositionShell(argv []string) bool {
 	for i := 0; i < len(argv); {
 		b := baseName(argv[i])
 		rest := argv[i+1:]
@@ -68,8 +100,6 @@ func IsShellString(argv []string) bool {
 		case !isWrapper:
 			return false // the command, and not a shell
 		case shellString:
-			return true
-		case skippedShell(rest[:n], rest):
 			return true
 		}
 		i += 1 + n
@@ -87,8 +117,12 @@ func wrapperArgs(b string, rest []string) (n int, shellString, isWrapper bool) {
 		split, n := envOptions(rest)
 		return n, split, true
 	case strings.EqualFold(b, "script"):
-		// script runs no command operand; only -c does.
-		return len(rest), scriptRunsCommand(rest), true
+		// -c runs a command through $SHELL -c (GNU and BSD); BSD and macOS
+		// script also run a command operand after the file.
+		if scriptRunsCommand(rest) {
+			return len(rest), true, true
+		}
+		return skipArgs(rest, wrapperSpec{shortArg: "EIOBTmt", longArg: []string{"echo", "log-in", "log-out", "log-io", "log-timing", "logging-format", "output-limit"}, operands: 1}), false, true
 	case strings.EqualFold(b, "flock"):
 		n, sh := flockArgs(rest)
 		return n, sh, true
@@ -103,17 +137,6 @@ func wrapperArgs(b string, rest []string) (n int, shellString, isWrapper bool) {
 		return 0, false, false
 	}
 	return skipArgs(rest, spec), false, true
-}
-
-// skippedShell is the safety net: an element consumed as an option argument
-// or operand that names a shell followed by a command option.
-func skippedShell(skipped, rest []string) bool {
-	for i, s := range skipped {
-		if b := baseName(s); isShell(b) && hasCommandOption(b, rest[i+1:]) {
-			return true
-		}
-	}
-	return false
 }
 
 // wrapperSpec describes a wrapper's command line: the short options that
@@ -139,7 +162,7 @@ func wrapperSpecFor(b string) (wrapperSpec, bool) {
 	case "stdbuf":
 		return wrapperSpec{shortArg: "ioe", longArg: []string{"input", "output", "error"}}, true
 	case "xargs":
-		return wrapperSpec{shortArg: "aEIdLnPs", longArg: []string{"arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"}}, true
+		return wrapperSpec{shortArg: "aEIdLnPsJR", longArg: []string{"arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"}}, true
 	case "time":
 		return wrapperSpec{shortArg: "fo", longArg: []string{"format", "output"}}, true
 	case "exec":
@@ -151,7 +174,7 @@ func wrapperSpecFor(b string) (wrapperSpec, bool) {
 	case "ionice":
 		return wrapperSpec{shortArg: "cnpPu", longArg: []string{"class", "classdata", "pid", "pgid", "uid"}}, true
 	case "prlimit":
-		return wrapperSpec{shortArg: "p", longArg: []string{"pid"}}, true
+		return wrapperSpec{shortArg: "po", longArg: []string{"pid", "output"}}, true
 	}
 	return wrapperSpec{}, false
 }
@@ -405,7 +428,7 @@ func envOptions(args []string) (split bool, n int) {
 			if isPrefixOf(name, "split-string", 1) {
 				return true, i
 			}
-			if !hasValue && (isPrefixOf(name, "unset", 1) || isPrefixOf(name, "chdir", 1)) {
+			if !hasValue && (isPrefixOf(name, "unset", 1) || isPrefixOf(name, "chdir", 1) || isPrefixOf(name, "argv0", 1)) {
 				i++
 			}
 		case len(a) > 1 && a[0] == '-':
@@ -414,7 +437,7 @@ func envOptions(args []string) (split bool, n int) {
 				switch a[j] {
 				case 'S':
 					return true, i
-				case 'u', 'C':
+				case 'u', 'C', 'P', 'a':
 					if j == len(a)-1 {
 						i++ // the argument is the next element
 					}
