@@ -22,6 +22,26 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-025 · 2026-10-16 · M2-14: the seccomp filter, in pure Go
+
+- **Asked:** M2 plan task M2-14. Delivered under "merge each task when its review passes".
+- **Task:** The A06 §11.5 syscall filter as one source of truth, rendered as the BPF program bwrap loads in L1 and the seccomp JSON Docker loads in L2.
+- **How:**
+  - **Table** as Go data with x86_64 and aarch64 numbers, checked at compile time against `x/sys/unix` (D-061).
+  - **Assembler** for classic BPF with far-jump trampolines; one program per arch.
+  - **Docker JSON** from the same rows, with masked 32-bit comparisons.
+  - **Commits:** `1d0e81b`, `dd19245`, `961e265`.
+- **Rules kept:**
+  - No new dependency (D-041); OS build tags only in `internal/sandbox/*`.
+  - INV-H: the kernel test re-executes only the test binary, from a `//sandboxed`-commented file.
+  - Test first, mutation check (30 mutants), golden file with `UPDATE_GOLDEN=1`.
+- **Rules changed or bent:**
+  - **A06 §11.5's generator not followed** (C-71): own assembler, one program per arch, numbers as data. Decided by me under R1/R3.
+  - **The ptrace row is stricter than A06** (D-062): `pidfd_getfd`, `process_madvise`, `kcmp`. Decided by me after the review stole a descriptor past the filter.
+  - **`scripts/make.sh` gains a linux/arm64 vet step** for `internal/sandbox`, because the aarch64 compile-time checks otherwise never ran (CI is amd64).
+- **Verified:** one review round with fixes; the filter installed in a child in WSL2 (kernel 5.15) refuses each listed call and allows the controls, and kills on `init_module` and x32; `-race` passes; `make check` green.
+- **Left:** see the M2-14 entry in PROGRESS (wiring in M2-13, `PR_SET_DUMPABLE` in M2-10, libseccomp version and bad-arch action in L2).
+
 ## W-024 · 2026-10-16 · M2-11: the egress proxy core
 
 - **Asked:** M2 plan task M2-11, with the owner's proxy decisions of 2026-10-16 (proxy stricter than A07, all three; an unconditional IP floor). Delivered under "merge each task when its review passes".

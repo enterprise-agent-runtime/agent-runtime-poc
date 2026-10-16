@@ -32,6 +32,12 @@ lint() {
 		step "go vet (GOOS=$goos)"
 		GOOS=$goos CGO_ENABLED=0 go vet ./... || return 1
 	done
+	# The loop above vets the host architecture only. The sandbox packages
+	# carry per-architecture code (internal/sandbox/seccomp/consts_linux_arm64.go
+	# checks the aarch64 syscall numbers at compile time), so vet them for the
+	# other supported Linux architecture too; CI runners are amd64.
+	step "go vet (GOOS=linux GOARCH=arm64, internal/sandbox)"
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go vet ./internal/sandbox/... || return 1
 	# Install staticcheck for the host once, then analyse for every target OS.
 	local tools
 	tools="$(pwd)/bin/tools"

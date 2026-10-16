@@ -100,7 +100,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Before a real Spec is built (platform layer):** expand host paths to their long form (GetLongPathName) before they reach the Spec; host-path checks skip the 8.3 rule (D-055 amendment), so a short-form host path would otherwise dodge it.
   - **For A14 / the policy engine:** masks hide only the working tree; `git show HEAD:.env` through /git reads a committed secret, and `denylist.Argv` does not match `HEAD:.env`. A deny-listed pathspec rule for git object reads is needed.
 - [ ] **M2-13** bwrap argv
-- [ ] **M2-14** seccomp in pure Go
+- [x] **M2-14** seccomp in pure Go (D-061, D-062, C-71).
+  - **Pieces:** `internal/sandbox/seccomp`: the A06 §11.5 table as data, the cBPF assembler and `Render(arch)`, `DockerProfile()`, `Version = "v1"`.
+  - **Commits:** `1d0e81b`, `dd19245`, `961e265`.
+  - **Review:** one round plus fixes. It confirmed every row on both arches, the fail-closed paths, the x32 check, the upper-32-bit behaviour in the kernel and 6.4M Docker-vs-program probes; it found the aarch64 numbers unchecked in CI and `pidfd_getfd` past the ptrace row. 30 mutants caught; the kernel test in WSL2 shows each filtered call refused and each control allowed.
+  - **Left for M2-13:** pick the arch at run time; write `Render(arch)` to fd 5 (memfd or pipe) and pass `--add-seccomp-fd 5` (fallback `--seccomp 5`); write `DockerProfile()` to `S/sandbox/<sb_id>/seccomp.json` and pass `--security-opt`; report `Version` in `sandbox.create.limits`; map a SIGSYS exit to `seccomp_kill`.
+  - **Left for M2-10:** `warden-exec` sets `PR_SET_DUMPABLE 0`; escape-check row "steal an executor descriptor".
+  - **Left for L2:** runc silently skips syscall names its libseccomp does not know (`mount_setattr` needs 2.5.2); have doctor check the version or verify in the L2 escape check; verify runc's bad-arch action.
 - [ ] **M2-15** launch, rlimits, `sandbox.cgroup` doctor check
 - [ ] **M2-16** `make escape-check` L1
 
