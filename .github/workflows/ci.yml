@@ -166,4 +166,4 @@ jobs:
             TestSweepTaskSockets_NoSessions
             TestPeerRefusal_NamesTheReason
           )
-          scripts/ci-require-tests.sh go-test.json -- "${required[@]}"
+          bash scripts/ci-require-tests.sh go-test.json -- "${required[@]}"
