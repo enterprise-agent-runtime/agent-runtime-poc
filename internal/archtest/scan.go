@@ -6,8 +6,8 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,51 +46,62 @@ func (v Violation) String() string {
 	return fmt.Sprintf("%s:%d: %s: %s", v.Rel, v.Line, v.Rule, v.Detail)
 }
 
-// rootSkippedDirs are skipped only directly under the scanned root: the
-// documentation tree, the fixture sources and the JS/Rust/vendor build trees.
-// Deeper down a directory with one of these names is an ordinary Go package
-// to the go tool, so it is scanned like any other; skipping it at any depth
-// once left every rule blind to code that is compiled into the binaries.
-var rootSkippedDirs = map[string]bool{
-	"docs": true, "node_modules": true, "target": true,
-	"dist": true, "vendor": true, "fixtures": true,
-}
-
 // goIgnored reports whether the go tool ignores a directory or file of this
 // name at any depth: testdata, and names starting with "." or "_" (go help
-// packages). Such code is never compiled, so it is never scanned. testdata
-// trees are scanned explicitly by the tests.
+// packages). Such code is never compiled, so it is never scanned, and these
+// are the only names Scan skips: any other skip would leave every rule blind
+// to code that is compiled into the binaries (round 3 found docs/ at the root
+// skipped yet compiled). testdata trees are scanned explicitly by the tests.
 func goIgnored(name string) bool {
 	return name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
 
+// irregular reports whether a directory entry type is anything but a regular
+// file or a directory: a symlink, a Windows junction or other reparse point
+// (which Go reports as fs.ModeIrregular), a device, a named pipe or a socket.
+func irregular(t fs.FileMode) bool {
+	return t != 0 && t != fs.ModeDir
+}
+
 // Scan parses every .go file under root that the go tool would compile in
-// some build: it skips what goIgnored names at any depth and rootSkippedDirs
-// directly under root. Build constraints are not evaluated.
+// some build, skipping only what goIgnored names. Build constraints are not
+// evaluated. It fails closed: the go tool resolves package directories
+// through symlinks and junctions but Scan does not follow them, so every
+// irregular entry outside the ignored names is reported in a *ScanError and
+// the tree cannot pass until it is removed.
 func Scan(root string) ([]File, error) {
+	return scanFS(os.DirFS(root))
+}
+
+func scanFS(fsys fs.FS) ([]File, error) {
 	var files []File
+	var refused []Violation
 	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if p == root {
+		if p == "." {
 			return nil
 		}
-		if d.IsDir() {
-			if goIgnored(d.Name()) || (rootSkippedDirs[d.Name()] && filepath.Dir(p) == filepath.Clean(root)) {
-				return filepath.SkipDir
+		if goIgnored(d.Name()) {
+			if d.IsDir() {
+				return fs.SkipDir
 			}
 			return nil
 		}
-		if goIgnored(d.Name()) || !strings.HasSuffix(p, ".go") {
+		if irregular(d.Type()) {
+			refused = append(refused, Violation{p, 0, "scan", entryKind(d.Type()) + ": the go tool follows links and archtest does not, so the tree may contain only regular files and directories"})
 			return nil
 		}
-		rel, err := filepath.Rel(root, p)
+		if d.IsDir() || !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		src, err := fs.ReadFile(fsys, p)
 		if err != nil {
 			return err
 		}
-		f, err := parseFile(fset, p, filepath.ToSlash(rel))
+		f, err := parseFile(fset, p, src)
 		if err != nil {
 			return err
 		}
@@ -98,11 +109,14 @@ func Scan(root string) ([]File, error) {
 		return nil
 	})
 	sort.Slice(files, func(i, j int) bool { return files[i].Rel < files[j].Rel })
+	if err == nil && len(refused) > 0 {
+		err = &ScanError{refused}
+	}
 	return files, err
 }
 
-func parseFile(fset *token.FileSet, abs, rel string) (File, error) {
-	af, err := parser.ParseFile(fset, abs, nil, parser.ParseComments)
+func parseFile(fset *token.FileSet, rel string, src []byte) (File, error) {
+	af, err := parser.ParseFile(fset, rel, src, parser.ParseComments)
 	if err != nil {
 		return File{}, fmt.Errorf("parse %s: %w", rel, err)
 	}
@@ -219,4 +233,32 @@ func underAny(dir string, prefixes []string) bool {
 func isStdlib(p string) bool {
 	first, _, _ := strings.Cut(p, "/")
 	return !strings.Contains(first, ".")
+}
+
+// ScanError is returned by Scan when the tree contains entries it cannot
+// vouch for: symlinks, junctions and other irregular entries.
+type ScanError struct{ Violations []Violation }
+
+func (e *ScanError) Error() string {
+	s := make([]string, len(e.Violations))
+	for i, v := range e.Violations {
+		s[i] = v.String()
+	}
+	return "archtest scan refused the tree:\n" + strings.Join(s, "\n")
+}
+
+func entryKind(t fs.FileMode) string {
+	switch {
+	case t&fs.ModeSymlink != 0:
+		return "symlink"
+	case t&fs.ModeIrregular != 0:
+		return "irregular entry (a Windows junction or other reparse point)"
+	case t&fs.ModeDevice != 0:
+		return "device"
+	case t&fs.ModeNamedPipe != 0:
+		return "named pipe"
+	case t&fs.ModeSocket != 0:
+		return "socket"
+	}
+	return "entry of type " + t.String()
 }

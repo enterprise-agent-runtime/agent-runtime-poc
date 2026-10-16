@@ -9,6 +9,8 @@
 // The checks parse source files with go/parser instead of grepping, so they
 // behave identically on the Linux, macOS and Windows CI runners, and they
 // read every file regardless of build constraints, so an import or a call
-// hidden behind a GOOS tag is still seen. scripts/lint-imports.sh and
-// scripts/lint-exec.sh run these tests by name.
+// hidden behind a GOOS tag is still seen. The scan skips only what the go
+// tool skips (testdata, "." and "_" names) and fails closed on symlinks,
+// junctions and other irregular entries, which it does not follow.
+// scripts/lint-imports.sh and scripts/lint-exec.sh run these tests by name.
 package archtest

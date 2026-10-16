@@ -7,4 +7,4 @@
 #                               and the in-sandbox forwarder file (C-46)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-go test -count=1 -run 'TestExecutorOnlyViaSandbox|TestNoListenTCP|TestRules_CatchKnownViolations' ./internal/archtest
+go test -count=1 -run 'TestExecutorOnlyViaSandbox|TestNoListenTCP|TestRules_CatchKnownViolations|TestScan_' ./internal/archtest

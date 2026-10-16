@@ -1,11 +1,14 @@
 package archtest
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // repoRoot is the repository root relative to this package.
@@ -131,11 +134,15 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		// package under cmd/warden-exec could import the forwarder and be
 		// imported by the daemon. (2) Scan skipped docs/, fixtures/ and the
 		// like at any depth, although the go tool compiles them, so every rule
-		// was blind there. Still skipped, as by the go tool: testdata/ at any
-		// depth, names starting with "." or "_" (internal/api/testdata/l.go,
-		// internal/api/_old/l.go, internal/api/_x.go), and the root-level build
-		// and doc trees (docs/l.go).
+		// was blind there. Round 3 found the same hole at the root: docs/fwd
+		// was skipped yet compiled, so internal/api/importsdocs.go linked the
+		// forwarder silently. Scan now skips exactly what the go tool skips:
+		// testdata/ and names starting with "." or "_", at any depth
+		// (internal/api/testdata/l.go, internal/api/_old/l.go,
+		// internal/api/_x.go). The importer itself breaks no rule; the R4
+		// violation in docs/fwd/f.go is what cuts the chain.
 		"imports cmd/warden-exec/lib/lib.go", // only package main under cmd/warden-exec
+		"imports docs/fwd/f.go",              // R4 in a root-level docs/ tree
 		"imports internal/api/fixtures/x.go", // R4 inside a nested fixtures/ dir
 		"imports internal/api/importslib.go", // nothing imports a cmd/ package
 		"INV-J internal/api/docs/l.go",       // net.Listen("tcp") inside a nested docs/ dir
@@ -166,5 +173,89 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("violations differ\n got:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	}
+}
+
+// TestScan_FailsClosedOnLinks exists because filepath.WalkDir does not follow
+// symlinks or Windows junctions while the go tool resolves package
+// directories through them (re-review round 3): a linked directory was
+// compiled into the binaries and invisible to every rule. Scan does not
+// follow links; it reports each one, and any other irregular entry, as a
+// "scan" violation, so a tree containing one cannot pass. Links inside names
+// the go tool ignores (here _ignored/) are not reported.
+//
+// The links are created at test time: git on Windows does not check them out
+// reliably. Junctions cannot be created without os/exec (mklink) or raw
+// reparse-point syscalls, which INV-H forbids here; Go reports them as
+// fs.ModeIrregular, the same branch as a device or socket.
+func TestScan_FailsClosedOnLinks(t *testing.T) {
+	root := t.TempDir()
+	for _, p := range []string{"pkg/a.go", "_ignored/b.go"} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, p), []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	links := map[string]string{
+		"dirlink":          "pkg",  // a package directory reached through a link
+		"pkg/filelink.go":  "a.go", // a source file reached through a link
+		"_ignored/link.go": "b.go", // ignored by the go tool, so not reported
+	}
+	for link, target := range links {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Skipf("this OS refused to create a symlink (%v); on Windows that needs Developer Mode or SeCreateSymbolicLinkPrivilege, so the check is untested here", err)
+		}
+	}
+	_, err := Scan(root)
+	var se *ScanError
+	if !errors.As(err, &se) {
+		t.Fatalf("Scan over a tree with links returned %v, want a *ScanError", err)
+	}
+	var got []string
+	for _, v := range se.Violations {
+		got = append(got, v.Rule+" "+v.Rel)
+	}
+	sort.Strings(got)
+	want := []string{"scan dirlink", "scan pkg/filelink.go"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("irregular entries differ\n got: %v\nwant: %v", got, want)
+	}
+}
+
+// TestScan_FailsClosedOnIrregularEntries is the same guard as
+// TestScan_FailsClosedOnLinks on an in-memory tree, so it runs on every OS,
+// including Windows without Developer Mode where that test skips. It covers
+// every irregular type: Windows junctions and other reparse points arrive as
+// fs.ModeIrregular.
+func TestScan_FailsClosedOnIrregularEntries(t *testing.T) {
+	fsys := fstest.MapFS{
+		"pkg/a.go":          {Data: []byte("package pkg\n")},
+		"dirlink":           {Mode: fs.ModeSymlink},
+		"pkg/junction":      {Mode: fs.ModeIrregular},
+		"pkg/dev":           {Mode: fs.ModeDevice},
+		"pkg/fifo":          {Mode: fs.ModeNamedPipe},
+		"pkg/sock":          {Mode: fs.ModeSocket},
+		"_ignored/link":     {Mode: fs.ModeSymlink}, // go tool ignores _ names
+		"pkg/testdata/link": {Mode: fs.ModeSymlink}, // and testdata
+		"pkg/.hidden/link":  {Mode: fs.ModeSymlink}, // and . names
+	}
+	files, err := scanFS(fsys)
+	var se *ScanError
+	if !errors.As(err, &se) {
+		t.Fatalf("scanFS over a tree with irregular entries returned %v, want a *ScanError", err)
+	}
+	var got []string
+	for _, v := range se.Violations {
+		got = append(got, v.Rule+" "+v.Rel)
+	}
+	sort.Strings(got)
+	want := []string{"scan dirlink", "scan pkg/dev", "scan pkg/fifo", "scan pkg/junction", "scan pkg/sock"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("irregular entries differ\n got: %v\nwant: %v", got, want)
+	}
+	if len(files) != 1 || files[0].Rel != "pkg/a.go" {
+		t.Errorf("regular files still scanned: got %v", files)
 	}
 }
