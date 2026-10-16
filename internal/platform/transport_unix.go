@@ -131,6 +131,11 @@ func ownerUID(fi os.FileInfo) int {
 	return int(st.Uid)
 }
 
+// socketDirHint is the way forward when the socket directory is refused:
+// usually the long-path fallback /tmp/warden-<uid> already exists, created
+// by someone else, in a shared /tmp (Endpoint).
+const socketDirHint = "set TMPDIR to a private directory or use a shorter WARDEN_HOME"
+
 // ensureSocketDir makes dir the daemon's own socket directory or refuses.
 // An existing entry must be a real directory (Lstat: a symlink is refused,
 // never followed) owned by uid; a missing one is created with Mkdir, and
@@ -150,10 +155,10 @@ func ensureSocketDir(dir string, uid int) error {
 		return err
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("socket directory %s is not a directory (%v)", dir, fi.Mode().Type())
+		return fmt.Errorf("socket directory %s is not a directory (%v); %s", dir, fi.Mode().Type(), socketDirHint)
 	}
 	if owner := ownerUID(fi); owner != uid {
-		return fmt.Errorf("socket directory %s is not owned by the current user (owner uid %d)", dir, owner)
+		return fmt.Errorf("socket directory %s is not owned by the current user (owner uid %d); %s", dir, owner, socketDirHint)
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return fmt.Errorf("socket directory %s: %w", dir, err)

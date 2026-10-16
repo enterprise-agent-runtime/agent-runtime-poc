@@ -185,8 +185,8 @@ func TestEnsureSocketDir_RefusesSymlink(t *testing.T) {
 	if err := os.Symlink(target, dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureSocketDir(dir, os.Getuid()); err == nil || !strings.Contains(err.Error(), "socket directory") {
-		t.Fatalf("err = %v, want a socket directory refusal", err)
+	if err := ensureSocketDir(dir, os.Getuid()); err == nil || !strings.Contains(err.Error(), "socket directory") || !strings.Contains(err.Error(), "set TMPDIR to a private directory or use a shorter WARDEN_HOME") {
+		t.Fatalf("err = %v, want a socket directory refusal with the way forward", err)
 	}
 	assertMode(t, target, 0o755) // the symlink's target was not touched
 }
@@ -200,8 +200,8 @@ func TestEnsureSocketDir_RefusesOtherOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := ensureSocketDir(dir, os.Getuid()+1)
-	if err == nil || !strings.Contains(err.Error(), "is not owned by the current user") {
-		t.Fatalf("err = %v, want an ownership refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "is not owned by the current user") || !strings.Contains(err.Error(), "set TMPDIR to a private directory or use a shorter WARDEN_HOME") {
+		t.Fatalf("err = %v, want an ownership refusal with the way forward", err)
 	}
 	assertMode(t, dir, 0o755) // someone else's directory is not chmodded
 }

@@ -39,7 +39,11 @@ func pipeSDDL() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "O:" + u.Uid + "D:P(A;;GA;;;" + u.Uid + ")", nil
+	d, err := ownerSDDL()
+	if err != nil {
+		return "", err
+	}
+	return "O:" + u.Uid + d, nil
 }
 
 // Listen creates the pipe owned by the current user with an owner-only DACL
