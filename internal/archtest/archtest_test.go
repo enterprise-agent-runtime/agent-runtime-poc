@@ -139,6 +139,11 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		"imports internal/exec/buildinfo.go",      // R3/R10: buildinfo reaches exec only through exec.Config
 		"imports internal/exec/thirdparty.go",     // R3: third-party module other than x/sys
 		"imports internal/sandbox/importsfwd.go",  // R4: a daemon package links the forwarder
+		// Review of M2-4b: isStdlib("C") was true (no dot in the path), so
+		// cgo, with arbitrary C code in the preamble, passed R3 and R6 as if
+		// it were the standard library. "C" is not stdlib.
+		"imports internal/exec/cgo.go",      // R3: import "C"
+		"imports internal/execproto/cgo.go", // R6: import "C"
 		// Re-review of fb26514..788c9e2: two ways around R4. (1) A library
 		// package under cmd/warden-exec could import the forwarder and be
 		// imported by the daemon. (2) Scan skipped docs/, fixtures/ and the
