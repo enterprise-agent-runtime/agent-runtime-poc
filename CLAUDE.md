@@ -295,4 +295,4 @@ Rules that make this work:
   - `warden`/`wardend` runs without `WARDEN_HOME`;
   - edits to `docs/docs/`, `docs/design/`, `docs/WRD-*` and `docs/PROMPT-*`.
 
-  `.claude/hooks/test-hooks.sh` tests every rule in both directions and runs in `make check`. A blocked command means the work is not done yet; fix the cause rather than working around the guard.
+  `.claude/hooks/session-start.sh` runs at every session start. It prints the branch, whether the tree still matches the last green `make check`, the open PROGRESS items and the §11 reading list, so no session starts blind. It is offline, never blocks, and never replaces actually reading PROGRESS.md. `.claude/hooks/test-hooks.sh` tests every rule in both directions, and the start hook too; it runs in `make check`. A blocked command means the work is not done yet; fix the cause rather than working around the guard.

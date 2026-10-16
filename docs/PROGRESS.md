@@ -18,7 +18,7 @@ Legend: `[x]` done and tested · `[~]` done with a recorded limitation · `[ ]` 
 ### M1 build
 - [x] Go module `warden.dev/warden` (Go 1.26 directive, built with 1.27.1); `Makefile` + `make.ps1` dispatching to `scripts/make.sh` (`check`, `lint`, `test`, `build`, `run-daemon`, `cover`, `integration`; `escape-check`, `smoke`, `fixtures`, `images`, `e2e`, `desktop` report the milestone they land in)
 - [x] `scripts/lint-imports.sh`, `scripts/lint-exec.sh` over `internal/archtest` (INV-H `TestExecutorOnlyViaSandbox`, INV-J `TestNoListenTCP`, import rules, OS confinement; each rule proven on a seeded violation tree)
-- [~] GitHub Actions `.github/workflows/ci.yml`: `make check` on `ubuntu-latest`, `windows-latest` (through `make.ps1`), `macos-latest`; `go test -race` on Linux. **Not run yet: the branch could not be pushed** (the GitHub account `IosuaPallo` has read-only access to `enterprise-agent-runtime/agent-runtime-poc`)
+- [x] GitHub Actions `.github/workflows/ci.yml`: `make check` on `ubuntu-latest`, `windows-latest` (through `make.ps1`), `macos-latest`; `go test -race` on Linux. First run red (FX-1..FX-3); green on all four jobs since run 37825777402 (2026-10-08, see FX-4)
 - [x] `internal/model` — canonical types, StreamEvent, ten error codes, `provider_options`, Provider contract, sequence validator, stream assembly, effective capabilities, `warden-emu@1` codec
 - [x] `internal/model/wire` — SSE reader, credential-injecting transport, TLS/mTLS client, first-byte/idle watchdog, retry-after parsing
 - [x] `internal/providers/anthropic` — hand-rolled Messages adapter (D-005): streaming, usage, error normalization, response_format by tool forcing, probe; request/stream/error goldens against `httptest`
@@ -37,7 +37,7 @@ Legend: `[x]` done and tested · `[~]` done with a recorded limitation · `[ ]` 
 - [~] `spikes/copilot/` + `README.md` — compiled against SDK v1.0.16; **not executed** (Copilot CLI not installed, D-ENV-07); differences recorded (CONFLICTS C-51)
 
 ### M1 acceptance (prompt Part 2, M1)
-- [~] `make check` green locally — **yes on Windows (checkout A) and in WSL2 Ubuntu 24.04 (`~/src/warden`)**; CI on three OSes not run (push blocked, see above)
+- [x] `make check` green locally — **yes on Windows (checkout A) and in WSL2 Ubuntu 24.04 (`~/src/warden`)** — and on the three CI runners (run 37825777402, FX-4)
 - [!] `warden provider test ollama` succeeds against the local Ollama — **Ollama is not installed** (D-ENV-04). The command runs and reports `provider_unavailable: provider unreachable` honestly on Windows; the success path is covered by `TestProbe_*` against fake servers
 - [x] Anthropic adapter passes its golden tests against a fake server
 - [x] A unit test proves the same `ModelRequest` produces tool proposals from both adapters
