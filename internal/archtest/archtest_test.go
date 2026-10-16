@@ -93,6 +93,9 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		if strings.Contains(v.Detail, "R4") && !strings.HasPrefix(v.Detail, "R4: only internal/exec/... and cmd/warden-exec may import internal/exec/...") {
 			t.Errorf("R4 message does not state the rule: %s", v)
 		}
+		if strings.Contains(v.Detail, "R6") && !strings.HasPrefix(v.Detail, "R6: internal/execproto/... imports only the standard library") {
+			t.Errorf("R6 message does not state the rule: %s", v)
+		}
 	}
 	var got []string
 	for _, vs := range [][]Violation{
@@ -235,12 +238,23 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		"INV-H internal/store/imp_go_build.go",    // go/build
 		"INV-H internal/store/imp_go_importer.go", // go/importer
 		"INV-H internal/store/imp_plugin.go",      // plugin
-		"imports internal/policy/bad.go",          // policy importing a provider
-		"imports internal/providers/bad/bad.go",   // third-party import in a provider
-		"imports internal/providers/bad/bad.go",   // provider importing internal/store
-		"os-selection internal/api/os.go",         // //go:build linux
-		"os-selection internal/api/os.go",         // runtime.GOOS
-		"os-selection internal/api/x_windows.go",  // file-name suffix
+		// M2-4b, design A02 §5 R6: internal/execproto/... is a stdlib-only
+		// leaf, because the deny-list (internal/execproto/denylist, D-014)
+		// and the wire types are linked into the daemon, the policy engine,
+		// the sandbox mount layer and the executor alike (INV-I). A
+		// module-internal import would drag daemon code into the executor;
+		// a third-party one, a dependency outside R3. Allowed:
+		// internal/execproto/ok.go (stdlib only) and
+		// internal/execproto/x_test.go (test files may import jsonschema
+		// for the golden schema tests).
+		"imports internal/execproto/denylist/thirdparty.go", // R6: third-party module, in a subpackage
+		"imports internal/execproto/store.go",               // R6: module-internal package
+		"imports internal/policy/bad.go",                    // policy importing a provider
+		"imports internal/providers/bad/bad.go",             // third-party import in a provider
+		"imports internal/providers/bad/bad.go",             // provider importing internal/store
+		"os-selection internal/api/os.go",                   // //go:build linux
+		"os-selection internal/api/os.go",                   // runtime.GOOS
+		"os-selection internal/api/x_windows.go",            // file-name suffix
 		// internal/exec/sys_linux.go and cmd/warden-exec/main_darwin.go select by
 		// OS and are allowed (C-61); these two are still rejected.
 		"os-selection internal/executor/x_linux.go", // a name prefix of internal/exec is not internal/exec
