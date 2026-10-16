@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"warden.dev/warden/internal/api"
 	"warden.dev/warden/internal/buildinfo"
 	"warden.dev/warden/internal/platform"
+	"warden.dev/warden/internal/secrets"
 )
 
 // builtWardend finds the wardend binary from "make build" ($WARDEN_BIN, else
@@ -46,7 +48,8 @@ func builtWardend(t *testing.T) string {
 // TestWatchByProbe_EPERMIsNotOurs and TestWaitExit_TimesOutAndReports). CI
 // does not run make integration yet; run it by hand on Windows. The temp
 // home has its own keychain namespace (platform.KeychainService), so the
-// daemon here never reads or writes the user's real Warden secrets.
+// daemon here never reads or writes the user's real Warden secrets, and the
+// cleanup deletes what it created there (cleanTestKeychain).
 func TestDaemonStop_HomeRemovableImmediately(t *testing.T) {
 	exe := builtWardend(t)
 	home, err := os.MkdirTemp("", "warden-stop-*")
@@ -56,6 +59,11 @@ func TestDaemonStop_HomeRemovableImmediately(t *testing.T) {
 	t.Setenv(platform.EnvHome, home)
 	l := platform.Layout{Home: home}
 	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	// Refuse before the daemon touches anything if this home would share
+	// the real keychain namespace.
+	if _, err := testKeychainService(home); err != nil {
 		t.Fatal(err)
 	}
 	// Starting wardend is the C-45 / D-006 path (platform.SpawnDaemon), the
@@ -68,6 +76,9 @@ func TestDaemonStop_HomeRemovableImmediately(t *testing.T) {
 		if platform.Alive(pid) {
 			_ = platform.TerminateGroup(pid, 0)
 		}
+		// The daemon generated a checkpoint seed in this home's own keychain
+		// namespace; it outlives the home unless deleted here.
+		cleanTestKeychain(t, home)
 		// Cleanup only, never the assertion: when the test fails, the home
 		// is still busy, so retry for a while instead of leaking it.
 		for i := 0; i < 100 && os.RemoveAll(home) != nil; i++ {
@@ -97,5 +108,36 @@ func TestDaemonStop_HomeRemovableImmediately(t *testing.T) {
 	}
 	if err := os.RemoveAll(home); err != nil {
 		t.Fatalf("WARDEN_HOME not removable right after warden daemon stop: %v", err)
+	}
+}
+
+// daemonKeychainAccounts are the keychain items wardend creates. go-keyring
+// cannot list a service's items, so cleanup deletes these known accounts:
+// the checkpoint signing seed (generated on first start) and doctor/probe
+// (written and deleted by the backend probe; deleted again in case a run
+// was interrupted between the two).
+func daemonKeychainAccounts(t *testing.T) []string {
+	t.Helper()
+	ref, err := secrets.Parse(secrets.CheckpointRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []string{ref.Account, "doctor/probe"}
+}
+
+// cleanTestKeychain deletes the daemon's items in the test home's own
+// keychain namespace, and only there.
+func cleanTestKeychain(t *testing.T, home string) {
+	t.Helper()
+	svc, err := testKeychainService(home)
+	if err != nil {
+		t.Errorf("keychain cleanup: %v", err)
+		return
+	}
+	k := secrets.NewKeyring(svc)
+	for _, acct := range daemonKeychainAccounts(t) {
+		if err := k.Delete(context.Background(), acct); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			t.Errorf("keychain cleanup: delete %s/%s: %v", svc, acct, err)
+		}
 	}
 }
