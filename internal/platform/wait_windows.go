@@ -16,7 +16,7 @@ func WatchProcess(pid int) (*Watch, error) {
 		return nil, fmt.Errorf("open process %d: %w", pid, err)
 	}
 	return &Watch{
-		Pid: pid,
+		pid: pid,
 		alive: func() bool {
 			ev, err := syscall.WaitForSingleObject(h, 0)
 			// A failed wait is treated as still running: the caller then

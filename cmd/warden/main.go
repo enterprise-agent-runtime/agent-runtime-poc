@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,6 +211,42 @@ func doctorCmd() *cobra.Command {
 // drain, so this leaves room for the store and log to close.
 const daemonStopTimeout = 10 * time.Second
 
+// procWatch is what stop needs from platform.Watch.
+type procWatch interface {
+	PID() int
+	Wait(time.Duration) error
+	Close()
+}
+
+// stopAndWait is the decision of "warden daemon stop" after it has
+// connected (M2-1). It opens the watch first, because wardend removes its
+// pid file while shutting down and on Windows the handle taken now is immune
+// to pid reuse. A watch that cannot be opened is a warning: the daemon is
+// still shut down and stop exits 0 without waiting. A daemon that does not
+// exit within timeout is exit 1, because it may still hold files under home.
+func stopAndWait(open func() (procWatch, error), shutdown func() error, timeout time.Duration, stdout, stderr io.Writer, home string) error {
+	w, err := open()
+	if err != nil {
+		fmt.Fprintf(stderr, "warden: %v; not waiting for wardend to exit\n", err)
+		w = nil
+	} else {
+		defer w.Close()
+	}
+	if err := shutdown(); err != nil {
+		return err
+	}
+	if w == nil {
+		fmt.Fprintln(stdout, "wardend stopping")
+		return nil
+	}
+	if err := w.Wait(timeout); err != nil {
+		fmt.Fprintf(stderr, "warden: wardend (pid %d) did not exit within %s of system.shutdown; it may still hold files under %s\n", w.PID(), timeout, home)
+		return exitError{1}
+	}
+	fmt.Fprintln(stdout, "wardend stopped")
+	return nil
+}
+
 func daemonCmd() *cobra.Command {
 	d := &cobra.Command{Use: "daemon", Short: "Start, stop or inspect wardend"}
 	d.AddCommand(&cobra.Command{Use: "start", Short: "Start wardend in the background", RunE: func(cmd *cobra.Command, _ []string) error {
@@ -235,32 +272,25 @@ func daemonCmd() *cobra.Command {
 			return nil
 		}
 		defer c.Close()
-		// Watch the process before asking it to stop: wardend removes its
-		// pid file while shutting down, and on Windows the handle taken now
-		// is immune to pid reuse (M2-1).
 		l, _ := layout()
-		var w *platform.Watch
-		if pid, err := l.DaemonPID(); err != nil {
-			fmt.Fprintf(os.Stderr, "warden: cannot read the wardend pid (%v); not waiting for it to exit\n", err)
-		} else if w, err = platform.WatchProcess(pid); err != nil {
-			fmt.Fprintf(os.Stderr, "warden: cannot watch wardend (%v); not waiting for it to exit\n", err)
-		} else {
-			defer w.Close()
+		open := func() (procWatch, error) {
+			pid, err := l.DaemonPID()
+			if err != nil {
+				return nil, fmt.Errorf("cannot read the wardend pid: %w", err)
+			}
+			w, err := platform.WatchProcess(pid)
+			if err != nil {
+				return nil, fmt.Errorf("cannot watch wardend: %w", err)
+			}
+			return w, nil
 		}
-		if err := c.Call(ctx, "system.shutdown", map[string]any{"confirm": true}, nil); err != nil {
-			return err
+		shutdown := func() error {
+			if err := c.Call(ctx, "system.shutdown", map[string]any{"confirm": true}, nil); err != nil {
+				return err
+			}
+			return c.Close() // do not hold a connection open while the server drains
 		}
-		c.Close() // do not hold a connection open while the server drains
-		if w == nil {
-			fmt.Println("wardend stopping")
-			return nil
-		}
-		if err := w.Wait(daemonStopTimeout); err != nil {
-			fmt.Fprintf(os.Stderr, "warden: wardend (pid %d) did not exit within %s of system.shutdown; it may still hold files under %s\n", w.Pid, daemonStopTimeout, l.Home)
-			return exitError{1}
-		}
-		fmt.Println("wardend stopped")
-		return nil
+		return stopAndWait(open, shutdown, daemonStopTimeout, os.Stdout, os.Stderr, l.Home)
 	}})
 	d.AddCommand(&cobra.Command{Use: "status", Short: "Report whether wardend is running (exit 1 if not)", RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)

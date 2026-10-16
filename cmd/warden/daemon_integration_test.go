@@ -39,6 +39,14 @@ func builtWardend(t *testing.T) string {
 // resource busy" and succeeded seconds later. Every script and test that
 // stops the daemon and then cleans up raced. After stop returns, the home
 // must be removable at once, with no retry.
+//
+// The test is meaningful on Windows only: on Linux and macOS RemoveAll
+// succeeds even while wardend still has the files open, so there it passes
+// with or without the wait (the Unix wait itself is covered at L1 by
+// TestWatchByProbe_EPERMIsNotOurs and TestWaitExit_TimesOutAndReports). CI
+// does not run make integration yet; run it by hand on Windows. The temp
+// home has its own keychain namespace (platform.KeychainService), so the
+// daemon here never reads or writes the user's real Warden secrets.
 func TestDaemonStop_HomeRemovableImmediately(t *testing.T) {
 	exe := builtWardend(t)
 	home, err := os.MkdirTemp("", "warden-stop-*")

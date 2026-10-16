@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -50,9 +51,35 @@ func (l Layout) DaemonPID() (int, error) {
 // before asking the process to stop: on Windows it holds a process handle,
 // so a pid reused after the exit cannot be mistaken for the process.
 type Watch struct {
-	Pid     int
+	pid     int
 	alive   func() bool
 	release func()
+}
+
+// PID is the process id being watched.
+func (w *Watch) PID() int { return w.pid }
+
+// watchByProbe builds the Unix watch from a kill(pid, 0) probe and a reap
+// of our own child. It has no build tag so its decisions are tested on every
+// OS. wardend runs as the invoking user, so a pid that kill refuses with
+// EPERM is not wardend: at the start that means a stale pid file (no watch),
+// during the wait it means the pid was reused by another user (ours is gone).
+func watchByProbe(pid int, probe func() error, reap func() bool) (*Watch, error) {
+	if pid <= 0 {
+		return nil, fmt.Errorf("watch process: invalid pid %d", pid)
+	}
+	switch err := probe(); {
+	case errors.Is(err, syscall.EPERM):
+		return nil, fmt.Errorf("watch process %d: owned by another user, so the pid file is stale: %w", pid, err)
+	case err != nil:
+		return nil, fmt.Errorf("watch process %d: %w", pid, err)
+	}
+	return &Watch{pid: pid, alive: func() bool {
+		if reap() {
+			return false
+		}
+		return probe() == nil
+	}}, nil
 }
 
 // Wait blocks until the process has exited or timeout has passed (then the
