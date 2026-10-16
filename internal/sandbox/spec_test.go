@@ -33,6 +33,23 @@ func layoutAt(t *testing.T, customHome bool) testLayout {
 	if path.IsAbs(filepath.ToSlash(tmp)) {
 		tmp = "/srv/warden-test"
 	}
+	return layoutIn(tmp, customHome)
+}
+
+// shortNameLayout is layoutAt under a base with an NTFS 8.3 short-name
+// segment, as on GitHub's Windows runners (TEMP = C:\Users\RUNNER~1\...).
+// It is built on every OS, so the case is tested everywhere, not only on a
+// Windows runner.
+func shortNameLayout(t *testing.T, customHome bool) testLayout {
+	t.Helper()
+	tmp := t.TempDir()
+	if path.IsAbs(filepath.ToSlash(tmp)) {
+		return layoutIn("/srv/RUNNER~1/warden-test", customHome)
+	}
+	return layoutIn(filepath.Join(tmp, "RUNNER~1"), customHome)
+}
+
+func layoutIn(tmp string, customHome bool) testLayout {
 	hostHome := filepath.Join(tmp, "home", "ana")
 	home := filepath.Join(hostHome, ".warden")
 	if customHome {

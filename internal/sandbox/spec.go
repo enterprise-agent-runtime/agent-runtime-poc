@@ -294,7 +294,7 @@ func (s *Spec) validateHostPaths() error {
 		if overlaps(s.MainObjects, s.WardenHome) {
 			return invalid("main objects %q overlaps the warden home", s.MainObjects)
 		}
-		if pat, ok := denylist.Match(s.MainObjects); ok {
+		if pat, ok := denylist.MatchHost(s.MainObjects); ok {
 			return invalid("main objects %q is deny-listed (%s)", s.MainObjects, pat)
 		}
 	}
@@ -311,7 +311,7 @@ func (s *Spec) validateHostPaths() error {
 	}
 	// The Warden home counts as deny-listed (C-53): the executor is never
 	// installed there.
-	if pat, ok := denylist.MatchUnder(s.ExecBin, []string{s.WardenHome}, nil); ok {
+	if pat, ok := denylist.MatchUnderHost(s.ExecBin, []string{s.WardenHome}, nil); ok {
 		return invalid("executor binary %q is deny-listed (%s)", s.ExecBin, pat)
 	}
 	return nil
@@ -389,7 +389,7 @@ func (s *Spec) validateToolchains() error {
 					return invalid("toolchain root %q overlaps %q", tc.Root, h)
 				}
 			}
-			if pat, ok := denylist.Match(tc.Root); ok {
+			if pat, ok := denylist.MatchHost(tc.Root); ok {
 				return invalid("toolchain root %q is deny-listed (%s)", tc.Root, pat)
 			}
 			for _, r := range roots {

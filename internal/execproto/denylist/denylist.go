@@ -54,7 +54,8 @@ func Normalize(p string) string {
 // absolute Windows host paths in their short form: C:\Users\RUNNER~1\...
 // (the TEMP of GitHub's Windows runners) is denied as a whole. Callers pass
 // root-relative paths, or expand host paths to their long form first
-// (GetLongPathName). No caller passes such a path today.
+// (GetLongPathName). For absolute host paths the daemon built, use
+// MatchHost, which skips only the 8.3 rule.
 func Match(p string) (string, bool) {
 	return match(p, true)
 }
@@ -125,11 +126,35 @@ func IsShortName(seg string) bool {
 // host path in short form (C:\Users\RUNNER~1\...) outside the allowed roots
 // is denied. Pass long-form paths (GetLongPathName).
 func MatchUnder(abs string, denyRoots, allowRoots []string) (string, bool) {
+	return matchUnder(abs, denyRoots, allowRoots, true)
+}
+
+// MatchHost is Match without the 8.3 short-name rule, for absolute host
+// paths the daemon built itself (the sources of a sandbox Spec). The 8.3
+// rule defends against aliases a model chooses; a daemon-built path in
+// short form, such as the TEMP of GitHub's Windows runners
+// (C:\Users\RUNNER~1\...), is not one, and Match would deny it as a whole.
+// Every glob still applies. Callers must pass long-form paths (the platform
+// layer expands them). Never use it for a path a model proposed.
+func MatchHost(abs string) (string, bool) {
+	return match(abs, false)
+}
+
+// MatchUnderHost is MatchUnder without the 8.3 short-name rule, under the
+// same conditions as MatchHost: absolute host paths the daemon built, in
+// long form, never a model-proposed path. Deny roots, allowed roots and
+// every glob still apply.
+func MatchUnderHost(abs string, denyRoots, allowRoots []string) (string, bool) {
+	return matchUnder(abs, denyRoots, allowRoots, false)
+}
+
+// matchUnder is MatchUnder, with the 8.3 rule only when shortNames is set.
+func matchUnder(abs string, denyRoots, allowRoots []string, shortNames bool) (string, bool) {
 	n := strings.ToLower(Normalize(abs))
 	for _, a := range allowRoots {
 		if within(n, strings.ToLower(Normalize(a))) {
 			rel := strings.TrimPrefix(strings.TrimPrefix(n, strings.ToLower(Normalize(a))), "/")
-			return Match(rel)
+			return match(rel, shortNames)
 		}
 	}
 	for _, d := range denyRoots {
@@ -137,7 +162,7 @@ func MatchUnder(abs string, denyRoots, allowRoots []string) (string, bool) {
 			return "warden_home", true
 		}
 	}
-	return Match(abs)
+	return match(abs, shortNames)
 }
 
 func within(p, root string) bool {
