@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,9 +51,9 @@ type reply struct {
 
 // Dial connects to the daemon of a Warden home.
 func Dial(ctx context.Context, l platform.Layout, name, version string, onNotify Notify) (*Client, error) {
-	tok, err := os.ReadFile(l.Token())
+	tok, err := readToken(l.Token())
 	if err != nil {
-		return nil, fmt.Errorf("wardend is not running (no token file at %s)", l.Token())
+		return nil, err
 	}
 	// platform.Dial returns only an endpoint served by the current user
 	// (platform.ErrEndpointNotOwned otherwise), so the token below never
@@ -61,10 +61,30 @@ func Dial(ctx context.Context, l platform.Layout, name, version string, onNotify
 	// on a connection from anywhere else has no such guarantee.
 	nc, err := platform.Dial(ctx, l.Home)
 	if err != nil {
-		return nil, err
+		return nil, dialError(platform.Endpoint(l.Home), err)
 	}
-	return Handshake(ctx, nc, strings.TrimSpace(string(tok)), name, version, onNotify)
+	return Handshake(ctx, nc, tok, name, version, onNotify)
 }
+
+// readToken reads the token file, refusing one that is not owner-only: a
+// file another account can write may hold its token, not the daemon's, and
+// one it can read has leaked the token already (WH-1+2, security review of
+// FX-3; A05 §3.1).
+func readToken(path string) (string, error) {
+	tok, err := platform.ReadOwnerOnly(path, MaxTokenFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("%w (no token file at %s)", ErrNotRunning, path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("refusing to send the token: %w", err)
+	}
+	return strings.TrimSpace(string(tok)), nil
+}
+
+// MaxTokenFile bounds the token file read: the token is one short line
+// (A05 §3.1, at most 64 bytes from the desktop), so anything near this size
+// is not a token file.
+const MaxTokenFile = 4 << 10
 
 // Handshake wraps an established connection and performs system.hello.
 func Handshake(ctx context.Context, nc net.Conn, token, name, version string, onNotify Notify) (*Client, error) {
@@ -178,4 +198,36 @@ func (c *Client) Close() error {
 	err := c.nc.Close()
 	<-c.closed
 	return err
+}
+
+// ErrNotRunning: no daemon answers for this home (no token file, or no
+// endpoint). The CLI starts a daemon on this error only; any other Dial
+// error, such as a refused token file, is the user's to see (WH-1+2).
+var ErrNotRunning = errors.New("wardend is not running")
+
+// notRunning keeps the transport's message and matches ErrNotRunning.
+type notRunning struct{ err error }
+
+func (e notRunning) Error() string   { return e.err.Error() }
+func (e notRunning) Unwrap() []error { return []error{ErrNotRunning, e.err} }
+
+// dialError classifies a transport Dial error. Only a missing or refusing
+// endpoint is ErrNotRunning, worded "wardend is not running"; anything else
+// says what happened, without the transport's "not running" prefix, and
+// keeps its cause (WH-1+2). Context errors pass through unchanged.
+func dialError(endpoint string, err error) error {
+	if platform.EndpointMissing(err) {
+		return notRunning{err}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	cause := err
+	if u := errors.Unwrap(err); u != nil && strings.HasPrefix(err.Error(), "wardend is not running (") {
+		cause = u
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("cannot connect to wardend at %s: access denied; the endpoint exists but refuses this user: %w", endpoint, cause)
+	}
+	return fmt.Errorf("cannot connect to wardend at %s: %w", endpoint, cause)
 }

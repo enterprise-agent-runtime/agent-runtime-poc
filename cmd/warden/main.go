@@ -73,14 +73,32 @@ func connect(ctx context.Context, autostart bool) (*api.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil)
-	if err == nil || !autostart {
+	return connectTo(ctx, l, autostart, startDaemon)
+}
+
+// connectTo is connect for a layout, with the daemon starter injected.
+func connectTo(ctx context.Context, l platform.Layout, autostart bool, start func(context.Context, platform.Layout) error) (*api.Client, error) {
+	return connectWith(ctx, l, autostart, dialCLI, start)
+}
+
+func dialCLI(ctx context.Context, l platform.Layout) (*api.Client, error) {
+	return api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil)
+}
+
+// connectWith is connectTo with the dialer injected too.
+func connectWith(ctx context.Context, l platform.Layout, autostart bool, dial func(context.Context, platform.Layout) (*api.Client, error), start func(context.Context, platform.Layout) error) (*api.Client, error) {
+	c, err := dial(ctx, l)
+	// Start a daemon only when none answers: any other error (a refused
+	// token file, an endpoint served by another user) must reach the user
+	// unchanged, and starting a second wardend would replace the running
+	// one's token (WH-1+2).
+	if err == nil || !autostart || !errors.Is(err, api.ErrNotRunning) {
 		return c, err
 	}
-	if err := startDaemon(ctx, l); err != nil {
+	if err := start(ctx, l); err != nil {
 		return nil, err
 	}
-	return api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil)
+	return dial(ctx, l)
 }
 
 // wardendPath finds wardend next to this executable.
@@ -104,24 +122,54 @@ func startDaemon(ctx context.Context, l platform.Layout) error {
 	if err := l.Ensure(); err != nil {
 		return err
 	}
-	_ = os.Remove(l.Token())
+	// The token file is not removed here: a daemon that won the endpoint a
+	// moment ago may just have written it, and the new wardend replaces a
+	// stale one itself once it holds the endpoint (WH-1+2).
 	pid, err := platform.SpawnDaemon(exe, nil, filepath.Join(l.Logs(), "wardend.log"), nil)
 	if err != nil {
 		return fmt.Errorf("start wardend: %w", err)
 	}
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		if c, err := api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil); err == nil {
-			c.Close()
-			fmt.Fprintf(os.Stderr, "started wardend (pid %d)\n", pid)
-			return nil
-		}
-		if !platform.Alive(pid) {
-			return fmt.Errorf("wardend exited during start; see %s", filepath.Join(l.Logs(), "wardend.log"))
-		}
-		time.Sleep(150 * time.Millisecond)
+	pause := func() { time.Sleep(150 * time.Millisecond) }
+	ours, err := waitUp(ctx, l, dialCLI, func() bool { return platform.Alive(pid) }, 100, 20, pause)
+	if err != nil {
+		return fmt.Errorf("%w; see %s", err, filepath.Join(l.Logs(), "wardend.log"))
 	}
-	return fmt.Errorf("wardend did not come up within 15 s; see %s", filepath.Join(l.Logs(), "wardend.log"))
+	if ours {
+		fmt.Fprintf(os.Stderr, "started wardend (pid %d)\n", pid)
+	} else {
+		fmt.Fprintln(os.Stderr, "wardend was started concurrently by another client")
+	}
+	return nil
+}
+
+// waitUp polls until a daemon answers, at most tries times. The spawned
+// wardend may exit (code 3) because another one won the endpoint; that one
+// binds before it writes its token (WH-1+2), so a client can see no token
+// or a stale one for a moment. Polling therefore goes on for graceTries
+// more attempts after ours has exited; ours reports whether the daemon
+// that answered is the one we spawned (still alive).
+func waitUp(ctx context.Context, l platform.Layout, dial dialFunc, alive func() bool, tries, graceTries int, pause func()) (ours bool, err error) {
+	grace := -1
+	for i := 0; i < tries; i++ {
+		c, err := dial(ctx, l)
+		if err == nil {
+			if c != nil {
+				c.Close()
+			}
+			return grace < 0, nil
+		}
+		if grace < 0 && !alive() {
+			grace = graceTries
+		}
+		if grace == 0 {
+			return false, errors.New("wardend exited during start")
+		}
+		if grace > 0 {
+			grace--
+		}
+		pause()
+	}
+	return false, errors.New("wardend did not come up within 15 s")
 }
 
 // do connects (starting the daemon if needed), calls one method and
@@ -164,19 +212,36 @@ func versionCmd() *cobra.Command {
 		fmt.Printf("warden %s (%s) %s %s/%s\n", buildinfo.Version, buildinfo.Commit, buildinfo.GoVersion(), platform.OS(), platform.Arch())
 		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 		defer cancel()
-		c, err := connect(ctx, false)
+		l, err := layout()
 		if err != nil {
-			fmt.Println("wardend: not running")
-			return nil
-		}
-		defer c.Close()
-		var v map[string]any
-		if err := c.Call(ctx, "system.version", nil, &v); err != nil {
 			return err
 		}
-		fmt.Printf("wardend %v (%v) protocol %v\n", v["version"], v["commit"], v["protocol"])
-		return nil
+		return printDaemonVersion(ctx, l, dialCLI, os.Stdout)
 	}}
+}
+
+// dialFunc dials the daemon of a layout (dialCLI, or a test's fake).
+type dialFunc = func(context.Context, platform.Layout) (*api.Client, error)
+
+// printDaemonVersion prints the daemon's version line, "not running" only for
+// api.ErrNotRunning, and the real error otherwise (WH-1+2).
+func printDaemonVersion(ctx context.Context, l platform.Layout, dial dialFunc, stdout io.Writer) error {
+	c, err := dial(ctx, l)
+	if errors.Is(err, api.ErrNotRunning) {
+		fmt.Fprintln(stdout, "wardend: not running")
+		return nil
+	}
+	if err != nil {
+		fmt.Fprintln(stdout, "wardend:", describe(err))
+		return nil
+	}
+	defer c.Close()
+	var v map[string]any
+	if err := c.Call(ctx, "system.version", nil, &v); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "wardend %v (%v) protocol %v\n", v["version"], v["commit"], v["protocol"])
+	return nil
 }
 
 type doctorCheck struct {
@@ -276,60 +341,93 @@ func daemonCmd() *cobra.Command {
 	d.AddCommand(&cobra.Command{Use: "start", Short: "Start wardend in the background", RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Second)
 		defer cancel()
-		if c, err := connect(ctx, false); err == nil {
-			c.Close()
-			fmt.Println("wardend is already running")
-			return nil
-		}
 		l, err := layout()
 		if err != nil {
 			return err
 		}
-		return startDaemon(ctx, l)
+		return daemonStart(ctx, l, dialCLI, startDaemon, os.Stdout)
 	}})
 	d.AddCommand(&cobra.Command{Use: "stop", Short: "Stop wardend (system.shutdown) and wait until it has exited", RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		c, err := connect(ctx, false)
+		l, err := layout()
 		if err != nil {
-			fmt.Println("wardend is not running")
-			return nil
+			return err
 		}
-		defer c.Close()
-		l, _ := layout()
-		open := func() (procWatch, error) {
-			pid, err := l.DaemonPID()
-			if err != nil {
-				return nil, fmt.Errorf("cannot read the wardend pid: %w", err)
-			}
-			w, err := platform.WatchProcess(pid)
-			if err != nil {
-				return nil, fmt.Errorf("cannot watch wardend: %w", err)
-			}
-			return w, nil
-		}
-		shutdown := func() error {
-			if err := c.Call(ctx, "system.shutdown", map[string]any{"confirm": true}, nil); err != nil {
-				return err
-			}
-			return c.Close() // do not hold a connection open while the server drains
-		}
-		return stopAndWait(open, shutdown, daemonStopTimeout, os.Stdout, os.Stderr, l.Home)
+		return daemonStop(ctx, l, dialCLI, os.Stdout, os.Stderr)
 	}})
 	d.AddCommand(&cobra.Command{Use: "status", Short: "Report whether wardend is running (exit 1 if not)", RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 		defer cancel()
-		l, _ := layout()
-		c, err := connect(ctx, false)
+		l, err := layout()
 		if err != nil {
-			fmt.Printf("wardend is not running (%s)\n", platform.Endpoint(l.Home))
-			return exitError{1}
+			return err
 		}
-		defer c.Close()
-		fmt.Printf("wardend %v running on %s (mode %v, features %v)\n", c.Hello["daemon_version"], platform.Endpoint(l.Home), c.Hello["mode"], c.Hello["features"])
-		return nil
+		return daemonStatus(ctx, l, dialCLI, os.Stdout)
 	}})
 	return d
+}
+
+// daemonStart is "warden daemon start".
+func daemonStart(ctx context.Context, l platform.Layout, dial dialFunc, start func(context.Context, platform.Layout) error, stdout io.Writer) error {
+	c, err := dial(ctx, l)
+	if err == nil {
+		c.Close()
+		fmt.Fprintln(stdout, "wardend is already running")
+		return nil
+	}
+	// As in connectWith: start only when no daemon answers (WH-1+2).
+	if !errors.Is(err, api.ErrNotRunning) {
+		return err
+	}
+	return start(ctx, l)
+}
+
+// daemonStop is "warden daemon stop".
+func daemonStop(ctx context.Context, l platform.Layout, dial dialFunc, stdout, stderr io.Writer) error {
+	c, err := dial(ctx, l)
+	if errors.Is(err, api.ErrNotRunning) {
+		fmt.Fprintln(stdout, "wardend is not running")
+		return nil
+	}
+	if err != nil {
+		return err // non-zero exit: wardend may well be running
+	}
+	defer c.Close()
+	open := func() (procWatch, error) {
+		pid, err := l.DaemonPID()
+		if err != nil {
+			return nil, fmt.Errorf("cannot read the wardend pid: %w", err)
+		}
+		w, err := platform.WatchProcess(pid)
+		if err != nil {
+			return nil, fmt.Errorf("cannot watch wardend: %w", err)
+		}
+		return w, nil
+	}
+	shutdown := func() error {
+		if err := c.Call(ctx, "system.shutdown", map[string]any{"confirm": true}, nil); err != nil {
+			return err
+		}
+		return c.Close() // do not hold a connection open while the server drains
+	}
+	return stopAndWait(open, shutdown, daemonStopTimeout, stdout, stderr, l.Home)
+}
+
+// daemonStatus is "warden daemon status": exit 1 when not running, and the
+// error itself (exit 2) when the daemon cannot be reached for another reason.
+func daemonStatus(ctx context.Context, l platform.Layout, dial dialFunc, stdout io.Writer) error {
+	c, err := dial(ctx, l)
+	if err != nil && !errors.Is(err, api.ErrNotRunning) {
+		return err // exit 2: unknown, not "not running"
+	}
+	if err != nil {
+		fmt.Fprintf(stdout, "wardend is not running (%s)\n", platform.Endpoint(l.Home))
+		return exitError{1}
+	}
+	defer c.Close()
+	fmt.Fprintf(stdout, "wardend %v running on %s (mode %v, features %v)\n", c.Hello["daemon_version"], platform.Endpoint(l.Home), c.Hello["mode"], c.Hello["features"])
+	return nil
 }
 
 func unlockCmd() *cobra.Command {
