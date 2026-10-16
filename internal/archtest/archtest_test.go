@@ -72,6 +72,13 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every INV-J message names the full allowlist, so whoever meets one knows
+	// where a listener may live without reading this package.
+	for _, v := range ListenRule(files) {
+		if !strings.HasSuffix(v.Detail, "; allowed only in cmd/warden-proxy and internal/exec/forward/listen.go") {
+			t.Errorf("INV-J message does not name the allowlist: %s", v)
+		}
+	}
 	var got []string
 	for _, vs := range [][]Violation{
 		ExecRule(files), ListenRule(files), OSRule(files), ImportRules("warden.dev/warden", files),
@@ -91,8 +98,17 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		// is allowed; the exemption is that one file, not its package or parent.
 		"INV-J internal/exec/forward/other.go", // net.ListenTCP beside the forwarder file
 		"INV-J internal/exec/other.go",         // net.Listen("tcp", ...) elsewhere in the executor
-		"imports apps/desktop/x.go",            // Go under apps/
-		"imports internal/exec/bad.go",         // exec importing the daemon
+		// Gaps found in review of 6bdf845: the method form s.ListenAndServe()
+		// on an http.Server is invisible to a call check, so the type is flagged
+		// (cmd/warden-proxy/server.go and internal/api/server_test.go are
+		// allowed); a dot-import hides every call from the analyser.
+		"INV-H internal/sandbox/dot/x.go",    // import . "os/exec", even with a justification
+		"INV-H internal/store/dotsyscall.go", // import . "syscall" hides ForkExec
+		"INV-J internal/api/dothttp.go",      // import . "net/http" hides ListenAndServe
+		"INV-J internal/api/dotnet.go",       // import . "net" hides Listen
+		"INV-J internal/api/server.go",       // http.Server, method-form ListenAndServe
+		"imports apps/desktop/x.go",          // Go under apps/
+		"imports internal/exec/bad.go",       // exec importing the daemon
 		// Design A02 §5 R3/R4. The review of 6bdf845 showed that the file-level
 		// listener exemption is only safe if no daemon package can link the
 		// forwarder: cmd/wardend importing internal/exec/forward and calling an

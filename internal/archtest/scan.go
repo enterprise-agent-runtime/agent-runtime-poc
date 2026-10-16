@@ -19,6 +19,7 @@ type File struct {
 	Dir        string   // slash-separated directory relative to the root ("" for the root)
 	Test       bool     // *_test.go
 	Imports    []string // import paths, any alias, including blank imports
+	DotImports []string // import paths imported with "." (their identifiers are not resolved into Uses)
 	Constraint string   // the //go:build expression, "" if none
 	Sandboxed  bool     // has a "// sandboxed: <reason>" comment with a non-empty reason
 	Uses       []Use    // selector expressions of interest (pkg.Name), resolved to import paths
@@ -103,6 +104,10 @@ func parseFile(fset *token.FileSet, abs, rel string) (File, error) {
 		}
 		if is.Name != nil {
 			name = is.Name.Name
+		}
+		if name == "." {
+			f.DotImports = append(f.DotImports, p)
+			continue
 		}
 		local[name] = p
 	}

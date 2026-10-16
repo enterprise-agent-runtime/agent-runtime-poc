@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -24,12 +26,30 @@ var listenDirs = []string{"cmd/warden-proxy"}
 // listenFiles may open a TCP or UDP listener although they lie outside
 // listenDirs. Each entry is one exact file, never a package or a directory, so
 // a listener added anywhere else, including beside the entry, still fails
-// INV-J. The only entry is the L1 in-sandbox proxy forwarder (CLAUDE.md §4
-// "Network"; docs/CONFLICTS.md C-46): "warden-exec proxy" listens on
-// 127.0.0.1:3128 inside the sandbox's network namespace, which is not a host
-// port, and never runs on the host outside a sandbox. INV-J's subject is the
-// daemon on the host, so this file does not breach it.
+// INV-J. The only entry is the in-sandbox proxy forwarder, "warden-exec proxy"
+// (CLAUDE.md §4 "Network"; docs/CONFLICTS.md C-46, C-26):
+//   - Linux L1 and L2: it listens on 127.0.0.1:3128 inside the sandbox's
+//     network namespace, which is not a host port.
+//   - macOS L1 (Seatbelt): there is no network namespace, so it listens on an
+//     ephemeral port on the shared host loopback. Any local process can reach
+//     it while the task runs, and it reaches only that task's allowlist; this
+//     is a risk accepted in design A06 §9 and WRD-10 T-23, not something this
+//     check removes.
+//
+// INV-J's subject is the daemon on the host. The exemption is safe only
+// together with ImportRules R4: no daemon package can import internal/exec,
+// so the daemon cannot link this file and call its listener on the host.
 var listenFiles = map[string]bool{"internal/exec/forward/listen.go": true}
+
+// listenAllowed ends every INV-J message, so the reader learns where a
+// listener may live without reading this package.
+var listenAllowed = "; allowed only in " + strings.Join(listenDirs, ", ") + " and " + strings.Join(sortedKeys(listenFiles), ", ")
+
+// dotWatchedExec and dotWatchedListen are the packages whose identifiers the rules look for. A
+// dot-import makes them unqualified, so Scan cannot resolve their uses and
+// the rules would be blind; such an import is therefore a violation itself.
+var dotWatchedExec = []string{"os/exec", "os", "syscall", "golang.org/x/sys/unix", "golang.org/x/sys/windows"}
+var dotWatchedListen = []string{"net", "net/http"}
 
 // osDirs may select behaviour by operating system (CLAUDE.md §3, §6). The
 // executor is included because its semantics are per OS (openat2, process
@@ -50,6 +70,11 @@ var processStarters = map[string]map[string]bool{
 func ExecRule(files []File) []Violation {
 	var out []Violation
 	for _, f := range files {
+		for _, imp := range f.DotImports {
+			if slices.Contains(dotWatchedExec, imp) {
+				out = append(out, Violation{f.Rel, 0, "INV-H", fmt.Sprintf("dot-import of %q hides process creation from this check", imp)})
+			}
+		}
 		for _, imp := range f.Imports {
 			if imp != "os/exec" {
 				continue
@@ -78,13 +103,22 @@ func ExecRule(files []File) []Violation {
 
 // ListenRule implements INV-J statically: no TCP or UDP listener outside
 // listenDirs and listenFiles. net.Listen and net.ListenPacket are allowed only
-// with a literal "unix", "unixpacket" or "unixgram" network. Test files are
-// exempt (httptest servers bind 127.0.0.1 inside the test process).
+// with a literal "unix", "unixpacket" or "unixgram" network. The net/http
+// Server type is flagged wherever it is named, because its methods
+// (ListenAndServe, Serve) are called on a value and are invisible to a check
+// of package-qualified calls. Dot-imports of net and net/http are flagged for
+// the same reason. Test files are exempt (httptest servers bind 127.0.0.1
+// inside the test process).
 func ListenRule(files []File) []Violation {
 	var out []Violation
 	for _, f := range files {
 		if f.Test || underAny(f.Dir, listenDirs) || listenFiles[f.Rel] {
 			continue
+		}
+		for _, imp := range f.DotImports {
+			if slices.Contains(dotWatchedListen, imp) {
+				out = append(out, Violation{f.Rel, 0, "INV-J", fmt.Sprintf("dot-import of %q hides listeners from this check", imp) + listenAllowed})
+			}
 		}
 		for _, u := range f.Uses {
 			bad := ""
@@ -97,9 +131,11 @@ func ListenRule(files []File) []Violation {
 				bad = "net." + u.Name
 			case u.Pkg == "net/http" && (u.Name == "ListenAndServe" || u.Name == "ListenAndServeTLS"):
 				bad = "http." + u.Name
+			case u.Pkg == "net/http" && u.Name == "Server":
+				bad = "http.Server (its ListenAndServe and Serve methods open or serve a listener)"
 			}
 			if bad != "" {
-				out = append(out, Violation{f.Rel, u.Line, "INV-J", bad + " outside " + strings.Join(listenDirs, ", ") + " and the forwarder file"})
+				out = append(out, Violation{f.Rel, u.Line, "INV-J", bad + listenAllowed})
 			}
 		}
 	}
@@ -201,4 +237,13 @@ func ImportRules(module string, files []File) []Violation {
 		}
 	}
 	return out
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
