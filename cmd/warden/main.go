@@ -135,15 +135,24 @@ func do(cmd *cobra.Command, method string, params any, out any) error {
 		return err
 	}
 	if asJSON {
-		var v any
-		_ = json.Unmarshal(raw, &v)
-		b, _ := json.MarshalIndent(v, "", "  ")
-		fmt.Println(string(b))
+		printJSON(os.Stdout, raw)
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)
 	}
 	return nil
+}
+
+// printJSON is the --json output of every command. encoding/json escapes C0
+// controls but writes DEL, C1 controls and bidi characters raw, and results
+// carry text the daemon did not write (Docker engine answers, provider
+// errors, tool output), so the bytes pass termsafe.EscapeJSON before they
+// reach the terminal (CWE-150, M2-3 review).
+func printJSON(w io.Writer, raw json.RawMessage) {
+	var v any
+	_ = json.Unmarshal(raw, &v)
+	b, _ := json.MarshalIndent(v, "", "  ")
+	fmt.Fprintln(w, string(termsafe.EscapeJSON(b)))
 }
 
 func versionCmd() *cobra.Command {

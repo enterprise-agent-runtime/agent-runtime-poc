@@ -2,8 +2,11 @@
 // a terminal (CWE-150, improper neutralization of escape sequences). The
 // daemon's doctor checks carry strings it did not write itself: Docker
 // engine fields and error text from whatever answers on the Docker endpoint
-// (design A05 §8.1). JSON output is already safe, because encoding/json
-// escapes control characters; the human renderer of cmd/warden is not.
+// (design A05 §8.1). Two functions cover the two kinds of output:
+// SanitizeDetail for text printed as text, and EscapeJSON for --json
+// output. encoding/json alone is not enough there: it escapes C0 controls
+// but writes DEL, the C1 controls U+0080–U+009F and the bidi characters raw
+// (review of M2-3).
 //
 // It is its own package because cmd/* may contain only wiring (CLAUDE.md
 // §6), the function is not OS-specific (so not internal/platform) and not

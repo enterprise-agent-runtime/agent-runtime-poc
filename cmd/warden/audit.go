@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"warden.dev/warden/internal/termsafe"
 )
 
 func auditCmd() *cobra.Command {
@@ -113,21 +117,7 @@ func eventsCmd() *cobra.Command {
 			return err
 		}
 		if !asJSON {
-			for _, e := range r.Events {
-				var h struct {
-					Seq     int64           `json:"seq"`
-					TS      string          `json:"ts"`
-					Type    string          `json:"type"`
-					Chain   string          `json:"chain"`
-					Payload json.RawMessage `json:"payload"`
-				}
-				_ = json.Unmarshal(e, &h)
-				p := string(h.Payload)
-				if len(p) > 160 {
-					p = p[:160] + "…"
-				}
-				fmt.Printf("%6d %s %-20s %s\n", h.Seq, h.TS, h.Type, p)
-			}
+			renderEvents(os.Stdout, r.Events)
 		}
 		return nil
 	}}
@@ -135,4 +125,26 @@ func eventsCmd() *cobra.Command {
 	c.Flags().IntVar(&after, "after", 0, "only events with seq greater than this")
 	c.Flags().IntVar(&limit, "limit", 200, "maximum events (1..1000)")
 	return c
+}
+
+// renderEvents prints one line per event with the payload as compact JSON.
+// The payload is JSON the daemon encoded, which can hold raw C1 controls and
+// bidi characters from tool output or engine text (CWE-150, M2-3 review), so
+// it passes termsafe.EscapeJSON before it reaches the terminal.
+func renderEvents(w io.Writer, events []json.RawMessage) {
+	for _, e := range events {
+		var h struct {
+			Seq     int64           `json:"seq"`
+			TS      string          `json:"ts"`
+			Type    string          `json:"type"`
+			Chain   string          `json:"chain"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		_ = json.Unmarshal(e, &h)
+		p := string(termsafe.EscapeJSON(h.Payload))
+		if len(p) > 160 {
+			p = p[:160] + "…"
+		}
+		fmt.Fprintf(w, "%6d %s %-20s %s\n", h.Seq, h.TS, h.Type, p)
+	}
 }
