@@ -3,7 +3,9 @@ package execproto
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // The error codes are wire values in both directions: the daemon maps
@@ -87,5 +89,40 @@ func TestErrorCodes(t *testing.T) {
 	}
 	if _, ok := CodeByName("permission_denied"); ok {
 		t.Error("CodeByName accepted a name A06 does not define")
+	}
+}
+
+// TestNewErrorDetailCapped: error.data.detail is at most 1024 bytes on the
+// wire (common.json ErrorData), and a peer that validates would reject the
+// whole error, losing the violation it reports. The cut must fall on a
+// UTF-8 boundary or the JSON encoder substitutes U+FFFD and the detail no
+// longer says what the executor wrote.
+func TestNewErrorDetailCapped(t *testing.T) {
+	cases := []struct {
+		name, detail string
+		wantLen      int
+	}{
+		{"short", "'..' escapes the root", len("'..' escapes the root")},
+		{"exactly 1024", strings.Repeat("a", 1024), 1024},
+		{"1025 bytes", strings.Repeat("a", 1025), 1024},
+		{"multi-byte at the cut", strings.Repeat("a", 1023) + "é", 1023},
+		{"all multi-byte", strings.Repeat("€", 500), 1023},
+	}
+	for _, tc := range cases {
+		d := NewError(ErrIOError, tc.detail).Data.Detail
+		if len(d) != tc.wantLen || !utf8.ValidString(d) || !strings.HasPrefix(tc.detail, d) {
+			t.Errorf("%s: detail has %d bytes (valid UTF-8 %v), want a %d-byte prefix", tc.name, len(d), utf8.ValidString(d), tc.wantLen)
+		}
+	}
+}
+
+// TestNewErrorUnknownCode: a code outside -32101…-32120 would go out with
+// data.code "" and violate the ErrorData enum; it is reported as io_error.
+func TestNewErrorUnknownCode(t *testing.T) {
+	for _, c := range []Code{0, -32601, -32100, -32121} {
+		e := NewError(c, "x")
+		if e.Code != ErrIOError || e.Data.Code != "io_error" || e.Data.Violation {
+			t.Errorf("NewError(%d) = %d %+v, want io_error", c, e.Code, e.Data)
+		}
 	}
 }

@@ -1,10 +1,13 @@
 package execproto
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -71,6 +74,20 @@ func TestProfileMatch(t *testing.T) {
 		{"different file", []string{"pip", "install", "-r", "dev-requirements.txt"}, ""},
 		{"install", []string{"pip", "install", "-r", "requirements.txt"}, "install"},
 		{"no globbing", []string{"npx", "tsc", "-p", "*"}, ""},
+
+		// A08 §2.4's limits on what <args> may absorb, applied here too so
+		// the executor never accepts what the PDP refused (review of
+		// 38efd07). A NUL or newline element is how argv smuggling and log
+		// forging start; an unbounded tail lets one profile run anything.
+		{"<args> empty element", []string{"npm", "test", "--", ""}, ""},
+		{"<args> element with a newline", []string{"npm", "test", "--", "a\nb"}, ""},
+		{"<args> element with NUL", []string{"npm", "test", "--", "a\x00b"}, ""},
+		{"<args> 64 elements", append([]string{"npm", "test", "--"}, repeat("x", 64)...), "node-test"},
+		{"<args> 65 elements", append([]string{"npm", "test", "--"}, repeat("x", 65)...), ""},
+		// A08 §2.4 step 5 matches /usr/bin/npm as npm when it resolves into
+		// the toolchain; A06 §6 step 4 requires argv[0] without '/'. The executor keeps A06 and fails closed (no profile,
+		// so an approval is needed); recorded as an A08/A06 difference.
+		{"/usr/bin/npm test stays unmatched", []string{"/usr/bin/npm", "test"}, ""},
 	}
 	for _, tc := range cases {
 		got, ok := set.Match(tc.argv)
@@ -194,5 +211,82 @@ func TestLoadProfiles_Digest(t *testing.T) {
 	}
 	if _, _, err := LoadProfiles(filepath.Join(t.TempDir(), "missing.json")); err == nil {
 		t.Error("LoadProfiles of a missing file succeeded")
+	}
+}
+
+func repeat(s string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = s
+	}
+	return out
+}
+
+// TestEncodeProfiles: the daemon writes the profiles file and exec.hello
+// reports the sha256 of the bytes the executor read; any mismatch destroys
+// the sandbox (hello_mismatch, A06 §4.3). The first version had two
+// encodings: MarshalJSON wrote "<args>" literally, json.Marshal escaped it
+// as <args>, so a daemon hashing one and writing the other would
+// have failed every task. There is now one encoding, and EncodeProfiles
+// returns it with its digest.
+func TestEncodeProfiles(t *testing.T) {
+	set := mustParse(t, wrd16Profiles)
+	data, digest, err := EncodeProfiles(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaMethod, err1 := set.MarshalJSON()
+	viaPointer, err2 := json.Marshal(set)
+	viaValue, err3 := json.Marshal(*set)
+	if err1 != nil || err2 != nil || err3 != nil {
+		t.Fatal(err1, err2, err3)
+	}
+	for name, b := range map[string][]byte{"MarshalJSON": viaMethod, "json.Marshal(&set)": viaPointer, "json.Marshal(set)": viaValue} {
+		if !bytes.Equal(b, data) {
+			t.Errorf("%s = %s\nEncodeProfiles = %s", name, b, data)
+		}
+	}
+	if digest != ProfilesDigest(data) {
+		t.Errorf("digest %s is not the digest of the returned bytes", digest)
+	}
+	back, err := ParseProfiles(data)
+	if err != nil || !reflect.DeepEqual(back, set) {
+		t.Errorf("ParseProfiles(EncodeProfiles(set)) = %+v, %v; want %+v", back, err, set)
+	}
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, loaded, err := LoadProfiles(path); err != nil || loaded != digest {
+		t.Errorf("LoadProfiles digest = %s, %v; want %s", loaded, err, digest)
+	}
+}
+
+// TestEncodeProfiles_RejectsInvalid: an encoder that wrote ProfileSet{} as
+// {"version":0,...} would hand the executor a file it refuses at start.
+func TestEncodeProfiles_RejectsInvalid(t *testing.T) {
+	cases := map[string]*ProfileSet{
+		"zero value":      {},
+		"nil":             nil,
+		"version 2":       {Version: 2},
+		"bad name":        {Version: 1, Profiles: []Profile{{Name: "Node", Commands: [][]string{{"npm"}}}}},
+		"duplicate name":  {Version: 1, Profiles: []Profile{{Name: "a", Commands: [][]string{{"x"}}}, {Name: "a", Commands: [][]string{{"y"}}}}},
+		"no commands":     {Version: 1, Profiles: []Profile{{Name: "a"}}},
+		"<args> not last": {Version: 1, Profiles: []Profile{{Name: "a", Commands: [][]string{{"npm", "<args>", "x"}}}}},
+		"empty token":     {Version: 1, Profiles: []Profile{{Name: "a", Commands: [][]string{{"npm", ""}}}}},
+	}
+	for name, set := range cases {
+		if _, _, err := EncodeProfiles(set); err == nil {
+			t.Errorf("%s: EncodeProfiles succeeded", name)
+		}
+		if set == nil {
+			continue
+		}
+		if _, err := set.MarshalJSON(); err == nil {
+			t.Errorf("%s: MarshalJSON succeeded", name)
+		}
+		if _, err := json.Marshal(set); err == nil {
+			t.Errorf("%s: json.Marshal succeeded", name)
+		}
 	}
 }

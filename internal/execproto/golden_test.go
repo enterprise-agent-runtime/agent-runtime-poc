@@ -3,6 +3,7 @@ package execproto
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -115,15 +116,15 @@ func instance(t *testing.T, raw []byte) any {
 
 // canonical re-encodes JSON with sorted keys. The profiles file is the one
 // place where object key order is meaning (first profile in file order wins,
-// A06 §6 step 4), so it is compared compacted, order intact.
+// A06 §6 step 4), so it is compared as the parsed, ordered ProfileSet.
 func canonical(t *testing.T, name string, raw []byte) string {
 	t.Helper()
 	if name == "profiles" {
-		var buf bytes.Buffer
-		if err := json.Compact(&buf, raw); err != nil {
+		set, err := ParseProfiles(raw)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return buf.String()
+		return fmt.Sprintf("%#v", *set)
 	}
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {

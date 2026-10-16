@@ -22,7 +22,8 @@ const (
 	maxProfileName   = 32   // ^[a-z][a-z0-9-]{0,31}$
 	maxEntryTokens   = 16   // maxItems of an entry
 	maxTokenChars    = 256  // maxLength of a token, in characters as JSON Schema counts
-	maxArgsElemBytes = 4096 // each element matched by <args>
+	maxArgsElemBytes = 4096 // each element matched by <args> (A06 §6 step 4, A08 §2.4)
+	maxArgsElems     = 64   // elements <args> may absorb (A08 §2.4)
 	profilesVersion  = 1
 	errPrefix        = "execproto: profiles file"
 )
@@ -174,11 +175,32 @@ func (p *ProfileSet) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON writes the file with the profiles in their order; it is how
-// the daemon generates --allow-profiles.
+// EncodeProfiles is how the daemon writes --allow-profiles: it validates
+// the set against the same rules ParseProfiles applies and returns the file
+// bytes together with their digest, which exec.hello must report back
+// (A06 §3.1, §4.3). Write exactly these bytes.
+func EncodeProfiles(set *ProfileSet) (data []byte, digest string, err error) {
+	if set == nil {
+		return nil, "", errors.New(errPrefix + ": nil profile set")
+	}
+	data, err = set.MarshalJSON()
+	if err != nil {
+		return nil, "", err
+	}
+	return data, ProfilesDigest(data), nil
+}
+
+// MarshalJSON validates the set and writes it with the profiles in their
+// order. It uses encoding/json's default escaping ("<args>" is written as
+// <args>), because json.Marshal re-escapes a Marshaler's output:
+// any other choice would make json.Marshal(set) and set.MarshalJSON()
+// produce different bytes, hence different digests.
 func (p ProfileSet) MarshalJSON() ([]byte, error) {
+	if err := p.validate(); err != nil {
+		return nil, err
+	}
 	var b bytes.Buffer
-	taskKey, err := marshalNoEscape(p.TaskKey)
+	taskKey, err := json.Marshal(p.TaskKey)
 	if err != nil {
 		return nil, err
 	}
@@ -187,11 +209,11 @@ func (p ProfileSet) MarshalJSON() ([]byte, error) {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		name, err := marshalNoEscape(pr.Name)
+		name, err := json.Marshal(pr.Name)
 		if err != nil {
 			return nil, err
 		}
-		cmds, err := marshalNoEscape(pr.Commands)
+		cmds, err := json.Marshal(pr.Commands)
 		if err != nil {
 			return nil, err
 		}
@@ -203,26 +225,35 @@ func (p ProfileSet) MarshalJSON() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// marshalNoEscape encodes without HTML escaping, so "<args>" is written as
-// is rather than <args> (equivalent JSON, but people read the
-// file too). Callers that need these exact bytes call MarshalJSON directly:
-// json.Marshal re-escapes a Marshaler's output.
-func marshalNoEscape(v any) ([]byte, error) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
+// validate applies the A06 §3.2 rules to a set built in Go.
+func (p ProfileSet) validate() error {
+	if p.Version != profilesVersion {
+		return fmt.Errorf("%s: version %d, want %d", errPrefix, p.Version, profilesVersion)
 	}
-	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+	seen := map[string]bool{}
+	for _, pr := range p.Profiles {
+		if !validProfileName(pr.Name) {
+			return fmt.Errorf("%s: profile name %q does not match ^[a-z][a-z0-9-]{0,31}$", errPrefix, pr.Name)
+		}
+		if seen[pr.Name] {
+			return fmt.Errorf("%s: duplicate profile %q", errPrefix, pr.Name)
+		}
+		seen[pr.Name] = true
+		if err := validateCommands(pr.Commands); err != nil {
+			return fmt.Errorf("%s: profile %q: %w", errPrefix, pr.Name, err)
+		}
+	}
+	return nil
 }
 
 // Match returns the first profile, in file order, with an entry matching
 // argv exactly (A06 §6 step 4): argv[0] contains no '/' and equals the
 // first token, every other literal token equals the argv element at its
 // position, and argv has exactly as many elements as the entry unless the
-// entry ends in <args>, which matches zero or more remaining elements of at
-// most 4096 bytes each. Case-sensitive; no globbing; no option reordering.
+// entry ends in <args>, which matches zero or more remaining elements.
+// Case-sensitive; no globbing; no option reordering. What <args> may absorb
+// follows A08 §2.4 so the executor never accepts what the PDP refuses: at
+// most 64 elements, each 1 to 4096 bytes, none containing a newline or NUL.
 // A nil set matches nothing.
 func (p *ProfileSet) Match(argv []string) (string, bool) {
 	if p == nil {
@@ -257,8 +288,12 @@ func matchEntry(cmd, argv []string) bool {
 			return false
 		}
 	}
-	for _, a := range argv[len(fixed):] {
-		if len(a) > maxArgsElemBytes {
+	rest := argv[len(fixed):]
+	if len(rest) > maxArgsElems {
+		return false
+	}
+	for _, a := range rest {
+		if len(a) == 0 || len(a) > maxArgsElemBytes || strings.ContainsAny(a, "\n\x00") {
 			return false
 		}
 	}

@@ -2,6 +2,7 @@ package execproto
 
 import (
 	"strconv"
+	"unicode/utf8"
 )
 
 // Code is a numeric executor error code, -32101 … -32120 (A06 §4.4). A Code
@@ -136,9 +137,29 @@ type Error struct {
 	Data ErrorData
 }
 
+// MaxDetailBytes is the maxLength of error.data.detail (common.json).
+const MaxDetailBytes = 1024
+
 // NewError builds an Error whose data carries the code's name and violation
-// classification; detail is a sanitized message (≤ 1024 bytes on the wire).
+// classification. A code outside the executor range becomes ErrIOError, so
+// data.code is always a name A06 defines. detail is cut to MaxDetailBytes on
+// a UTF-8 boundary.
+//
+// detail goes to the daemon, into events and into the model's tool result:
+// it must be a fixed, sanitized description, and must never contain argv
+// elements, file content, environment values or OS error text that quotes
+// them (A06 §4.4 io_error: "message sanitized"; INV-C).
 func NewError(code Code, detail string) *Error {
+	if code.Name() == "" {
+		code = ErrIOError
+	}
+	if len(detail) > MaxDetailBytes {
+		cut := MaxDetailBytes
+		for cut > 0 && !utf8.RuneStart(detail[cut]) {
+			cut--
+		}
+		detail = detail[:cut]
+	}
 	k := code.Violation()
 	return &Error{Code: code, Data: ErrorData{Code: code.Name(), Violation: k != "", Kind: k, Detail: detail}}
 }
