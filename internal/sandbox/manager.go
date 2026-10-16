@@ -48,11 +48,15 @@ type Handle struct {
 // Manager creates and destroys sandboxes. One execution owns one sandbox
 // (CLAUDE.md §7); Create returns only once the sandbox is ready, and every
 // Create that returned a Handle is matched by exactly one Destroy.
+//
+// Events: the real backends (M2-13..M2-21) are to emit sandbox.create after
+// exec.hello and sandbox.destroy at the end of teardown (A06 §13.2, §13.3).
+// The interface itself carries no event sink yet, and
+// sandboxtest.FakeSandbox emits no events.
 type Manager interface {
 	// Create validates the Spec, builds and launches the sandbox and
-	// returns it ready (emits sandbox.create).
+	// returns it ready.
 	Create(ctx context.Context, s *Spec) (*Handle, error)
-	// Destroy tears the sandbox down (emits sandbox.destroy). An unknown
-	// id is ErrUnknownSandbox.
+	// Destroy tears the sandbox down. An unknown id is ErrUnknownSandbox.
 	Destroy(ctx context.Context, id string, reason DestroyReason) error
 }

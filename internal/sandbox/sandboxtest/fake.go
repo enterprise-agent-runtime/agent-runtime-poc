@@ -68,7 +68,7 @@ func (f *FakeSandbox) Create(ctx context.Context, s *sandbox.Spec) (*sandbox.Han
 	}
 	h := &sandbox.Handle{ID: s.ID, Level: s.Level, Backend: "fake", Mounts: mounts, EnvKeys: sandbox.EnvKeys(), Created: now()}
 	f.live[s.ID] = h
-	f.specs[s.ID] = *s
+	f.specs[s.ID] = cloneSpec(*s)
 	cp := *h
 	cp.Mounts = slices.Clone(h.Mounts)
 	return &cp, nil
@@ -110,7 +110,7 @@ func (f *FakeSandbox) Spec(id string) (sandbox.Spec, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s, ok := f.specs[id]
-	return s, ok
+	return cloneSpec(s), ok
 }
 
 // Destroyed returns every Destroy call so far, in order.
@@ -118,4 +118,19 @@ func (f *FakeSandbox) Destroyed() []Destroyed {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.destroyed)
+}
+
+// cloneSpec deep-copies the slices of a Spec, so neither the caller of
+// Create nor the caller of Spec shares backing arrays with the record.
+func cloneSpec(s sandbox.Spec) sandbox.Spec {
+	s.WorktreeMasks = slices.Clone(s.WorktreeMasks)
+	tcs := make([]sandbox.Toolchain, len(s.Toolchains))
+	for i, tc := range s.Toolchains {
+		tcs[i] = sandbox.Toolchain{Root: tc.Root, BinDirs: slices.Clone(tc.BinDirs), Masks: slices.Clone(tc.Masks)}
+	}
+	if s.Toolchains == nil {
+		tcs = nil
+	}
+	s.Toolchains = tcs
+	return s
 }
