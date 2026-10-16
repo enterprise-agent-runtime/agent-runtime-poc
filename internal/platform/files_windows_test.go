@@ -3,11 +3,14 @@
 package platform
 
 import (
+	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/Microsoft/go-winio"
@@ -52,7 +55,7 @@ func TestOwnerOnly_AbbreviatedSID(t *testing.T) {
 	}
 	n := syscall.GetLengthSid(sid)
 	adminsSID := unsafe.Slice((*byte)(unsafe.Pointer(sid)), n)
-	read, err := fileSecurity(p)
+	read, err := pathSecurity(p) // by path: the DACL denies the user the SYNCHRONIZE a handle needs
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,4 +175,67 @@ func currentUserSDDLSID() (string, error) {
 	}
 	s, err := (*syscall.SID)(unsafe.Pointer(&sid[0])).String()
 	return s, err
+}
+
+// TestReadOwnerOnly_RefusesJunction guards the review of c8f81ca (WH-1+2):
+// the token file is opened with FILE_FLAG_OPEN_REPARSE_POINT and a reparse
+// point at the path is refused, never followed. A junction needs no
+// privilege to create, unlike a symlink, so this runs on every Windows
+// machine; the symlinked-token Dial test in internal/api needs Developer
+// Mode here and runs everywhere on Unix.
+func TestReadOwnerOnly_RefusesJunction(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := ensureOwnerOnlyDir(target); err != nil { // owner-only, so only the link is wrong
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "token")
+	makeJunction(t, link, target)
+	if _, err := ReadOwnerOnly(link, 4096); err == nil || !errors.Is(err, errReparsePoint) {
+		t.Fatalf("ReadOwnerOnly(junction) = %v; want a reparse-point refusal", err)
+	}
+	if ok, err := OwnerOnly(link); err != nil || ok {
+		t.Fatalf("OwnerOnly(junction) = %v %v; want false", ok, err)
+	}
+}
+
+// makeJunction creates link as a directory junction (mount point) to
+// target with FSCTL_SET_REPARSE_POINT; unlike a symlink it needs no
+// privilege.
+func makeJunction(t *testing.T, link, target string) {
+	t.Helper()
+	if err := os.Mkdir(link, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	subst := utf16.Encode([]rune(`\??\` + target))
+	print := utf16.Encode([]rune(target))
+	var path []uint16
+	path = append(path, subst...)
+	path = append(path, 0)
+	path = append(path, print...)
+	path = append(path, 0)
+	buf := make([]byte, 0, 16+2*len(path))
+	buf = binary.LittleEndian.AppendUint32(buf, 0xA0000003) // IO_REPARSE_TAG_MOUNT_POINT
+	buf = binary.LittleEndian.AppendUint16(buf, uint16(8+2*len(path)))
+	buf = binary.LittleEndian.AppendUint16(buf, 0)
+	buf = binary.LittleEndian.AppendUint16(buf, 0)                        // SubstituteNameOffset
+	buf = binary.LittleEndian.AppendUint16(buf, uint16(2*len(subst)))     // SubstituteNameLength
+	buf = binary.LittleEndian.AppendUint16(buf, uint16(2*(len(subst)+1))) // PrintNameOffset
+	buf = binary.LittleEndian.AppendUint16(buf, uint16(2*len(print)))     // PrintNameLength
+	for _, c := range path {
+		buf = binary.LittleEndian.AppendUint16(buf, c)
+	}
+	p, err := syscall.UTF16PtrFromString(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := syscall.CreateFile(p, syscall.GENERIC_WRITE, 0, nil, syscall.OPEN_EXISTING, fileFlagOpenReparsePoint|fileFlagBackupSemantics, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.CloseHandle(h)
+	var n uint32
+	if err := syscall.DeviceIoControl(h, 0x000900A4, &buf[0], uint32(len(buf)), nil, 0, &n, nil); err != nil { // FSCTL_SET_REPARSE_POINT
+		t.Fatalf("FSCTL_SET_REPARSE_POINT: %v", err)
+	}
 }

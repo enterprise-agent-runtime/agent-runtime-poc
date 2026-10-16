@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,18 +70,20 @@ func Dial(ctx context.Context, l platform.Layout, name, version string, onNotify
 // one it can read has leaked the token already (WH-1+2, security review of
 // FX-3; A05 §3.1).
 func readToken(path string) (string, error) {
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+	tok, err := platform.ReadOwnerOnly(path, MaxTokenFile)
+	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("%w (no token file at %s)", ErrNotRunning, path)
 	}
-	if err := platform.CheckOwnerOnly(path); err != nil {
-		return "", fmt.Errorf("refusing to send the token: %w", err)
-	}
-	tok, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("cannot read the token file: %w", err)
+		return "", fmt.Errorf("refusing to send the token: %w", err)
 	}
 	return strings.TrimSpace(string(tok)), nil
 }
+
+// MaxTokenFile bounds the token file read: the token is one short line
+// (A05 §3.1, at most 64 bytes from the desktop), so anything near this size
+// is not a token file.
+const MaxTokenFile = 4 << 10
 
 // Handshake wraps an established connection and performs system.hello.
 func Handshake(ctx context.Context, nc net.Conn, token, name, version string, onNotify Notify) (*Client, error) {

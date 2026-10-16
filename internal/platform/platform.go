@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/user"
@@ -92,19 +93,38 @@ func (l Layout) Ensure() error {
 	return nil
 }
 
-// CheckOwnerOnly returns an error unless path is owner-only (OwnerOnly):
-// wardend checks the token file right after writing it and refuses to serve,
-// and the client checks it before reading the token (WH-1+2, security review
-// of FX-3).
+// CheckOwnerOnly returns an error unless path is owner-only (OwnerOnly).
+// Code that reads the file uses ReadOwnerOnly instead, which decides on the
+// handle it reads from (WH-1+2).
 func CheckOwnerOnly(path string) error {
 	ok, err := OwnerOnly(path)
 	if err != nil {
 		return fmt.Errorf("cannot check that %s is owner-only: %w", path, err)
 	}
 	if !ok {
-		return fmt.Errorf("%s is not owner-only (%s): another account could read or replace it; remove it and restart wardend", path, ownerOnlyDetail(path))
+		return notOwnerOnly(path, ownerOnlyDetail(path))
 	}
 	return nil
+}
+
+// errNotOwnerOnly is wrapped by every refusal of CheckOwnerOnly and
+// ReadOwnerOnly.
+var errNotOwnerOnly = errors.New("not owner-only")
+
+func notOwnerOnly(path, detail string) error {
+	return fmt.Errorf("%s is not owner-only (%s): another account could read or replace it; remove it and restart wardend: %w", path, detail, errNotOwnerOnly)
+}
+
+// readLimited reads at most max bytes and refuses a longer file.
+func readLimited(r io.Reader, path string, max int) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, int64(max)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > max {
+		return nil, fmt.Errorf("%s is larger than %d bytes; it is not a token file", path, max)
+	}
+	return b, nil
 }
 
 // writeHooks lets tests choose the temp name and look at the temp file

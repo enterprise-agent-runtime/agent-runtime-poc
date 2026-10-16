@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,29 +46,73 @@ func writeOwnerOnly(path string, data []byte, h writeHooks) error {
 // ensureOwnerOnlyDir creates dir 0700.
 func ensureOwnerOnlyDir(dir string) error { return os.MkdirAll(dir, 0o700) }
 
-// OwnerOnly reports whether path is owned by the current uid and not
-// readable or writable by group or others.
+// OwnerOnly reports whether path, not followed if it is a symlink, is owned
+// by the current uid and not readable or writable by group or others. A
+// symlink is never owner-only (WH-1+2 review of c8f81ca: os.Stat followed
+// run/token to the user's own 0600 SSH key).
 func OwnerOnly(path string) (bool, error) {
-	fi, err := os.Stat(path)
+	fi, err := os.Lstat(path)
 	if err != nil {
 		return false, err
 	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return false, nil
+	}
+	return statOwnerOnly(fi)
+}
+
+func statOwnerOnly(fi os.FileInfo) (bool, error) {
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
-		return false, fmt.Errorf("%s: no owner information", path)
+		return false, fmt.Errorf("%s: no owner information", fi.Name())
 	}
 	return ownerOnlyMode(fi.Mode().Perm(), int(st.Uid), os.Getuid()), nil
+}
+
+// ReadOwnerOnly opens path once, without following a symlink (O_NOFOLLOW)
+// and without blocking on a FIFO, decides on that descriptor that it is a
+// regular owner-only file, and reads at most max bytes from it. Checking by
+// path and then reading by path let the file be swapped in between (WH-1+2
+// review of c8f81ca, CWE-367/59).
+func ReadOwnerOnly(path string, max int) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("%s is a symbolic link, not an owner-only file: %w", path, errNotOwnerOnly)
+		}
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file: %w", path, errNotOwnerOnly)
+	}
+	ok, err := statOwnerOnly(fi)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, notOwnerOnly(path, statDetail(fi))
+	}
+	return readLimited(f, path, max)
 }
 
 // ownerOnlyDetail renders the file's permission bits and owner uid for
 // failure messages.
 func ownerOnlyDetail(path string) string {
-	fi, err := os.Stat(path)
+	fi, err := os.Lstat(path)
 	if err != nil {
 		return "<" + err.Error() + ">"
 	}
+	return statDetail(fi)
+}
+
+func statDetail(fi os.FileInfo) string {
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		return fmt.Sprintf("%s uid %d", fi.Mode().Perm(), st.Uid)
+		return fmt.Sprintf("%s uid %d", fi.Mode(), st.Uid)
 	}
-	return fi.Mode().Perm().String()
+	return fi.Mode().String()
 }

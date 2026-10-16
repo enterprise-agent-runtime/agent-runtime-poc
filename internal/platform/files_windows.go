@@ -4,6 +4,7 @@ package platform
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/user"
@@ -16,9 +17,10 @@ import (
 )
 
 var (
-	advapi32             = syscall.NewLazyDLL("advapi32.dll")
-	procSetFileSecurityW = advapi32.NewProc("SetFileSecurityW")
-	procGetFileSecurityW = advapi32.NewProc("GetFileSecurityW")
+	advapi32                    = syscall.NewLazyDLL("advapi32.dll")
+	procSetFileSecurityW        = advapi32.NewProc("SetFileSecurityW")
+	procGetFileSecurityW        = advapi32.NewProc("GetFileSecurityW")
+	procGetKernelObjectSecurity = advapi32.NewProc("GetKernelObjectSecurity")
 )
 
 const (
@@ -155,12 +157,65 @@ func ensureOwnerOnlyDir(dir string) error {
 	return setSecurity(dir, sd)
 }
 
+const (
+	fileFlagOpenReparsePoint = 0x00200000 // FILE_FLAG_OPEN_REPARSE_POINT
+	fileFlagBackupSemantics  = 0x02000000 // FILE_FLAG_BACKUP_SEMANTICS: required to open a directory
+	readControl              = 0x00020000 // READ_CONTROL
+	writeDAC                 = 0x00040000 // WRITE_DAC
+	writeOwner               = 0x00080000 // WRITE_OWNER
+)
+
+// errReparsePoint: the path is a symbolic link, junction or other reparse
+// point, which an owner-only check never follows.
+var errReparsePoint = errors.New("is a symbolic link, junction or other reparse point")
+
+// openNoFollow opens path itself, never the target of a reparse point at it
+// (FILE_FLAG_OPEN_REPARSE_POINT), and refuses one. Files and directories
+// alike; the attributes are returned for the caller's own checks.
+func openNoFollow(path string, access uint32) (syscall.Handle, uint32, error) {
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	h, err := syscall.CreateFile(p, access, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE, nil, syscall.OPEN_EXISTING, fileFlagOpenReparsePoint|fileFlagBackupSemantics, 0)
+	if err != nil {
+		return 0, 0, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	var info syscall.ByHandleFileInformation
+	if err := syscall.GetFileInformationByHandle(h, &info); err != nil {
+		syscall.CloseHandle(h)
+		return 0, 0, &os.PathError{Op: "stat", Path: path, Err: err}
+	}
+	if info.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		syscall.CloseHandle(h)
+		return 0, 0, fmt.Errorf("%s %w", path, errReparsePoint)
+	}
+	return h, info.FileAttributes, nil
+}
+
+// handleSecurity reads the owner and DACL of an open handle as a
+// self-relative security descriptor.
+func handleSecurity(h syscall.Handle) ([]byte, error) {
+	var need uint32
+	_, _, _ = procGetKernelObjectSecurity.Call(uintptr(h), ownerOnlyInformation, 0, 0, uintptr(unsafe.Pointer(&need)))
+	if need == 0 {
+		return nil, syscall.EINVAL
+	}
+	buf := make([]byte, need)
+	r, _, e := procGetKernelObjectSecurity.Call(uintptr(h), ownerOnlyInformation, uintptr(unsafe.Pointer(&buf[0])), uintptr(need), uintptr(unsafe.Pointer(&need)))
+	if r == 0 {
+		return nil, e
+	}
+	return buf, nil
+}
+
 // OwnerOnly reports whether the file is owned by the current user and its
 // DACL is the protected owner-only DACL written by WriteOwnerOnly: one
-// FILE_ALL_ACCESS grant to the current user and nothing else. The
-// descriptor is parsed, not compared as SDDL text, because Windows
-// abbreviates well-known SIDs when rendering SDDL (the RID-500
-// administrator reads back as "LA"; CLAUDE.md §4 IPC, D-011, D-027).
+// FILE_ALL_ACCESS grant to the current user and nothing else. A reparse
+// point at path is never followed and never owner-only. The descriptor is
+// parsed, not compared as SDDL text, because Windows abbreviates well-known
+// SIDs when rendering SDDL (the RID-500 administrator reads back as "LA";
+// CLAUDE.md §4 IPC, D-011, D-027).
 func OwnerOnly(path string) (bool, error) {
 	sid, err := currentUserSID()
 	if err != nil {
@@ -172,10 +227,48 @@ func OwnerOnly(path string) (bool, error) {
 // ownerOnlyFor is OwnerOnly for an explicit binary SID.
 func ownerOnlyFor(path string, sid []byte) (bool, error) {
 	sd, err := fileSecurity(path)
+	// A reparse point is never followed; a file the user cannot even open
+	// (CreateFile adds SYNCHRONIZE, which owning a file does not grant) is
+	// not the user's owner-only file. Neither is an error: missing is.
+	if errors.Is(err, errReparsePoint) || errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
 	return ownerOnlyDACL(sd, sid), nil
+}
+
+// ReadOwnerOnly opens path once, without following a reparse point, decides
+// on that handle that it is an owner-only file (GetKernelObjectSecurity),
+// and reads at most max bytes from the same handle. Checking by path and
+// then reading by path let the file be swapped in between (WH-1+2 review
+// of c8f81ca, CWE-367/59).
+func ReadOwnerOnly(path string, max int) ([]byte, error) {
+	sid, err := currentUserSID()
+	if err != nil {
+		return nil, err
+	}
+	h, attrs, err := openNoFollow(path, syscall.GENERIC_READ|readControl)
+	if errors.Is(err, errReparsePoint) {
+		return nil, fmt.Errorf("%w: %w", err, errNotOwnerOnly)
+	}
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(h), path)
+	defer f.Close()
+	if attrs&syscall.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		return nil, fmt.Errorf("%s is a directory: %w", path, errNotOwnerOnly)
+	}
+	sd, err := handleSecurity(h)
+	if err != nil {
+		return nil, &os.PathError{Op: "GetKernelObjectSecurity", Path: path, Err: err}
+	}
+	if !ownerOnlyDACL(sd, sid) {
+		return nil, notOwnerOnly(path, sddlDetail(sd))
+	}
+	return readLimited(f, path, max)
 }
 
 // dirOwnerOnly is OwnerOnly for a directory written by ensureOwnerOnlyDir.
@@ -207,9 +300,42 @@ func currentUserSID() ([]byte, error) {
 	return append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(tu.User.Sid)), n)...), nil
 }
 
-// fileSecurity reads the file's owner and DACL as a self-relative security
-// descriptor.
+// fileSecurity reads the owner and DACL of path itself (never a reparse
+// point's target) as a self-relative security descriptor.
 func fileSecurity(path string) ([]byte, error) {
+	h, _, err := openNoFollow(path, readControl)
+	if err != nil {
+		return nil, err
+	}
+	defer syscall.CloseHandle(h)
+	return handleSecurity(h)
+}
+
+// ownerOnlyDetail renders the file's owner and DACL as SDDL for failure
+// messages only; SDDL text is not canonical and is never compared.
+func ownerOnlyDetail(path string) string {
+	sd, err := fileSecurity(path)
+	if err != nil {
+		sd, err = pathSecurity(path)
+	}
+	if err != nil {
+		return "<" + err.Error() + ">"
+	}
+	return sddlDetail(sd)
+}
+
+func sddlDetail(sd []byte) string {
+	s, err := winio.SecurityDescriptorToSddl(sd)
+	if err != nil {
+		return "<" + err.Error() + ">"
+	}
+	return s
+}
+
+// pathSecurity reads the owner and DACL by path (GetFileSecurity), which
+// needs only READ_CONTROL but follows a reparse point at path. For failure
+// messages and tests only; decisions use fileSecurity.
+func pathSecurity(path string) ([]byte, error) {
 	p, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
@@ -225,18 +351,4 @@ func fileSecurity(path string) ([]byte, error) {
 		return nil, e
 	}
 	return buf, nil
-}
-
-// ownerOnlyDetail renders the file's owner and DACL as SDDL for failure
-// messages only; SDDL text is not canonical and is never compared.
-func ownerOnlyDetail(path string) string {
-	sd, err := fileSecurity(path)
-	if err != nil {
-		return "<" + err.Error() + ">"
-	}
-	s, err := winio.SecurityDescriptorToSddl(sd)
-	if err != nil {
-		return "<" + err.Error() + ">"
-	}
-	return s
 }
