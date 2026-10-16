@@ -51,7 +51,11 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Commits:** `38efd07`, `eb427b2`, `0b7ef4e`, `5d1c6de`, `223b804`, `0fee0cc`, `3ddbd15`, `8272194`, `8e49d97`.
   - **Review:** four rounds. They found secret leaks, a parser differential, two quadratic slow inputs (measured at 9.7 GiB and 84 s), a panic and over-blocking. The final review fuzzed it for 70 s per target with no failure, and package coverage is 96%.
 - [x] **M2-4b** The deny-list moved to `internal/execproto/denylist`, a pure move with its tests unchanged (D-014 note). archtest enforces A02 R6: non-test `internal/execproto/...` imports only the standard library, and `import "C"` is not counted as standard library, which also tightens R3. Commits `a99c8e9`, `26c4f4d`. Reviewed once and approved.
-- [ ] **M2-5** ordered transport
+- [x] **M2-5** Ordered JSON-RPC transport for the executor (D-050).
+  - **Pieces:** the Content-Length codec in `internal/execproto`, the server in `internal/exec`, the client in `internal/tools`; it runs over a socketpair or stdio.
+  - **Commits:** `bcfa1fc`, `c37e6d7`, `8bcce6f`, `fdbde48`.
+  - **Review:** three rounds. They found a write that ignored its deadline (CWE-1088), unsanitized executor text, silently ignored unknown ids, and a cancel-while-waiting teardown. Fuzzing ran 5.3M + 1.5M execs with no failure; `-race -count=20` passes; coverage 94–98%.
+  - **Left for M3:** check `WaitResult.State == exited && ExitCode != nil` before trusting that all output is in.
 - [ ] **M2-6** Resolve and race-free open
 - [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
 - [ ] **M2-8** proc operations, rlimits and output cap
