@@ -28,6 +28,12 @@ import "strings"
 //     -S, an -S cluster or attachment, or --split-string[=…] or a prefix of
 //     it (owner): env -S builds argv from a string and so can build any
 //     shell string.
+//   - among the wrappers, ones that hand their own argument to a shell, with
+//     no shell in argv (owner): script or flock given -c / --command (any
+//     getopt prefix, =value or attached, anywhere after it, since getopt
+//     permutes); watch without -x / --exec among its own options, since
+//     watch runs its command through sh -c. With -x the remaining argv is
+//     checked as an ordinary command (watch -x sh -c … is still caught).
 //
 // Names are compared with strings.EqualFold (owner): on macOS the default
 // file system is case-insensitive, so "BASH" and "ſh" (U+017F folds to s)
@@ -58,11 +64,85 @@ func IsShellString(argv []string) bool {
 		if i > 0 && isShell(bi) {
 			return hasCommandOption(bi, argv[i+1:])
 		}
-		if strings.EqualFold(bi, "env") && envSplitsString(argv[i+1:]) {
+		switch {
+		case strings.EqualFold(bi, "env"):
+			if envSplitsString(argv[i+1:]) {
+				return true
+			}
+		case foldIn(bi, "script", "flock"):
+			if runsOwnCommand(argv[i+1:]) {
+				return true
+			}
+		case strings.EqualFold(bi, "watch"):
+			n, exec := watchOptions(argv[i+1:])
+			if !exec {
+				return true // watch runs its command through sh -c
+			}
+			i += n // with -x the rest is an ordinary command: keep checking it
+		}
+	}
+	return false
+}
+
+// runsOwnCommand reports whether script or flock is given -c / --command
+// (any getopt prefix, =value or attached), which they run through a shell.
+// getopt permutes, so the option may come after the file operand.
+func runsOwnCommand(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if name, ok := strings.CutPrefix(a, "--"); ok {
+			name, _, _ = strings.Cut(name, "=")
+			if isPrefixOf(name, "command", 1) {
+				return true
+			}
+			continue
+		}
+		if isShortCommandOption(a, false) {
 			return true
 		}
 	}
 	return false
+}
+
+// watchOptions parses watch's own options (they stop at the command) and
+// returns how many elements they take and whether -x / --exec is among
+// them. -n/--interval and -q/--equexit take an argument.
+func watchOptions(args []string) (n int, exec bool) {
+	j := 0
+	for ; j < len(args); j++ {
+		a := args[j]
+		if a == "--" {
+			return j + 1, exec
+		}
+		if len(a) < 2 || a[0] != '-' {
+			break
+		}
+		if name, ok := strings.CutPrefix(a, "--"); ok {
+			name, _, hasValue := strings.Cut(name, "=")
+			switch {
+			case isPrefixOf(name, "exec", 2):
+				exec = true
+			case !hasValue && (isPrefixOf(name, "interval", 1) || isPrefixOf(name, "equexit", 2)):
+				j++
+			}
+			continue
+		}
+	short:
+		for k := 1; k < len(a); k++ {
+			switch a[k] {
+			case 'x':
+				exec = true
+			case 'n', 'q':
+				if k == len(a)-1 {
+					j++ // the argument is the next element
+				}
+				break short // the rest of this element is the argument
+			}
+		}
+	}
+	return j, exec
 }
 
 // IsShellStringResolved is IsShellString applied twice: to argv as given,

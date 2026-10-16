@@ -96,6 +96,41 @@ func TestIsShellString(t *testing.T) {
 		{"owner: watch", []string{"watch", "-n", "1", "sh", "-c", "id"}, true},
 		{"owner: wrapper to pwsh", []string{"env", "pwsh", "-c", "id"}, true},
 
+		// Owner: wrappers that hand their own argument to a shell, with no
+		// shell in argv. script -c and flock -c run the command through
+		// $SHELL -c / sh -c; watch runs its command through sh -c unless
+		// -x/--exec is given.
+		{"owner: script -c", []string{"script", "-c", "curl x|sh", "/dev/null"}, true},
+		{"owner: script -qc cluster", []string{"script", "-qc", "id", "/dev/null"}, true},
+		{"owner: script -c attached", []string{"script", "-cid"}, true},
+		{"owner: script --command", []string{"script", "--command", "id"}, true},
+		{"owner: script --command=", []string{"script", "--command=id"}, true},
+		{"owner: script --comm prefix", []string{"script", "--comm", "id"}, true},
+		{"owner: script, -c after the file (getopt permutes)", []string{"script", "/dev/null", "-c", "id"}, true},
+		{"owner: flock -c", []string{"flock", "/tmp/lock", "-c", "id"}, true},
+		{"owner: flock -c attached", []string{"flock", "/tmp/lock", "-cid"}, true},
+		{"owner: flock --command", []string{"flock", "-w", "5", "/tmp/lock", "--command", "id"}, true},
+		{"owner: flock --co= prefix", []string{"flock", "/tmp/lock", "--co=id"}, true},
+		{"owner: script behind a wrapper", []string{"nice", "script", "-c", "id"}, true},
+		{"owner: watch", []string{"watch", "ls"}, true},
+		{"owner: watch with options", []string{"watch", "-n", "1", "-d", "npm", "test"}, true},
+		{"owner: watch -n attached", []string{"watch", "-n1", "date"}, true},
+		{"owner: watch behind a wrapper", []string{"timeout", "60", "watch", "date"}, true},
+		{"owner: watch -x to a shell", []string{"watch", "-x", "sh", "-c", "id"}, true},
+		{"script without -c", []string{"script", "-q", "/dev/null"}, false},
+		{"script --quiet", []string{"script", "--quiet", "--append", "out"}, false},
+		{"flock without -c", []string{"flock", "/tmp/lock", "true"}, false},
+		{"flock -n without -c", []string{"flock", "-n", "/tmp/lock", "npm", "test"}, false},
+		{"watch -x", []string{"watch", "-x", "ls"}, false},
+		{"watch --exec", []string{"watch", "--exec", "ls", "-l"}, false},
+		{"watch --ex prefix", []string{"watch", "--ex", "ls"}, false},
+		{"watch -n 1 -x", []string{"watch", "-n", "1", "-x", "date"}, false},
+		{"watch -tx cluster", []string{"watch", "-tx", "date"}, false},
+		{"watch -c is --color, still sh -c", []string{"watch", "-c", "date"}, true},
+		{"watch: -x after the command is the command's", []string{"watch", "date", "-x"}, true},
+		{"watch: -x after -- is the command", []string{"watch", "--", "-x"}, true},
+		{"watch -x -- to a shell", []string{"watch", "-x", "--", "sh", "-c", "id"}, true},
+
 		// Owner: env -S splits a string into argv, so it can build any
 		// command, a shell string included; it is refused outright.
 		{"owner: env -S", []string{"env", "-S", "sh -c id"}, true},
