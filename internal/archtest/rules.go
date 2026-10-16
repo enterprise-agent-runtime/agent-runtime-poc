@@ -58,7 +58,10 @@ var rawSocketPkgs = map[string]bool{"syscall": true, "golang.org/x/sys/unix": tr
 // rawSyscalls call a system call by number, so they can fork, exec, bind or
 // listen past every named check here. They are allowed in execPackages and
 // in rawSyscallFiles only.
-var rawSyscalls = map[string]bool{"Syscall": true, "Syscall6": true, "RawSyscall": true, "RawSyscall6": true, "SyscallN": true}
+var rawSyscalls = map[string]bool{
+	"Syscall": true, "Syscall6": true, "Syscall9": true, "Syscall12": true, "Syscall15": true, "Syscall18": true,
+	"RawSyscall": true, "RawSyscall6": true, "SyscallN": true, "SyscallNoError": true, "RawSyscallNoError": true,
+}
 
 // rawSyscallFiles may make raw system calls outside execPackages. Each entry
 // is one exact file. The entries are the host terminal helpers behind the
@@ -66,6 +69,29 @@ var rawSyscalls = map[string]bool{"Syscall": true, "Syscall6": true, "RawSyscall
 // to switch echo off and back on. They neither create a process nor open a
 // socket.
 var rawSyscallFiles = map[string]bool{"internal/platform/term_linux.go": true, "internal/platform/term_darwin.go": true}
+
+// dllLoaders load a Windows DLL or resolve a function in one. A resolved proc
+// is called by name with arbitrary arguments (CreateProcessW, bind), past
+// every named check here, so they are allowed only in execPackages and in
+// dllFiles.
+var dllLoaders = map[string]bool{
+	"NewLazyDLL": true, "NewLazySystemDLL": true, "LoadDLL": true, "MustLoadDLL": true,
+	"LoadLibrary": true, "LoadLibraryEx": true, "GetProcAddress": true,
+}
+
+// dllFiles may load DLLs outside execPackages. Each entry is one exact file,
+// and each calls only the Windows functions named here, none of which creates
+// a process or opens a socket:
+//   - disk_windows.go: kernel32 GetDiskFreeSpaceExW (free-space check);
+//   - files_windows.go: advapi32 SetFileSecurityW / GetFileSecurityW (the
+//     owner-only DACL on files under WARDEN_HOME);
+//   - term_windows.go: kernel32 SetConsoleMode (echo off for the passphrase
+//     prompt).
+var dllFiles = map[string]bool{
+	"internal/platform/disk_windows.go":  true,
+	"internal/platform/files_windows.go": true,
+	"internal/platform/term_windows.go":  true,
+}
 
 // linknameFiles may carry a //go:linkname directive, which reaches
 // unexported runtime and syscall functions past every check here. Empty: no
@@ -80,16 +106,17 @@ var osDirs = []string{"internal/platform", "internal/sandbox", "internal/secrets
 // processStarters are the calls that create a process without os/exec.
 var processStarters = map[string]map[string]bool{
 	"os":                       {"StartProcess": true},
-	"syscall":                  {"ForkExec": true, "StartProcess": true, "Exec": true},
+	"syscall":                  {"ForkExec": true, "StartProcess": true, "Exec": true, "CreateProcess": true, "CreateProcessAsUser": true},
 	"golang.org/x/sys/unix":    {"Exec": true, "ForkExec": true},
-	"golang.org/x/sys/windows": {"CreateProcess": true, "CreateProcessAsUser": true},
+	"golang.org/x/sys/windows": {"CreateProcess": true, "CreateProcessAsUser": true, "ShellExecute": true, "ShellExecuteEx": true},
 }
 
 // ExecRule implements INV-H statically: os/exec only in execPackages, with a
 // //sandboxed justification; other process starters likewise, plus the
 // documented daemon self-spawn. Raw numbered system calls only in
-// execPackages and rawSyscallFiles; //go:linkname only in linknameFiles
-// (none). Test files are included ("including tests").
+// execPackages and rawSyscallFiles; DLL loading only in execPackages and
+// dllFiles; //go:linkname only in linknameFiles (none). Test files are
+// included ("including tests").
 func ExecRule(files []File) []Violation {
 	var out []Violation
 	for _, f := range files {
@@ -116,6 +143,9 @@ func ExecRule(files []File) []Violation {
 		for _, u := range f.Uses {
 			if rawSocketPkgs[u.Pkg] && rawSyscalls[u.Name] && !underAny(f.Dir, execPackages) && !rawSyscallFiles[f.Rel] {
 				out = append(out, Violation{f.Rel, u.Line, "INV-H", fmt.Sprintf("raw system call %s.%s outside the sandbox packages", path.Base(u.Pkg), u.Name)})
+			}
+			if (u.Pkg == "syscall" || u.Pkg == "golang.org/x/sys/windows") && dllLoaders[u.Name] && !underAny(f.Dir, execPackages) && !dllFiles[f.Rel] {
+				out = append(out, Violation{f.Rel, u.Line, "INV-H", fmt.Sprintf("DLL loading %s.%s outside the sandbox packages", path.Base(u.Pkg), u.Name)})
 			}
 			if !processStarters[u.Pkg][u.Name] {
 				continue

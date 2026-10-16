@@ -165,18 +165,44 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		// (internal/sandbox/ok/raw.go and internal/platform/term_linux.go are
 		// allowed; internal/platform/other.go is not). //go:linkname reaches
 		// unexported runtime and syscall code; its allowlist is empty.
-		"INV-H internal/platform/other.go",       // syscall.Syscall beside the allowed terminal file
-		"INV-H internal/store/linkname.go",       // //go:linkname
-		"INV-H internal/store/rawsyscall.go",     // syscall.Syscall
-		"INV-H internal/store/rawsyscall.go",     // syscall.Syscall6
-		"INV-H internal/store/rawsyscall.go",     // syscall.RawSyscall
-		"INV-H internal/store/rawsyscall.go",     // syscall.RawSyscall6
-		"INV-H internal/store/rawsyscall.go",     // syscall.SyscallN
-		"INV-H internal/store/rawunix.go",        // unix.Syscall
-		"INV-H internal/store/rawwindows.go",     // windows.SyscallN
-		"INV-J internal/api/dottls.go",           // import . "crypto/tls" hides Listen
-		"INV-J internal/api/tls.go",              // tls.Listen
-		"INV-J internal/api/tls.go",              // tls.NewListener
+		"INV-H internal/platform/other.go",   // syscall.Syscall beside the allowed terminal file
+		"INV-H internal/store/linkname.go",   // //go:linkname
+		"INV-H internal/store/rawsyscall.go", // syscall.Syscall
+		"INV-H internal/store/rawsyscall.go", // syscall.Syscall6
+		"INV-H internal/store/rawsyscall.go", // syscall.RawSyscall
+		"INV-H internal/store/rawsyscall.go", // syscall.RawSyscall6
+		"INV-H internal/store/rawsyscall.go", // syscall.SyscallN
+		"INV-H internal/store/rawunix.go",    // unix.Syscall
+		"INV-H internal/store/rawwindows.go", // windows.SyscallN
+		"INV-J internal/api/dottls.go",       // import . "crypto/tls" hides Listen
+		"INV-J internal/api/tls.go",          // tls.Listen
+		"INV-J internal/api/tls.go",          // tls.NewListener
+		// Round 4: the lists were incomplete. More process starters and
+		// numbered syscalls; //go:linkname without a following space; and DLL
+		// loading, which reaches any Windows API (CreateProcessW, bind) by
+		// name. DLL loading is allowed in the sandbox packages and in the
+		// exact platform files that need it (internal/sandbox/ok/dll.go and
+		// internal/platform/disk_windows.go here); internal/platform/dll_other.go
+		// is not.
+		"INV-H internal/platform/dll_other.go",   // syscall.NewLazyDLL beside the allowed files
+		"INV-H internal/store/dll.go",            // syscall.NewLazyDLL
+		"INV-H internal/store/dll.go",            // syscall.LoadDLL
+		"INV-H internal/store/dll.go",            // syscall.MustLoadDLL
+		"INV-H internal/store/dll.go",            // syscall.LoadLibrary
+		"INV-H internal/store/dll.go",            // syscall.GetProcAddress
+		"INV-H internal/store/dllwin.go",         // windows.NewLazySystemDLL
+		"INV-H internal/store/dllwin.go",         // windows.LoadLibraryEx
+		"INV-H internal/store/linkname2.go",      // //go:linknamestd
+		"INV-H internal/store/procsyscall.go",    // syscall.CreateProcess
+		"INV-H internal/store/procsyscall.go",    // syscall.CreateProcessAsUser
+		"INV-H internal/store/rawmore.go",        // syscall.Syscall9
+		"INV-H internal/store/rawmore.go",        // syscall.Syscall12
+		"INV-H internal/store/rawmore.go",        // syscall.Syscall15
+		"INV-H internal/store/rawmore.go",        // syscall.Syscall18
+		"INV-H internal/store/rawmoreunix.go",    // unix.SyscallNoError
+		"INV-H internal/store/rawmoreunix.go",    // unix.RawSyscallNoError
+		"INV-H internal/store/shell.go",          // windows.ShellExecute
+		"INV-H internal/store/shell.go",          // windows.ShellExecuteEx
 		"imports internal/policy/bad.go",         // policy importing a provider
 		"imports internal/providers/bad/bad.go",  // third-party import in a provider
 		"imports internal/providers/bad/bad.go",  // provider importing internal/store

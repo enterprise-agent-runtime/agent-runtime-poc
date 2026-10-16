@@ -189,7 +189,7 @@ func parseFile(fset *token.FileSet, rel string, src []byte) (File, error) {
 	}
 	for _, cg := range af.Comments {
 		for _, c := range cg.List {
-			if strings.HasPrefix(c.Text, "//go:linkname ") {
+			if strings.HasPrefix(c.Text, "//go:linkname") {
 				f.Linknames = append(f.Linknames, fset.Position(c.Pos()).Line)
 			}
 			if strings.HasPrefix(c.Text, "//go:build ") && c.Pos() < af.Package {
