@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -99,6 +100,9 @@ func scalarID(id json.RawMessage) bool {
 	return c == '"' || c == '-' || (c >= '0' && c <= '9')
 }
 
+// MaxRelPathBytes is the maxLength of RelPath (common.json).
+const MaxRelPathBytes = 4096
+
 // RPCError is a JSON-RPC error object. For executor errors Code is an
 // executor Code and Data its ErrorData (A06 §4.4).
 type RPCError struct {
@@ -114,17 +118,92 @@ func RPCErrorOf(e *Error) *RPCError {
 	return &RPCError{Code: int(e.Code), Message: e.Code.Name(), Data: data}
 }
 
-// Error implements error. The peer's message is cut to MaxDetailBytes.
+// Error implements error. A standard or reserved JSON-RPC code gets fixed
+// text; for any other code the peer's message is neutralised and cut to
+// MaxDetailBytes.
 func (e *RPCError) Error() string {
-	msg := e.Message
-	if len(msg) > MaxDetailBytes {
-		cut := MaxDetailBytes
-		for cut > 0 && !utf8.RuneStart(msg[cut]) {
-			cut--
-		}
-		msg = msg[:cut]
+	msg := rpcText(e.Code)
+	if msg == "" {
+		msg = cutUTF8(Neutralise(e.Message), MaxDetailBytes)
 	}
 	return fmt.Sprintf("execproto: rpc error %d: %s", e.Code, msg)
+}
+
+// rpcText is the fixed text of a JSON-RPC code in the range the
+// specification reserves (-32768 … -32000), "" outside it.
+func rpcText(code int) string {
+	switch code {
+	case RPCParseError:
+		return "parse error"
+	case RPCInvalidRequest:
+		return "invalid request"
+	case RPCMethodNotFound:
+		return "method not found"
+	case RPCInvalidParams:
+		return "invalid params"
+	case RPCInternalError:
+		return "internal error"
+	}
+	if n := Code(code).Name(); n != "" {
+		return n
+	}
+	switch {
+	case code >= -32099 && code <= -32000:
+		return "server error"
+	case code >= -32768 && code <= -32000:
+		return "reserved error code"
+	}
+	return ""
+}
+
+// Neutralise replaces every character that can forge a log line, drive a
+// terminal or reorder displayed text (CWE-117, CWE-150) with U+FFFD: C0
+// controls, DEL and C1 controls, the bidi embedding, override and isolate
+// controls (U+202A–U+202E, U+2066–U+2069), the line and paragraph
+// separators (U+2028, U+2029), and invalid UTF-8. It is applied at the
+// boundary to text the executor sends; internal/termsafe cannot be used
+// here (execproto is a stdlib-only leaf, A02 §5 R6).
+func Neutralise(s string) string {
+	clean := true
+	for _, r := range s {
+		if unsafeRune(r) {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if unsafeRune(r) {
+			r = utf8.RuneError
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func unsafeRune(r rune) bool {
+	switch {
+	case r < 0x20, r >= 0x7f && r <= 0x9f:
+		return true
+	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069, r == 0x2028, r == 0x2029:
+		return true
+	}
+	return r == utf8.RuneError // invalid UTF-8 decodes to it; writing it back is the same character
+}
+
+// cutUTF8 cuts s to at most n bytes on a rune boundary.
+func cutUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // Err returns the error a caller should see: an executor *Error for a code
@@ -132,7 +211,9 @@ func (e *RPCError) Error() string {
 // RPCError itself otherwise. For an executor code the code is
 // authoritative: data is kept only when it decodes strictly and names the
 // same code, and the violation classification is always the A06 §4.4
-// table's, so a peer cannot mark a deny_list error as no violation.
+// table's, so a peer cannot mark a deny_list error as no violation. The
+// peer's detail and rel_path are neutralised (Neutralise) and cut to their
+// schema lengths; its message is not used.
 func (e *RPCError) Err() error {
 	c := Code(e.Code)
 	if c.Name() == "" {
@@ -141,8 +222,8 @@ func (e *RPCError) Err() error {
 	out := NewError(c, "")
 	var d ErrorData
 	if e.Data != nil && Decode(e.Data, &d) == nil && d.Code == c.Name() {
-		out = NewError(c, d.Detail)
-		out.Data.RelPath = d.RelPath
+		out = NewError(c, Neutralise(d.Detail))
+		out.Data.RelPath = cutUTF8(Neutralise(d.RelPath), MaxRelPathBytes)
 	}
 	return out
 }

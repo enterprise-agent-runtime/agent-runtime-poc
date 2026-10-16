@@ -45,8 +45,9 @@ const (
 	ErrFrameHeader   FrameError = "execproto: malformed frame header"
 )
 
-// MaxHeaderBytes bounds the header block, CRLFs included. The one valid
-// header is at most 27 bytes ("Content-Length: 8388608\r\n\r\n").
+// MaxHeaderBytes bounds the header block: the bytes of all its lines
+// together, CRLFs not counted. The one valid header line is at most 23
+// bytes ("Content-Length: 8388608").
 const MaxHeaderBytes = 256
 
 // maxLengthDigits is the number of digits in MaxFrameBytes (8388608); a

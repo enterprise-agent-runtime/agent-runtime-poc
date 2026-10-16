@@ -3,8 +3,10 @@ package execproto
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestDecodeMessage_Kinds: every frame is classified as exactly one of
@@ -105,4 +107,65 @@ func TestRPCError_StandardCodes(t *testing.T) {
 	if len(err.Error()) > MaxDetailBytes+64 {
 		t.Errorf("error text is %d bytes, want it bounded", len(err.Error()))
 	}
+}
+
+// unsafeRunes are the characters Neutralise must replace, written as
+// numbers so the test source itself carries none of them: C0 (CR, LF, ESC,
+// NUL), DEL, C1 (NEL), the bidi embedding and override controls, the bidi
+// isolates, and the line and paragraph separators.
+var unsafeRunes = []rune{0x0d, 0x0a, 0x1b, 0x00, 0x7f, 0x85, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0x2028, 0x2029}
+
+// TestRPCError_PeerTextNeutralised guards the review finding on bcfa1fc
+// (CWE-117, CWE-150): text the executor sends (error.message, data.detail,
+// data.rel_path) reached daemon error strings with control characters
+// intact. Those strings go to logs, the terminal and events; a CR LF forges
+// a log line, an escape sequence rewrites the terminal, and a bidi override
+// makes a path read differently from what it is. At the boundary each of
+// unsafeRunes becomes U+FFFD; rel_path is cut to the schema's 4096; and a
+// standard or reserved JSON-RPC code gets fixed text, not the peer's.
+func TestRPCError_PeerTextNeutralised(t *testing.T) {
+	var nb strings.Builder
+	nb.WriteString("a\r\nb\x1b[2J")
+	for _, r := range unsafeRunes {
+		nb.WriteRune(r)
+		nb.WriteString("z")
+	}
+	nasty := nb.String()
+	clean := func(name, s string) {
+		t.Helper()
+		for _, r := range unsafeRunes {
+			if strings.ContainsRune(s, r) {
+				t.Errorf("%s keeps U+%04X: %q", name, r, s)
+			}
+		}
+	}
+
+	data, err := json.Marshal(ErrorData{Code: "deny_list", Violation: true, Kind: ViolationDenyList, Detail: nasty, RelPath: nasty + strings.Repeat("x", 4090)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := (&RPCError{Code: int(ErrDenyList), Message: nasty, Data: data}).Err()
+	var e *Error
+	if !errors.As(got, &e) {
+		t.Fatalf("Err() = %v, want *Error", got)
+	}
+	clean("err.Error()", got.Error())
+	clean("data.detail", e.Data.Detail)
+	clean("data.rel_path", e.Data.RelPath)
+	repl := string(utf8.RuneError)
+	if want := "a" + repl + repl + "b" + repl + "[2J"; !strings.HasPrefix(e.Data.Detail, want) {
+		t.Errorf("data.detail = %q, want the controls replaced by U+FFFD and the rest kept", e.Data.Detail)
+	}
+	if len(e.Data.RelPath) > MaxRelPathBytes {
+		t.Errorf("data.rel_path is %d bytes, want at most %d", len(e.Data.RelPath), MaxRelPathBytes)
+	}
+
+	for _, code := range []int{RPCParseError, RPCInvalidRequest, RPCMethodNotFound, RPCInvalidParams, RPCInternalError, -32000, -32050, -32699} {
+		s := (&RPCError{Code: code, Message: nasty}).Err().Error()
+		clean(fmt.Sprintf("code %d", code), s)
+		if strings.Contains(s, "2J") {
+			t.Errorf("code %d: the peer's message reached the error text: %q", code, s)
+		}
+	}
+	clean("code 7", (&RPCError{Code: 7, Message: nasty}).Err().Error())
 }

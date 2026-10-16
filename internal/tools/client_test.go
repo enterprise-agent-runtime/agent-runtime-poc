@@ -336,7 +336,12 @@ func TestClient_ExecErrors(t *testing.T) {
 // agent-controlled processes. A message the client cannot attribute or
 // does not understand is not skipped: a skipped exec.proc.io chunk would
 // silently lose output that the ordering guarantee says has arrived. The
-// client closes, and the pending call learns why.
+// client closes, and the pending call learns why. That includes a response
+// to an id the client never issued (not a positive integer, or above the
+// last id sent): an executor answering calls nobody made is not one to
+// trust with the rest. A late response to an id the client did issue and
+// then forgot after a cancel is dropped quietly instead
+// (TestClient_CallContextCancel). The one call here has id 1.
 func TestClient_ProtocolViolationCloses(t *testing.T) {
 	cases := map[string]string{
 		"not JSON":              `{`,
@@ -344,6 +349,12 @@ func TestClient_ProtocolViolationCloses(t *testing.T) {
 		"malformed io":          `{"jsonrpc":"2.0","method":"exec.proc.io","params":{"handle":1}}`,
 		"io with unknown field": `{"jsonrpc":"2.0","method":"exec.proc.io","params":{"handle":"ph_1","extra":1}}`,
 		"request from executor": `{"jsonrpc":"2.0","id":1,"method":"exec.hello","params":{}}`,
+		"id never issued":       `{"jsonrpc":"2.0","id":2,"result":{}}`,
+		"id zero":               `{"jsonrpc":"2.0","id":0,"result":{}}`,
+		"negative id":           `{"jsonrpc":"2.0","id":-1,"result":{}}`,
+		"string id":             `{"jsonrpc":"2.0","id":"1","result":{}}`,
+		"fractional id":         `{"jsonrpc":"2.0","id":1.5,"result":{}}`,
+		"null id":               `{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"x"}}`,
 	}
 	for name, msg := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -354,7 +365,9 @@ func TestClient_ProtocolViolationCloses(t *testing.T) {
 				}
 				return p.w.WriteFrame([]byte(msg))
 			})
-			_, err := c.Wait(context.Background(), execproto.WaitParams{Handle: "ph_1"})
+			ctx, cancel := context.WithTimeout(context.Background(), hangGuard)
+			defer cancel()
+			_, err := c.Wait(ctx, execproto.WaitParams{Handle: "ph_1"})
 			finish(t)
 			if !errors.Is(err, ErrClosed) {
 				t.Fatalf("Wait after %s: %v, want ErrClosed", name, err)

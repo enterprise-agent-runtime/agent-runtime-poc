@@ -168,13 +168,16 @@ func (c *Client) handle(b []byte) error {
 		}
 	case execproto.KindResponse:
 		id, err := strconv.ParseInt(string(m.ID), 10, 64)
-		if err != nil {
-			return nil // not an id this client issued; nobody waits for it
-		}
 		c.mu.Lock()
+		issued := c.next // incremented before the request is written
 		ch, ok := c.pending[id]
 		delete(c.pending, id)
 		c.mu.Unlock()
+		if err != nil || id <= 0 || id > issued {
+			// Ids are 1, 2, 3 … as sent; anything else answers a call
+			// nobody made.
+			return errors.New("tools: response to an id this client never issued")
+		}
 		if ok { // absent: the caller gave up (context) and the answer is late
 			ch <- reply{result: m.Result, err: m.Error}
 		}
