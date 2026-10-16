@@ -1,0 +1,2 @@
+{"matches":[{"rel_path":"src/routes/users.ts","line":12,"column":1,"text":"router.get('/users/:id', getUser);","before":["// GET /users/:id"],"after":[""]}],
+ "files_scanned":17,"truncated":false,"skipped":{"denied":1,"binary":0,"too_large":0,"unreadable":0}}
