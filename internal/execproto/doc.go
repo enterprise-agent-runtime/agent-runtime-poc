@@ -15,8 +15,14 @@
 // One Go struct mirrors each $def of the A06 §4.3 schemas, with the same
 // property names. Required properties are never omitempty; optional ones
 // are omitempty unless their zero value is a meaningful explicit value, in
-// which case they are pointers. Every object in A06 has
-// additionalProperties: false, so Decode rejects unknown fields at every
-// depth. The A06 schemas themselves are kept verbatim under
-// testdata/schema and the golden tests check the structs against them.
+// which case they are pointers; required arrays encode as [] even when the
+// Go slice is nil. Every object in A06 has additionalProperties: false, so
+// Decode rejects, at every depth, unknown fields, keys that match a field
+// only case-insensitively, and duplicate keys, all of which encoding/json
+// alone would accept. Decode does not check ranges or required fields. The
+// A06 schemas themselves are kept verbatim under testdata/schema and the
+// golden tests check the structs against them.
+//
+// Encode messages for the wire with MarshalWire: exec.proc.spawn carries a
+// secret (SecretEnv) that json.Marshal deliberately redacts.
 package execproto

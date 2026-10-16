@@ -2,9 +2,7 @@ package execproto
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -61,16 +59,20 @@ type goldenCase struct {
 var goldenCases = []goldenCase{
 	{"hello.params", "hello.json#/$defs/Params", func() any { return new(HelloParams) }},
 	{"hello.result", "hello.json#/$defs/Result", func() any { return new(HelloResult) }},
+	{"hello.result.noroots", "hello.json#/$defs/Result", func() any { return new(HelloResult) }},
 	{"fs.read.params", "fs.json#/$defs/ReadParams", func() any { return new(ReadParams) }},
 	{"fs.read.result", "fs.json#/$defs/ReadResult", func() any { return new(ReadResult) }},
 	{"fs.list.params", "fs.json#/$defs/ListParams", func() any { return new(ListParams) }},
 	{"fs.list.result", "fs.json#/$defs/ListResult", func() any { return new(ListResult) }},
+	{"fs.list.result.empty", "fs.json#/$defs/ListResult", func() any { return new(ListResult) }},
 	{"fs.search.params", "fs.json#/$defs/SearchParams", func() any { return new(SearchParams) }},
 	{"fs.search.result", "fs.json#/$defs/SearchResult", func() any { return new(SearchResult) }},
+	{"fs.search.result.empty", "fs.json#/$defs/SearchResult", func() any { return new(SearchResult) }},
 	{"fs.write.params", "fs.json#/$defs/WriteParams", func() any { return new(WriteParams) }},
 	{"fs.write.result", "fs.json#/$defs/WriteResult", func() any { return new(WriteResult) }},
 	{"fs.patch.params", "fs.json#/$defs/PatchParams", func() any { return new(PatchParams) }},
 	{"fs.patch.result", "fs.json#/$defs/PatchResult", func() any { return new(PatchResult) }},
+	{"fs.patch.result.empty", "fs.json#/$defs/PatchResult", func() any { return new(PatchResult) }},
 	{"fs.stat.params", "fs.json#/$defs/StatParams", func() any { return new(StatParams) }},
 	{"fs.stat.result", "fs.json#/$defs/StatResult", func() any { return new(StatResult) }},
 	{"fs.stat.result.denied", "fs.json#/$defs/StatResult", func() any { return new(StatResult) }},
@@ -150,10 +152,10 @@ func TestGolden_ExecSchemas(t *testing.T) {
 				t.Fatalf("decode: %v", err)
 			}
 			var out []byte
-			if m, ok := v.(json.Marshaler); ok {
-				out, err = m.MarshalJSON() // exact bytes, as the daemon writes them
+			if ps, ok := v.(*ProfileSet); ok {
+				out, err = ps.MarshalJSON() // exact bytes, as the daemon writes them
 			} else {
-				out, err = json.Marshal(v)
+				out, err = MarshalWire(v) // what the transport sends, secret_env included
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -211,23 +213,8 @@ func TestGolden_NestedUnknownFieldsRejected(t *testing.T) {
 	}
 }
 
-// TestGolden_SecretEnvNeverPrinted guards CLAUDE.md §9 rule 3 / INV-C for
-// the one wire field that carries a secret value (HX-1b): formatting the
-// params, as a log line or an error message would, must not show it.
-func TestGolden_SecretEnvNeverPrinted(t *testing.T) {
-	const value = "value-set-by-test-not-a-credential"
-	p := SpawnParams{CallID: "call_1", SecretEnv: SecretEnv{"COPILOT_TOKEN": value}}
-	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
-		if s := sprintf(verb, p); strings.Contains(s, value) || strings.Contains(s, hexOf(value)) {
-			t.Errorf("%s printed the secret value: %s", verb, s)
-		}
-		if s := sprintf(verb, p.SecretEnv); !strings.Contains(s, "COPILOT_TOKEN") {
-			t.Errorf("%s lost the key name: %s", verb, s)
-		}
-	}
-}
-
-var timeType = reflect.TypeOf(time.Time{})
+// opaqueTypes encode themselves and have no schema-shaped fields to walk.
+var opaqueTypes = map[reflect.Type]bool{reflect.TypeOf(time.Time{}): true, reflect.TypeOf(SecretEnv{}): true}
 
 // checkFields walks a struct type alongside its schema: every JSON field is
 // a schema property, every property is a field, and a required property is
@@ -246,7 +233,7 @@ func checkFields(t *testing.T, typ reflect.Type, s *jsonschema.Schema, at string
 			checkFields(t, typ.Elem(), s.Items2020, at+"[]")
 		}
 		return
-	case typ.Kind() != reflect.Struct || typ == timeType:
+	case typ.Kind() != reflect.Struct || opaqueTypes[typ]:
 		return
 	}
 	required := map[string]bool{}
@@ -268,7 +255,7 @@ func checkFields(t *testing.T, typ reflect.Type, s *jsonschema.Schema, at string
 			t.Errorf("%s: field %s (%q) is not a property in A06", at, f.Name, name)
 			continue
 		}
-		if required[name] && strings.Contains(opts, "omitempty") {
+		if required[name] && (strings.Contains(opts, "omitempty") || strings.Contains(opts, "omitzero")) {
 			t.Errorf("%s: required property %q is omitempty", at, name)
 		}
 		checkFields(t, f.Type, prop, at+"."+name)
@@ -284,7 +271,3 @@ func checkFields(t *testing.T, typ reflect.Type, s *jsonschema.Schema, at string
 		t.Errorf("%s: A06 property %q has no struct field", at, name)
 	}
 }
-
-func sprintf(verb string, v any) string { return fmt.Sprintf(verb, v) }
-
-func hexOf(s string) string { return hex.EncodeToString([]byte(s)) }

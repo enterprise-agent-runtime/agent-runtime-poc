@@ -6,8 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
-	"strings"
+	"reflect"
 	"time"
 )
 
@@ -36,9 +35,17 @@ const (
 	MethodShutdown = "exec.shutdown"
 )
 
-// Decode unmarshals one JSON value into v, rejecting unknown fields at every
-// depth (A06 §4.3: additionalProperties false throughout) and trailing data.
+// Decode unmarshals one JSON value into v. It rejects, at every depth:
+// unknown fields (A06 §4.3: additionalProperties false throughout), keys
+// that match a field only case-insensitively, duplicate keys, and trailing
+// data. encoding/json alone accepts the last two kinds and folds case, so a
+// message could mean one thing to the schema or the policy engine and
+// another to the executor (CWE-436; see checkKeys). Range and required
+// checks are not done here.
 func Decode(data []byte, v any) error {
+	if err := checkKeys(data, reflect.TypeOf(v)); err != nil {
+		return fmt.Errorf("execproto: decode: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -366,35 +373,16 @@ type Authz struct {
 	Kind       AuthzKind `json:"kind"`
 }
 
-// SecretEnv is exec.proc.spawn secret_env (harness mode only, HX-1b). Its
-// values are secrets (CLAUDE.md §9 rule 3): String, GoString and Format
-// print the keys only, so a value cannot reach a log through fmt or slog.
-type SecretEnv map[string]string
-
-// String lists the keys, never the values.
-func (e SecretEnv) String() string {
-	keys := make([]string, 0, len(e))
-	for k := range e {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return "SecretEnv{" + strings.Join(keys, ",") + "}"
-}
-
-// GoString is String, so %#v does not print values either.
-func (e SecretEnv) GoString() string { return e.String() }
-
-// Format makes every fmt verb print String.
-func (e SecretEnv) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, e.String()) }
-
-// SpawnParams is exec.proc.spawn params.
+// SpawnParams is exec.proc.spawn params. It carries a secret (SecretEnv);
+// json.Marshal and slog redact it, and only EncodeSpawnParams / MarshalWire
+// put the value on the wire (secret.go).
 type SpawnParams struct {
 	CallID         string    `json:"call_id"`
 	Argv           []string  `json:"argv"`
 	Cwd            string    `json:"cwd,omitempty"`
 	TimeoutMS      int64     `json:"timeout_ms"`
 	MaxOutputBytes int64     `json:"max_output_bytes,omitempty"`
-	SecretEnv      SecretEnv `json:"secret_env,omitempty"`
+	SecretEnv      SecretEnv `json:"secret_env,omitzero"`
 	Authz          Authz     `json:"authz"`
 }
 
