@@ -23,7 +23,7 @@ Warden is an enterprise AI agent runtime: a secure execution and governance laye
 |---|---|---|
 | Specification | `WRD-00` … `WRD-16` (+ `img/`) | What the product is; invariants; scope (WRD-16) |
 | Design | the Claude Design output (system design A-series: A01–A18; UI/UX B-series: B01–B09; possibly other names) | How to build it: diagrams, schemas, DDL, API contracts, components, screens |
-| Working files you own | `docs/INDEX.md`, `docs/CONFLICTS.md`, `docs/DECISIONS-poc.md`, `docs/PROGRESS.md`, `docs/POC-REPORT.md` | Inventory, conflicts, decisions, progress |
+| Working files you own | `docs/INDEX.md`, `docs/CONFLICTS.md`, `docs/DECISIONS-poc.md`, `docs/PROGRESS.md`, `docs/POC-REPORT.md`, `docs/GLOSSARY.md`, `docs/WORKING-WITH-CLAUDE-CODE.md`, `docs/reports/` | Inventory, conflicts, decisions, progress; the concepts glossary, the way of working, dated session reports. Every document about this work lives in this repository (or, for the specification and design, in agent-platform-docs); claude.ai pages are only views of these files |
 
 Precedence rules:
 1. **Scope and invariants**: this file and WRD-16. No design document can add scope or weaken an invariant.
@@ -229,7 +229,18 @@ When the specification leaves a detail open: choose the simplest option consiste
 - `docs/CONFLICTS.md`: each conflict with both references, the rule applied (precedence §2) and the resolution or "needs owner".
 - `docs/DECISIONS-poc.md`: dated decision log (see §10).
 - `docs/PROGRESS.md`: at the top, the current milestone's checklist; below, per session: built, tested (exact commands and a summary of their output), left, open questions.
-- Session protocol: (1) read this file, `docs/PROGRESS.md`, `docs/DECISIONS-poc.md`, `docs/CONFLICTS.md`; (2) write the session checklist; (3) implement in small steps with `make check`; (4) run the milestone's acceptance commands; (5) update `docs/PROGRESS.md`; (6) stop.
+- Session protocol:
+  1. Read in layers, never the whole document set at once:
+     - always this file, `docs/PROGRESS.md`, `docs/DECISIONS-poc.md`, `docs/CONFLICTS.md` and the memory index;
+     - for each task, the WRD and design sections it cites, found through the reading table in `docs/INDEX.md`;
+     - `docs/GLOSSARY.md`, `docs/WORKING-WITH-CLAUDE-CODE.md` and `docs/reports/` when a question touches them.
+
+     The specification and design are the `docs/` copy. Their source is the owner's agent-platform-docs repository, which is never edited from here. It is re-copied into `docs/` through a pull request only when the owner says it changed, with the source commit id in the message.
+  2. Write the session checklist.
+  3. Implement in small steps with `make check`.
+  4. Run the milestone's acceptance commands.
+  5. Update `docs/PROGRESS.md`.
+  6. Stop.
 
 ## 12. Commands
 

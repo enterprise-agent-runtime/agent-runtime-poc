@@ -18,6 +18,7 @@ Directory structure of the copy (kept 1:1 from the source set):
 ```
 docs/
   INDEX.md CONFLICTS.md DECISIONS-poc.md PROGRESS.md POC-REPORT.md PROMPT-Claude-Code.md   (working)
+  GLOSSARY.md WORKING-WITH-CLAUDE-CODE.md reports/                                          (working)
   README.md                                   root README of the documentation set (stale, see notes)
   PROMPT-Claude-Design.md                     design brief
   WRD-16-PoC-Concept-and-Build-Plan.md        PoC specification (root of the set)
@@ -51,6 +52,9 @@ Counts: the source set has 99 files (excluding `.git`): 3 at the root + 2 in `de
 | [DECISIONS-poc.md](DECISIONS-poc.md) | working | Decision log of the implementation: environment decisions of `CLAUDE.md` section 3 as recorded facts, then every answer to a question and every decide-and-record choice. |
 | [PROGRESS.md](PROGRESS.md) | working | Per-milestone checklists, the acceptance commands run and their results; updated at the end of every session. |
 | [POC-REPORT.md](POC-REPORT.md) | working | Not yet written (M8): pass/fail and numbers for hypotheses H1 to H6 and the list of simplifications to upgrade for the MVP (WRD-16 §2.3 and §18). |
+| [GLOSSARY.md](GLOSSARY.md) | working | Living concepts glossary: agent orchestration, Claude Code building blocks, git and delivery, testing, security, Warden architecture. Extended at every `/milestone-close`. |
+| [WORKING-WITH-CLAUDE-CODE.md](WORKING-WITH-CLAUDE-CODE.md) | working | How this repository is worked on with Claude Code: CLAUDE.md, the agent team, skills, guard hooks, worktrees, memory, lessons, suggestions, a recipe for the next project. |
+| [reports/](reports/) | working | Dated session reports, fixed records once written. First: [2026-10-08-m1-agent-team-ci-fixes.md](reports/2026-10-08-m1-agent-team-ci-fixes.md) (M1, the agent team, the PR #1 CI fixes). |
 | [PROMPT-Claude-Code.md](PROMPT-Claude-Code.md) | working | The implementer's build prompt: one-time setup, Session 0 and M1 kickoff, milestones M1 to M8 with acceptance criteria, overriding rules, session start block. Copied from `C:\Users\pallo\Downloads\PROMPT-Claude-Code.md`. |
 
 ## Specification layer
