@@ -22,6 +22,25 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-029 · 2026-10-16 · M2-13: the bwrap argv for L1 sandboxes
+
+- **Asked:** M2 plan task M2-13, with the follow-ups M2-12 and M2-14 assigned to it. Delivered under "merge each task when its review passes".
+- **Task:** Turn a validated Spec into the exact bubblewrap command line, file descriptors and launch environment A06 §11.1 describes, so that nothing outside the Spec's sources and the system binds is visible inside.
+- **How:**
+  - **Prepare and build** (D-068): symlink resolution and re-checks, feature probing, the A06 mount order with masks, hardening flags, the sealed seccomp memfd.
+  - **Launch environment** (D-069): the Plan builds the command with an empty environment.
+  - **Commits:** `d1ceda6`, `64094b2`.
+- **Rules kept:**
+  - The builder is pure and builds on every OS; only the memfd, the wait-status helper and the default probes are Linux files.
+  - INV-H: `os/exec` only in a `//sandboxed` test file that runs bwrap with a copied `/bin/true` or `/bin/false`, never anything agent-requested.
+  - Test first, golden argvs, 28 mutants caught in round 0; no new dependency.
+- **Rules changed or bent:**
+  - **A06 §11.1's argv does not start on bwrap ≥ 0.8** (C-75): `--unshare-user` added. Decided by me.
+  - **A06 §8's `--clearenv` is not enough** (C-76): the environment of bwrap itself must be empty. Found by the review.
+  - **Test data fetched from upstream:** the bwrap 0.6.1 and 0.8.0 help texts in `testdata/bwrap/` came from bwrap's own GitHub tags; plain text, parsed by tests, never executed, and checked against upstream by the reviewer.
+- **Verified:** two review rounds, code and security together, with a probe binary inside the real bwrap 0.9.0 (fds, environment, `/proc/1/environ`, mounts, writes, capabilities, seccomp); `make check` green; `-race` in WSL2.
+- **Left:** see the M2-13 entry in PROGRESS (the launch in M2-15, escape-check rows in M2-16, doctor).
+
 ## W-028 · 2026-10-16 · M2-7: the executor's file methods
 
 - **Asked:** M2 plan task M2-7, with the follow-ups M2-6's review assigned to it. Delivered under "merge each task when its review passes".
