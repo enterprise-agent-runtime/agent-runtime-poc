@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -20,10 +21,12 @@ func TestLimits_OnlyLowered(t *testing.T) {
 	cases := []struct {
 		in, want Limits
 	}{
-		{Limits{}, Limits{MaxConns: 64, ConnWait: 10 * time.Second, IdleTimeout: 300 * time.Second}},
-		{Limits{MaxConns: 1000, ConnWait: time.Hour, IdleTimeout: time.Hour}, Limits{MaxConns: 64, ConnWait: 10 * time.Second, IdleTimeout: 300 * time.Second}},
-		{Limits{MaxConns: 2, ConnWait: time.Millisecond, IdleTimeout: time.Second}, Limits{MaxConns: 2, ConnWait: time.Millisecond, IdleTimeout: time.Second}},
-		{Limits{MaxConns: -1, ConnWait: -1, IdleTimeout: -1}, Limits{MaxConns: 64, ConnWait: 10 * time.Second, IdleTimeout: 300 * time.Second}},
+		{Limits{}, Limits{MaxConns: 64, ConnWait: 10 * time.Second, IdleTimeout: 300 * time.Second, MaxInFlight: 96}},
+		{Limits{MaxConns: 1000, ConnWait: time.Hour, IdleTimeout: time.Hour, MaxInFlight: 5000}, Limits{MaxConns: 64, ConnWait: 10 * time.Second, IdleTimeout: 300 * time.Second, MaxInFlight: 96}},
+		{Limits{MaxConns: 2, ConnWait: time.Millisecond, IdleTimeout: time.Second}, Limits{MaxConns: 2, ConnWait: time.Millisecond, IdleTimeout: time.Second, MaxInFlight: 34}},
+		{Limits{MaxConns: 2, MaxInFlight: 3}, Limits{MaxConns: 2, ConnWait: 10 * time.Second, IdleTimeout: 300 * time.Second, MaxInFlight: 3}},
+		{Limits{MaxConns: 2, MaxInFlight: 40}, Limits{MaxConns: 2, ConnWait: 10 * time.Second, IdleTimeout: 300 * time.Second, MaxInFlight: 34}},
+		{Limits{MaxConns: -1, ConnWait: -1, IdleTimeout: -1, MaxInFlight: -1}, Limits{MaxConns: 64, ConnWait: 10 * time.Second, IdleTimeout: 300 * time.Second, MaxInFlight: 96}},
 	}
 	for _, tc := range cases {
 		h := newHarnessWith(t, func(c *Config) { c.Limits = tc.in })
@@ -347,5 +350,112 @@ func TestEventHost(t *testing.T) {
 	long := eventHost(strings.Repeat("é", 200))
 	if len(long) > maxEventHost || !strings.HasSuffix(long, bs+"u00e9") || strings.Count(long, bs+"u00e9")*6 != len(long) {
 		t.Errorf("long host %d bytes %q: want at most %d bytes of whole escapes", len(long), long[len(long)-8:], maxEventHost)
+	}
+}
+
+// waitFor polls cond until it holds; the bound only stops a hung test.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestServe_InFlightCap guards a confirmed review finding (round 2, F1,
+// CWE-770): the MaxConns slots count only connections past evaluation, so
+// connections still sending their request head (up to 10 s each) or
+// waiting for a slot were unbounded; 2000 silent connections held 2000
+// goroutines and descriptors in the daemon. Serve now holds at most
+// MaxInFlight connections and closes the rest at once. The excess of one
+// burst is written as a single proxy.denied{too_many_connections, count},
+// so the audit records the flood without the flood filling the store.
+func TestServe_InFlightCap(t *testing.T) {
+	const capN, extra = 2, 3
+	h := newHarnessWith(t, func(c *Config) { c.Limits = Limits{MaxConns: 1, MaxInFlight: capN} })
+	ln := newPipeListener()
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- h.p.Serve(ctx, ln) }()
+
+	var silent []net.Conn
+	for i := 0; i < capN; i++ {
+		silent = append(silent, ln.dial(t)) // never sends its request head
+	}
+	waitFor(t, "the silent connections to be held", func() bool { return h.p.inFlight() == capN })
+	for i := 0; i < extra; i++ {
+		c := ln.dial(t)
+		_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+		_, err := c.Read(make([]byte, 1))
+		if err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("extra connection %d: read %v; want it closed at once", i+1, err)
+		}
+		_ = c.Close()
+		if n := h.p.inFlight(); n > capN {
+			t.Fatalf("%d connections in flight, cap %d", n, capN)
+		}
+	}
+	if _, denies := h.sink.snapshot(); len(denies) != 0 {
+		t.Errorf("events during the burst: %+v; want the summary only when it ends", denies)
+	}
+	for _, c := range silent {
+		_ = c.Close()
+	}
+	waitFor(t, "the silent connections to end", func() bool { return h.p.inFlight() == 0 })
+
+	// The next accepted connection ends the burst.
+	c := ln.dial(t)
+	resp, _ := send(t, c, "CONNECT collector.example.net:443 HTTP/1.1\r\n\r\n")
+	if resp.StatusCode != 403 {
+		t.Errorf("after the burst: status %d, want 403 (served again)", resp.StatusCode)
+	}
+	_ = c.Close()
+	cancel()
+	select {
+	case <-served:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return")
+	}
+	_, denies := h.sink.snapshot()
+	var summaries []DeniedEvent
+	for _, d := range denies {
+		if d.Reason == ReasonTooManyConnections {
+			summaries = append(summaries, d)
+		}
+	}
+	if len(summaries) != 1 || summaries[0].Count != extra || summaries[0].Host != "" || summaries[0].Port != 0 {
+		t.Errorf("summaries %+v; want one proxy.denied{too_many_connections, count: %d}", summaries, extra)
+	}
+}
+
+// TestServe_InFlightSummaryAtShutdown: a burst still running when Serve
+// stops is summarised before Serve returns, so sandbox.destroy follows it
+// (A07 §2 "Close").
+func TestServe_InFlightSummaryAtShutdown(t *testing.T) {
+	h := newHarnessWith(t, func(c *Config) { c.Limits = Limits{MaxConns: 1, MaxInFlight: 1} })
+	ln := newPipeListener()
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- h.p.Serve(ctx, ln) }()
+	held := ln.dial(t)
+	defer held.Close()
+	waitFor(t, "the first connection to be held", func() bool { return h.p.inFlight() == 1 })
+	c := ln.dial(t)
+	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if _, err := c.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("extra connection: read %v; want it closed at once", err)
+	}
+	cancel()
+	select {
+	case <-served:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return")
+	}
+	_, denies := h.sink.snapshot()
+	if len(denies) != 1 || denies[0].Reason != ReasonTooManyConnections || denies[0].Count != 1 {
+		t.Errorf("events %+v; want one proxy.denied{too_many_connections, count: 1}", denies)
 	}
 }

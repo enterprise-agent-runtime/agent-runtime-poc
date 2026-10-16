@@ -37,6 +37,7 @@ const (
 	connWait              = 10 * time.Second
 	acceptBackoffMin      = 5 * time.Millisecond
 	acceptBackoffMax      = time.Second
+	inFlightHeadroom      = 32 // MaxInFlight = MaxConns + this, by default
 	maxEventHost          = 253
 )
 
@@ -88,6 +89,11 @@ type Limits struct {
 	MaxConns    int           // concurrent connections past evaluation; 64
 	ConnWait    time.Duration // how long connection 65 waits for a slot; 10 s
 	IdleTimeout time.Duration // tunnel idle, plain-HTTP body and response stall; 300 s
+	// MaxInFlight caps every connection the proxy holds, from accept on:
+	// reading its request head, waiting for a slot, or running. Default
+	// MaxConns+32 (CWE-770: the MaxConns slots alone leave the header phase
+	// and the slot wait unbounded, and at L1 the proxy runs in the daemon).
+	MaxInFlight int
 }
 
 // TaskProxy is the proxy of one sandbox (A07 §12). There is deliberately
@@ -105,6 +111,7 @@ type TaskProxy struct {
 	ifaddrs  func() ([]netip.Addr, error)
 	limits   Limits
 	sem      chan struct{} // one token per admitted connection (A07 §10)
+	inflight chan struct{} // one token per connection Serve holds (Limits.MaxInFlight)
 
 	dnsMu sync.Mutex
 	dns   map[string]dnsEntry
@@ -153,6 +160,7 @@ func New(cfg Config) (*TaskProxy, error) {
 	}
 	p.limits = lowerOnly(cfg.Limits)
 	p.sem = make(chan struct{}, p.limits.MaxConns)
+	p.inflight = make(chan struct{}, p.limits.MaxInFlight)
 	return p, nil
 }
 
@@ -168,6 +176,9 @@ func lowerOnly(l Limits) Limits {
 	if l.IdleTimeout <= 0 || l.IdleTimeout > idleTimeout {
 		l.IdleTimeout = idleTimeout
 	}
+	if d := l.MaxConns + inFlightHeadroom; l.MaxInFlight <= 0 || l.MaxInFlight > d {
+		l.MaxInFlight = d
+	}
 	return l
 }
 
@@ -177,7 +188,9 @@ func lowerOnly(l Limits) Limits {
 // like) is retried with backoff from 5 ms to 1 s, so a moment without file
 // descriptors does not end the task's egress for good. When ctx ends,
 // Serve closes ln and every open connection, waits for the handlers and
-// returns nil.
+// writes any pending too_many_connections summary, then
+// returns nil. At most Limits.MaxInFlight connections are held at once;
+// the rest are closed as soon as they are accepted.
 func (p *TaskProxy) Serve(ctx context.Context, ln net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -185,6 +198,17 @@ func (p *TaskProxy) Serve(ctx context.Context, ln net.Listener) error {
 	defer stop()
 	var wg sync.WaitGroup
 	var backoff time.Duration
+	// Connections refused for MaxInFlight are not written one by one: a
+	// flood would fill the store. Each burst (refusals with no accepted
+	// connection between them) becomes one proxy.denied{too_many_connections,
+	// count}, written when the next connection is accepted or Serve ends.
+	dropped := 0
+	flush := func() {
+		if dropped > 0 {
+			p.emitDenied(ctx, DeniedEvent{Reason: ReasonTooManyConnections, Count: dropped})
+			dropped = 0
+		}
+	}
 	for {
 		c, err := ln.Accept()
 		if err != nil && ctx.Err() == nil && isTemporary(err) {
@@ -203,14 +227,26 @@ func (p *TaskProxy) Serve(ctx context.Context, ln net.Listener) error {
 			parentDone := ctx.Err() != nil
 			cancel()
 			wg.Wait()
+			flush()
 			if parentDone {
 				return nil
 			}
 			return fmt.Errorf("proxy: accept: %w", err)
 		}
+		select {
+		case p.inflight <- struct{}{}:
+		default:
+			// Over MaxInFlight: close at once, before any read or
+			// goroutine, and count it for the burst's summary.
+			_ = c.Close()
+			dropped++
+			continue
+		}
+		flush() // an accepted connection ends the burst
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() { <-p.inflight }()
 			p.ServeConn(ctx, c)
 		}()
 	}
@@ -723,3 +759,6 @@ func isTemporary(err error) bool {
 	var to interface{ Timeout() bool }
 	return errors.As(err, &to) && to.Timeout()
 }
+
+// inFlight is the number of connections Serve currently holds.
+func (p *TaskProxy) inFlight() int { return len(p.inflight) }
