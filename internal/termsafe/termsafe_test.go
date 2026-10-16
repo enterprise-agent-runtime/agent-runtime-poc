@@ -31,6 +31,20 @@ func TestSanitizeDetail(t *testing.T) {
 		{"DEL and backspace removed", "ab\x08\x7fc", "abc"},
 		{"newline, CR and tab become spaces", "a\nok  fake\rb\tc", "a ok  fake b c"},
 		{"bidi override removed", "abc" + string(rune(0x202e)) + "dcb", "abcdcb"},
+		// Review of M2-3: sequence shapes and terminators the first table did
+		// not pin. Control strings end the way a terminal ends them (vt100.net
+		// DEC parser): CAN and SUB abort, ESC and any C1 start the next
+		// control, so text after them is judged again rather than swallowed
+		// or let through.
+		{"CSI with intermediate byte removed whole", "a\x1b[1 qb", "ab"},
+		{"ESC ( B charset designation removed whole", "a\x1b(Bb", "ab"},
+		{"raw 0x9c byte does not end a string", "a\x1b]0;x\x9cy\x07b", "ab"},
+		{"escape after 1024 bytes removed, no marker", strings.Repeat("A", 1024) + "\x1b[0m", strings.Repeat("A", 1024)},
+		{"CAN aborts an OSC string", "a\x1b]0;x\x18b", "ab"},
+		{"SUB aborts an OSC string", "a\x1b]0;x\x1ab", "ab"},
+		{"ESC ends an OSC string and starts the next sequence", "a\x1b]0;x\x1b[31mb", "ab"},
+		{"C1 CSI ends an OSC string and starts the next sequence", "a\x1b]0;x" + string(rune(0x9b)) + "2Jb", "ab"},
+		{"CAN aborts a CSI", "a\x1b[31\x18b", "ab"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

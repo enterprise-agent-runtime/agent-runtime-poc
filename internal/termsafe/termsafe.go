@@ -33,10 +33,16 @@ const TruncatedMarker = " [truncated]"
 //     a further line of output;
 //   - every other C0 and C1 control, DEL and the bidirectional formatting
 //     characters (Trojan Source, CVE-2021-42574) are dropped;
-//   - invalid UTF-8 bytes become U+FFFD, because a raw 0x9b is CSI to a
-//     terminal that is not in UTF-8 mode.
+//   - invalid UTF-8 bytes become U+FFFD, so a stray 0x80–0x9F byte never
+//     reaches the terminal on its own.
 //
-// Printable text, including non-ASCII letters, is unchanged.
+// Printable text, including non-ASCII letters, is unchanged. The protection
+// assumes a UTF-8 terminal, which decodes C1 controls only from their
+// two-byte forms (U+0080–U+009F). The bytes 0x80–0x9F also occur as
+// continuation bytes inside valid non-ASCII characters (é is C3 A9, € is
+// E2 82 AC) and are not stripped there; a terminal in an 8-bit mode such as
+// Latin-1 could read those as C1 controls, and this function does not defend
+// against that.
 func SanitizeDetail(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s) && b.Len() <= MaxDetail; {
@@ -106,16 +112,20 @@ func skipCSI(s string, i int) int {
 	return i
 }
 
-// skipString returns the index after a control string starting at i: up to
-// and including BEL, ESC \ or ST (U+009C), or to the end of s.
+// skipString returns the index after a control string starting at i. It
+// ends the way a terminal ends it (vt100.net DEC parser): BEL and ST
+// (U+009C) terminate it and are consumed; CAN and SUB abort it and are
+// consumed; ESC and any other C1 control abort it and are left for the main
+// loop, which removes the sequence they start (ESC \ is a two-byte escape
+// there). Otherwise it runs to the end of s.
 func skipString(s string, i int) int {
 	for i < len(s) {
 		r, n := utf8.DecodeRuneInString(s[i:])
 		switch {
-		case r == 0x07 || r == 0x9c:
+		case r == 0x07 || r == 0x9c || r == 0x18 || r == 0x1a:
 			return i + n
-		case r == 0x1b && i+1 < len(s) && s[i+1] == '\\':
-			return i + 2
+		case r == 0x1b || (r >= 0x80 && r <= 0x9f):
+			return i
 		}
 		i += n
 	}
