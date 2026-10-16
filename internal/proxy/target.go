@@ -44,7 +44,7 @@ const maxAuthority = 253 + 1 + 1 + 5
 //     netip parses as IPv4 is an IPv4 literal. netip refuses octal, hex,
 //     integer and short IPv4 forms.
 //  3. Anything else is a name: one trailing dot stripped, ASCII only
-//     (non-ASCII is refused, there is no IDNA, D-033 candidate), lower-cased,
+//     (non-ASCII is refused, there is no IDNA, D-059), lower-cased,
 //     LDH labels of 1..63 bytes that neither start nor end with a hyphen,
 //     253 bytes in total. A name whose last label is a decimal or 0x-hex
 //     number is refused: the system resolver (inet_aton) would read

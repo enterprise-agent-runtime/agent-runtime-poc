@@ -63,7 +63,7 @@ const RuleStaticDeny = "platform.egress-static-deny"
 // ErrNoApprovals is returned by StaticDecider.WaitApproval.
 var ErrNoApprovals = errors.New("proxy: static decider has no approvals (PDP arrives in M3)")
 
-// StaticDecider is the M2 decider (D-032 candidate): the allowlist fast
+// StaticDecider is the M2 decider (D-058): the allowlist fast
 // path in the proxy allows, and every destination that reaches the decider
 // is denied. It never asks for an approval, so nothing is held. The PDP
 // hand-off and the 120 s hold (A07 §5.2 step 4, §6) replace it in M3.

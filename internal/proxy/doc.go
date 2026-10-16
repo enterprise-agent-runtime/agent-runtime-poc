@@ -14,7 +14,7 @@
 //     (octal, hex, integer, short IPv4) are refused, and so is every name
 //     whose last label is numeric, because the system resolver would read
 //     "127.1" or "2130706433" as an address. Non-ASCII names are refused
-//     (no IDNA library, D-033 candidate); "xn--" names are ordinary ASCII.
+//     (no IDNA library, D-059); "xn--" names are ordinary ASCII.
 //   - Allowlist matching is exact equality on the canonical key. There are
 //     no wildcard, suffix or CIDR entries (A07 §5.1); Allowlist.Add refuses
 //     a key containing "*".

@@ -19,7 +19,7 @@ var normalizeCases = []struct {
 	{"EXAMPLE.org.:443", "example.org:443", "", false},
 	{"registry.npmjs.org:443", "registry.npmjs.org:443", "", false},
 	{"Proxy.Golang.Org:443", "proxy.golang.org:443", "", false},
-	// Punycode is plain ASCII (D-033 candidate: no IDNA library, so a
+	// Punycode is plain ASCII (D-059: no IDNA library, so a
 	// Unicode name is refused, its xn-- form accepted).
 	{"xn--bcher-kva.example:443", "xn--bcher-kva.example:443", "", false},
 	{"XN--BCHER-KVA.example:443", "xn--bcher-kva.example:443", "", false},
