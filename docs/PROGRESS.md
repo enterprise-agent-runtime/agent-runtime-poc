@@ -2,7 +2,76 @@
 
 The current milestone's checklist is at the top; below it, one entry per session (built, tested with the exact commands and a summary of their output, left, open questions). `CLAUDE.md` §11.
 
-## Current milestone: M1 — skeleton, platform layer, store, providers, daemon, CLI, Copilot spike
+## Current milestone: M2 — sandbox, executor, proxy
+
+Branch `m2-sandbox-executor-proxy` (off `first-design-poc`), one PR per task into it, one milestone PR at the end. Plan by the `planner` agent, 2026-10-16. The owner answered its four questions on 2026-10-16:
+
+- **D-041:** `golang.org/x/sys` is allowed as a direct dependency.
+- **C-61:** OS build tags are allowed in the executor.
+- **Windows hardening (WH-1..3):** runs before the L2 tasks, in parallel with the executor work.
+- **C-62:** escape-check egress goes to a local test upstream; one online row is opt-in for the recorded acceptance run.
+
+Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. **[Docker]** marks a task that needs Docker Desktop running with WSL2 integration.
+
+**Preflight, 2026-10-16:**
+
+| Check | Result |
+| --- | --- |
+| Toolchains and access | Go 1.27.1 on both sides, push access, CI green |
+| L1 sandbox prerequisites | bwrap 0.9.0, userns ok, libseccomp present |
+| Docker | **Not running** on Windows or in WSL2 |
+| cgroups | WSL2 has v1 only, so L1 limits use rlimits |
+| Disk | D: has 30 GB free; images live on C:, so this is fine |
+
+- [ ] **M2-0** Bookkeeping: this plan; WSL checkout fast-forward; L1 escape-check tools in WSL (curl, netcat-openbsd, dnsutils, strace, util-linux). The tools need the owner's OK to install.
+
+**Group A** (platform and guard rails; no Docker):
+
+- [ ] **M2-1** `warden daemon stop` waits for wardend to exit (preflight finding: Windows cleanup hit EBUSY right after stop)
+- [ ] **M2-2** archtest: OS tags for `internal/exec` and `cmd/warden-exec` (C-61), and a file-level forwarder listener exemption
+- [ ] **M2-3** doctor: strip control characters from output; validate Docker Version/Os (CWE-150)
+
+**WH, Windows hardening** (before L2, in parallel with the executor work):
+
+- [ ] **WH-1** Token file created with its owner-only DACL already set (CreateFile security attributes), random O_EXCL temp name; protected DACLs on the home and run directories
+- [ ] **WH-2** Owner-only check also requires owner == token user (CWE-283); production callers in wardend after writing the token and in the client before sending it
+- [ ] **WH-3** Client verifies the named pipe's server is the current user before sending the token (pipe squatting); Windows test that the pipe DACL is owner-only
+
+**Group B** (executor; no Docker):
+
+- [ ] **M2-4** wire types, error codes and profiles
+- [ ] **M2-5** ordered transport
+- [ ] **M2-6** Resolve and race-free open
+- [ ] **M2-7** fs operations
+- [ ] **M2-8** proc operations, rlimits and output cap
+- [ ] **M2-9** git.run
+- [ ] **M2-10** the `cmd/warden-exec` binary and the forwarder
+
+**Group C** (proxy; no Docker):
+
+- [ ] **M2-11** normalize, range check, allowlist, CONNECT and plain HTTP, events
+- [ ] **M2-12a** per-task Unix listener for L1
+
+**Group D** (L1 sandbox, WSL2):
+
+- [ ] **M2-12** Spec, mounts and env model; `TestSandboxSpecMounts`, `TestSandboxEnvAllowlist`, `TestDenyListThreeLayers` with the exec and mount layers
+- [ ] **M2-13** bwrap argv
+- [ ] **M2-14** seccomp in pure Go
+- [ ] **M2-15** launch, rlimits, `sandbox.cgroup` doctor check
+- [ ] **M2-16** `make escape-check` L1
+
+**Group E** (L2 sandbox):
+
+- [ ] **M2-17** [Docker] engine gate at creation (CWE-636), plus `sandbox.default_level` normalisation (CWE-178)
+- [ ] **M2-18** container spec and Windows path mapping
+- [ ] **M2-19** images and `make images`
+- [ ] **M2-20** [Docker] proxy sidecar
+- [ ] **M2-21** [Docker] launch over container stdio, orphan cleanup
+- [ ] **M2-22** [Docker] escape-check L2 in WSL2 and on Windows
+- [ ] **M2-23** CI Linux integration job, pinned to ubuntu-24.04
+- [~] **INV-I** `TestDenyListThreeLayers` covers the exec and mount layers in M2; the policy layer arrives in M3
+
+## Milestone M1 — skeleton, platform layer, store, providers, daemon, CLI, Copilot spike (open items carried)
 
 Branch: `first-design-poc` (owner's instruction; DECISIONS-poc D-002). Acceptance restates WRD-16 §16 week 1 and the M1 block of `docs/PROMPT-Claude-Code.md`.
 

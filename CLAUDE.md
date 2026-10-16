@@ -60,7 +60,7 @@ Precedence rules:
 | Agents | Two declarative agents: `coder` (modes plan/implement/repair) and `verifier`. Manifests per WRD-03 and WRD-16 §7. |
 | Workflow | `workflows/poc-coding.yaml`: plan → G1 → implement → verify → repair (max 1) → G2 → deliver; sequential; one worktree per session. |
 | Targets | Linux (L1 default), Windows (L2 only, Docker Desktop), macOS (L1 default) are all first-class from M1; Windows and Linux are verified continuously on the owner's machine; macOS packaging and Seatbelt tests happen in M7 when a Mac is available. |
-| Dependencies | Only: `spf13/cobra`, `creachadair/jrpc2`, `modernc.org/sqlite`, `google/cel-go`, `zalando/go-keyring`, `santhosh-tekuri/jsonschema/v6`, `gopkg.in/yaml.v3`, `github/copilot-sdk/go`, `github.com/docker/docker/client` (L2 backend), `github.com/Microsoft/go-winio` (named pipes); UI: React, Vite, TanStack Query, one diff-viewer component; Tauri 2 with `tauri-plugin-shell`. Anything else needs an entry in `docs/DECISIONS-poc.md` with the reason. |
+| Dependencies | Only: `spf13/cobra`, `creachadair/jrpc2`, `modernc.org/sqlite`, `google/cel-go`, `zalando/go-keyring`, `santhosh-tekuri/jsonschema/v6`, `gopkg.in/yaml.v3`, `github/copilot-sdk/go`, `github.com/docker/docker/client` (L2 backend), `github.com/Microsoft/go-winio` (named pipes), `golang.org/x/sys` (raw syscalls for the executor and sandbox: `openat2`, seccomp, Windows security APIs; owner approval 2026-10-16, D-041); UI: React, Vite, TanStack Query, one diff-viewer component; Tauri 2 with `tauri-plugin-shell`. Anything else needs an entry in `docs/DECISIONS-poc.md` with the reason. |
 
 ## 5. Invariants and the tests that prove them
 
@@ -115,7 +115,7 @@ apps/desktop                Tauri 2 (src-tauri: sidecar + socket bridge) + React
 docs/                       specification, design, working files
 ```
 
-Import rules enforced by `scripts/lint-imports.sh` (run in `make check`): `internal/providers/*` and `internal/harness/*` import only `internal/model` (and stdlib); `internal/exec` imports nothing from the daemon; `internal/policy` imports no provider or harness package; `apps/desktop` contains no Go; `cmd/*` contain only wiring; `runtime.GOOS` and build tags for OS selection appear only in `internal/platform`, `internal/sandbox/*` and `internal/secrets` backends.
+Import rules enforced by `scripts/lint-imports.sh` (run in `make check`): `internal/providers/*` and `internal/harness/*` import only `internal/model` (and stdlib); `internal/exec` imports nothing from the daemon; `internal/policy` imports no provider or harness package; `apps/desktop` contains no Go; `cmd/*` contain only wiring; `runtime.GOOS` and build tags for OS selection appear only in `internal/platform`, `internal/sandbox/*`, `internal/secrets` backends, and the executor (`internal/exec`, `cmd/warden-exec`), whose semantics are per OS (owner approval 2026-10-16, C-61).
 
 ## 7. Coding standards
 
