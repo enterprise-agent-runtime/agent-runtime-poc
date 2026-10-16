@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"warden.dev/warden/internal/execproto"
 )
@@ -205,6 +206,9 @@ func FuzzPatch(f *testing.F) {
 		"diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n",
 		"diff --git a/e b/e\ndeleted file mode 100644\n",
 		"--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n a\n\n-c\n+C\n@@ -10 +10 @@\n-j\n+J\n",
+		// The quadratic diff --git line of review round 1 (CWE-407).
+		"diff --git " + strings.Repeat(" ", 60000) + "\nnew mode 100755\n",
+		"diff --git a/x b/y b/x b/y\nold mode 100644\nnew mode 100755\n",
 	} {
 		f.Add(c, 1)
 	}
@@ -311,3 +315,79 @@ func TestParseHunkHeader(t *testing.T) {
 		}
 	}
 }
+
+// TestParsePatch_GitLineNames: the diff --git line is split into its two
+// names without trying every space (see TestParsePatch_GitLineLinear);
+// these are the splits the old every-space search found.
+func TestParsePatch_GitLineNames(t *testing.T) {
+	mode := "\nold mode 100644\nnew mode 100755\n"
+	cases := []struct {
+		name, patch string
+		strip       int
+		want        string // "" = invalid_argument
+	}{
+		{"names with ' b/' inside", "diff --git a/x b/y b/x b/y" + mode, 1, "x b/y"},
+		{"strip 0", "diff --git x x" + mode, 0, "x"},
+		{"strip 2", "diff --git a/b/x c/d/x" + mode, 2, "x"},
+		{"spaces", "diff --git a/my file.txt b/my file.txt" + mode, 1, "my file.txt"},
+		{"different names", "diff --git a/x b/y" + mode, 1, ""},
+		{"one name", "diff --git a/x" + mode, 1, ""},
+		{"no prefix to strip", "diff --git x x" + mode, 1, ""},
+		{"only spaces", "diff --git      " + mode, 1, ""},
+	}
+	for _, c := range cases {
+		files, err := parsePatch(c.patch, c.strip)
+		switch {
+		case c.want == "" && codeOf(err) != execproto.ErrInvalidArgument:
+			t.Errorf("%s: %+v, %v; want invalid_argument", c.name, files, err)
+		case c.want != "" && (err != nil || len(files) != 1 || files[0].from != c.want || files[0].to != c.want):
+			t.Errorf("%s: %+v, %v; want %q", c.name, files, err, c.want)
+		}
+	}
+	files, err := parsePatch("diff --git a/my a.txt b/my b.txt\nrename from my a.txt\nrename to my b.txt\n", 1)
+	if err != nil || files[0].from != "my a.txt" || files[0].to != "my b.txt" {
+		t.Errorf("rename with spaces: %+v, %v", files, err)
+	}
+	if _, err := parsePatch("diff --git a/my a.txt b/my c.txt\nrename from my a.txt\nrename to my b.txt\n", 1); codeOf(err) != execproto.ErrInvalidArgument {
+		t.Errorf("rename disagreeing with the git line: %v", err)
+	}
+}
+
+// TestParsePatch_GitLineLinear is CWE-407 from review round 1: the old
+// parser tried a split at every space of the diff --git line and stripped
+// both halves for each, quadratic in the line: a 1 MiB line of spaces took
+// 21 s. A 4 MiB line (the whole patch cap) must be refused at once, and a
+// long line of a legal shape must parse in linear time.
+func TestParsePatch_GitLineLinear(t *testing.T) {
+	done := make(chan error, 2)
+	go func() {
+		_, err := parsePatch("diff --git "+strings.Repeat(" ", execproto.MaxPatchBytes-64)+"\nnew mode 100755\n", 1)
+		done <- err
+	}()
+	go func() {
+		// Every section's git line at the longest legal length: 4095-byte
+		// names made of spaces and slashes. All the names are equal, so
+		// the patch is refused as duplicates, after every line was split.
+		name := strings.Repeat("a /", 1365)
+		var b strings.Builder
+		for b.Len() < execproto.MaxPatchBytes-3*len(name) {
+			fmt.Fprintf(&b, "diff --git a/%s b/%s\nold mode 100644\nnew mode 100755\n", name, name)
+		}
+		_, err := parsePatch(b.String(), 1)
+		done <- err
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-done:
+			if codeOf(err) != execproto.ErrInvalidArgument {
+				t.Errorf("long git line: %v, want invalid_argument", err)
+			}
+		case <-time.After(hangGuardPure):
+			t.Fatal("parsing a long diff --git line did not return: quadratic")
+		}
+	}
+}
+
+// hangGuardPure bounds waits for pure calls that must return; a deadlock
+// guard, not a performance budget (CLAUDE.md §8.6).
+const hangGuardPure = 20 * time.Second

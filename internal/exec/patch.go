@@ -320,40 +320,94 @@ headers:
 	return fp, checkShape(fp)
 }
 
-// gitSame finds the split of "a/<n> b/<n>" whose halves strip to the same
-// name; names may contain spaces, so every space is tried. More than one
-// distinct answer is ambiguous and refused.
-func (p *patchParser) gitSame(gitLine string) (string, bool) {
-	found := ""
-	for i := 0; i < len(gitLine); i++ {
-		if gitLine[i] != ' ' {
-			continue
-		}
-		a, okA := stripName(gitLine[:i], p.strip)
-		b, okB := stripName(gitLine[i+1:], p.strip)
-		if okA && okB && a == b {
-			if found != "" && found != a {
-				return "", false
-			}
-			found = a
+// maxGitLine bounds the diff --git line: two names of at most maxPathBytes
+// after stripping, each behind up to MaxPatchStrip prefix components of at
+// most maxSegmentBytes, and the space between them. A longer line cannot
+// name a file Resolve would accept and is refused before it is split.
+const maxGitLine = 2*(maxPathBytes+execproto.MaxPatchStrip*(maxSegmentBytes+1)) + 1
+
+// nameStarts returns, for every index k of line, where a name that starts
+// its prefix at k begins after strip components (just after the strip-th
+// "/" at or after k), or -1 when there are not that many slashes. One pass
+// from the end: next is the first slash at or after k.
+func nameStarts(line string, strip int) []int {
+	next := make([]int, len(line)+1)
+	next[len(line)] = -1
+	for k := len(line) - 1; k >= 0; k-- {
+		if line[k] == '/' {
+			next[k] = k
+		} else {
+			next[k] = next[k+1]
 		}
 	}
-	return found, found != ""
+	out := make([]int, len(line)+1)
+	for k := range out {
+		at := k
+		for j := 0; j < strip && at >= 0; j++ {
+			if at > len(line) || next[at] < 0 {
+				at = -1
+				break
+			}
+			at = next[at] + 1
+		}
+		out[k] = at
+	}
+	return out
 }
 
-// gitNames reports whether the diff --git line names from and to.
-func (p *patchParser) gitNames(gitLine, from, to string) bool {
-	for i := 0; i < len(gitLine); i++ {
+// gitSame finds the split of "a/<n> b/<n>" whose halves strip to the same
+// name. Names may contain spaces, so the split is not simply the first or
+// the middle space. Trying every space and stripping both halves each time
+// was quadratic in the line (CWE-407: 21 s for a 1 MiB line of spaces), so
+// the candidates are narrowed first: the left name starts at a fixed index
+// (after the prefix of the whole line), the right one after the prefix
+// following the space, and the two can only be equal if they are equally
+// long. As the space moves right the left name grows and the right one
+// does not, so at most one space qualifies, and only that split is
+// compared.
+func (p *patchParser) gitSame(gitLine string) (string, bool) {
+	if len(gitLine) > maxGitLine {
+		return "", false
+	}
+	starts := nameStarts(gitLine, p.strip)
+	pre := starts[0]
+	if pre < 0 {
+		return "", false
+	}
+	for i := pre; i < len(gitLine); i++ {
 		if gitLine[i] != ' ' {
 			continue
 		}
-		a, okA := stripName(gitLine[:i], p.strip)
-		b, okB := stripName(gitLine[i+1:], p.strip)
-		if okA && okB && a == from && b == to {
-			return true
+		q := starts[i+1]
+		if q < 0 {
+			break // fewer slashes after every later space too
+		}
+		if i-pre == len(gitLine)-q {
+			a, okA := stripName(gitLine[:i], p.strip)
+			b, okB := stripName(gitLine[i+1:], p.strip)
+			if okA && okB && a == b {
+				return a, true
+			}
+			return "", false
 		}
 	}
-	return false
+	return "", false
+}
+
+// gitNames reports whether the diff --git line names from and to: the left
+// name starts after the line's prefix, so the split is right after from.
+func (p *patchParser) gitNames(gitLine, from, to string) bool {
+	if len(gitLine) > maxGitLine {
+		return false
+	}
+	pre := nameStarts(gitLine, p.strip)[0]
+	i := pre + len(from)
+	if pre < 0 || i >= len(gitLine) || gitLine[i] != ' ' {
+		return false
+	}
+	a, okA := stripName(gitLine[:i], p.strip)
+	b, okB := stripName(gitLine[i+1:], p.strip)
+	return okA && okB && a == from && b == to
 }
 
 func regularMode(m string) bool { return m == "100644" || m == "100755" }
