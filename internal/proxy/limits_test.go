@@ -459,3 +459,71 @@ func TestServe_InFlightSummaryAtShutdown(t *testing.T) {
 		t.Errorf("events %+v; want one proxy.denied{too_many_connections, count: 1}", denies)
 	}
 }
+
+// TestServe_ShutdownReasons (round-2 review F4): at sandbox.destroy a
+// connection waiting for a slot was recorded as too_many_connections, and
+// a tunnel still waiting for its ClientHello as not_tls; both put a false
+// reason into the audit chain. A refusal caused by shutdown is now
+// proxy.denied{reason: sandbox_destroyed}, the A07 §6/§9 reason for it.
+func TestServe_ShutdownReasons(t *testing.T) {
+	h := newHarnessWith(t, func(c *Config) { c.Limits = Limits{MaxConns: 1} }, "registry.npmjs.org:443")
+	h.res.set("registry.npmjs.org", addrs("104.16.1.34"))
+	h.dial.upstream = func(c net.Conn) { _, _ = io.Copy(io.Discard, c); _ = c.Close() }
+	ln := newPipeListener()
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- h.p.Serve(ctx, ln) }()
+
+	a := ln.dial(t) // takes the only slot, then never sends its ClientHello
+	defer a.Close()
+	if resp, _ := send(t, a, "CONNECT registry.npmjs.org:443 HTTP/1.1\r\n\r\n"); resp.StatusCode != 200 {
+		t.Fatalf("first CONNECT status %d", resp.StatusCode)
+	}
+	b := ln.dial(t) // waits for the slot
+	defer b.Close()
+	go func() { _, _ = io.WriteString(b, "CONNECT registry.npmjs.org:443 HTTP/1.1\r\n\r\n") }()
+	go func() { _, _ = io.Copy(io.Discard, b) }()
+	waitFor(t, "the second connection to wait for a slot", func() bool { return h.p.waiting.Load() == 1 })
+
+	cancel() // sandbox.destroy
+	select {
+	case <-served:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return")
+	}
+	conns, denies := h.sink.snapshot()
+	if len(conns) != 0 || len(denies) != 2 {
+		t.Fatalf("events %+v / %+v; want two proxy.denied", conns, denies)
+	}
+	for _, d := range denies {
+		if d.Reason != ReasonSandboxDestroyed || d.Host != "registry.npmjs.org" {
+			t.Errorf("proxy.denied %+v; want reason sandbox_destroyed", d)
+		}
+	}
+}
+
+// TestValidMethod_LengthCap (round-2 review F5): a 15000-byte method was
+// stored in proxy.denied.method and the EgressRequest. Methods are capped
+// at 32 bytes.
+func TestValidMethod_LengthCap(t *testing.T) {
+	if !validMethod(strings.Repeat("A", 32)) {
+		t.Error("32-byte method refused")
+	}
+	if validMethod(strings.Repeat("A", 33)) {
+		t.Error("33-byte method accepted")
+	}
+	h := newHarness(t, "plain.example:80")
+	c, done := h.open(t)
+	resp, _ := send(t, c, strings.Repeat("A", 15000)+" http://plain.example/ HTTP/1.1\r\n\r\n")
+	_ = c.Close()
+	waitDone(t, done)
+	_, denies := h.sink.snapshot()
+	if resp.StatusCode != 400 || len(denies) != 1 || denies[0].Reason != ReasonUnsupportedMethod || denies[0].Method != "" {
+		var reason Reason
+		methodLen := -1
+		if len(denies) > 0 {
+			reason, methodLen = denies[0].Reason, len(denies[0].Method)
+		}
+		t.Errorf("status %d, %d events, reason %s, method %d bytes; want 400 and one proxy.denied(unsupported_method) with an empty method", resp.StatusCode, len(denies), reason, methodLen)
+	}
+}

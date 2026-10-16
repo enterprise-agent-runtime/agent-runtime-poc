@@ -39,6 +39,11 @@ func (p *TaskProxy) connect(ctx context.Context, c net.Conn, br *bufio.Reader, a
 	reason := Reason("")
 	if err != nil {
 		reason = ReasonNotTLS
+		if ctx.Err() != nil {
+			// The read failed because shutdown closed the connection, not
+			// because the client sent something else (round-2 review F4).
+			reason = ReasonSandboxDestroyed
+		}
 	} else if sni, hasSNI, hasECH, err := parseClientHelloSNI(rec); err != nil {
 		reason = ReasonNotTLS
 	} else if hasECH {

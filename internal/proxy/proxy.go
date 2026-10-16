@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -37,6 +38,7 @@ const (
 	connWait              = 10 * time.Second
 	acceptBackoffMin      = 5 * time.Millisecond
 	acceptBackoffMax      = time.Second
+	maxMethodLen          = 32
 	inFlightHeadroom      = 32 // MaxInFlight = MaxConns + this, by default
 	maxEventHost          = 253
 )
@@ -114,6 +116,7 @@ type TaskProxy struct {
 	limits   Limits
 	sem      chan struct{} // one token per admitted connection (A07 §10)
 	inflight chan struct{} // one token per connection Serve holds (Limits.MaxInFlight)
+	waiting  atomic.Int32  // connections blocked in acquire (observed by tests)
 
 	dnsMu sync.Mutex
 	dns   map[string]dnsEntry
@@ -363,6 +366,9 @@ func (p *TaskProxy) admitSlot(ctx context.Context, c net.Conn, authority, method
 	}
 	if !p.acquire(ctx) {
 		ev.Reason = ReasonTooManyConnections
+		if ctx.Err() != nil {
+			ev.Reason = ReasonSandboxDestroyed // stopped waiting because of shutdown (round-2 review F4)
+		}
 		p.refuse(ctx, c, http.StatusServiceUnavailable, t.Key(), ev)
 		return t, v, nil, ip, false
 	}
@@ -715,8 +721,12 @@ func eventHost(s string) string {
 	return b.String()
 }
 
-// validMethod reports whether m matches ^[A-Z]+$.
+// validMethod reports whether m matches ^[A-Z]{1,32}$ (round-2 review F5:
+// without the cap a 15000-byte method reached the event and the Decider).
 func validMethod(m string) bool {
+	if len(m) > maxMethodLen {
+		return false
+	}
 	if m == "" {
 		return false
 	}
@@ -736,6 +746,8 @@ func (p *TaskProxy) acquire(ctx context.Context) bool {
 		return true
 	default:
 	}
+	p.waiting.Add(1)
+	defer p.waiting.Add(-1)
 	t := time.NewTimer(p.limits.ConnWait)
 	defer t.Stop()
 	select {
