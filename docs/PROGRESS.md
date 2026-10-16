@@ -38,7 +38,11 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 - [ ] **WH-1** Token file created with its owner-only DACL already set (CreateFile security attributes), random O_EXCL temp name; protected DACLs on the home and run directories
 - [ ] **WH-2** Owner-only check also requires owner == token user (CWE-283); production callers in wardend after writing the token and in the client before sending it
-- [ ] **WH-3** Client verifies the named pipe's server is the current user before sending the token (pipe squatting); Windows test that the pipe DACL is owner-only
+- [x] **WH-3** The client verifies that the endpoint's server is the current user before sending the token, on Windows and on Unix (D-049).
+  - **Daemon side:** the socket directory must be owned by the uid; the macOS peer check is on.
+  - **New test:** the Windows pipe DACL is owner-only, which was a missing M1 transport test.
+  - **Commits:** `963cc2b`, `f04a5d0`, `0365c39`.
+  - **Review:** a combined code and security review approved it after a real cross-user squat in WSL2. The squatter got 0 bytes, and the daemon refused the squatted directory.
 
 **Group B** (executor; no Docker):
 
@@ -46,7 +50,7 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Scope:** error codes, command profiles and matching (A08 limits), and shell-string detection stricter than A06 (C-64, D-047).
   - **Commits:** `38efd07`, `eb427b2`, `0b7ef4e`, `5d1c6de`, `223b804`, `0fee0cc`, `3ddbd15`, `8272194`, `8e49d97`.
   - **Review:** four rounds. They found secret leaks, a parser differential, two quadratic slow inputs (measured at 9.7 GiB and 84 s), a panic and over-blocking. The final review fuzzed it for 70 s per target with no failure, and package coverage is 96%.
-- [ ] **M2-4b** Move the deny-list from `internal/exec/denylist` to a stdlib-only leaf under `internal/execproto` (design A06 §3.1, §17). R4 forbids `internal/policy` and `internal/sandbox` from importing `internal/exec`. Also add an archtest rule that `internal/execproto` imports only the standard library (A02 R6).
+- [x] **M2-4b** The deny-list moved to `internal/execproto/denylist`, a pure move with its tests unchanged (D-014 note). archtest enforces A02 R6: non-test `internal/execproto/...` imports only the standard library, and `import "C"` is not counted as standard library, which also tightens R3. Commits `a99c8e9`, `26c4f4d`. Reviewed once and approved.
 - [ ] **M2-5** ordered transport
 - [ ] **M2-6** Resolve and race-free open
 - [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
@@ -102,7 +106,7 @@ Legend: `[x]` done and tested · `[~]` done with a recorded limitation · `[ ]` 
 - [x] Neutrality: `TestNeutrality_SameRequestYieldsToolProposals` — one `ModelRequest` → the same canonical tool proposal from Anthropic (T3), Ollama-style (T0) and a gateway vLLM (T1)
 - [x] `internal/platform` — home (`~/.warden`, `%LOCALAPPDATA%\Warden`, `WARDEN_HOME`), Unix socket (0600, SO_PEERCRED on Linux) / named pipe with owner-only DACL, owner-only files (Windows ACL), default sandbox level, detached daemon spawn, process-group termination, no-echo input, free space
 - [x] `internal/secrets` — keyring (Secret Service / Keychain / Credential Manager), encrypted file (PBKDF2 + AES-256-GCM, D-010), memory; strict `secret://` parsing and consumer binding; broker with `secret.access` events; redaction (16 types + known values) with `TestRedactionCorpus`; redacting log handler; Ed25519 checkpoint signer
-- [x] `internal/exec/denylist` — WRD-10 §6 deny-list, CF-17 matcher, argv heuristic (D-014)
+- [x] `internal/execproto/denylist` — WRD-10 §6 deny-list, CF-17 matcher, argv heuristic (D-014)
 - [x] `internal/ids` (ULID), `internal/store/jcs` (RFC 8785 with the RFC vectors)
 - [x] `internal/store` — A04 DDL as migration 0001, append-only triggers, per-session + `sys` hash chains (CF-09), signed `chain.checkpoint` with session-close anchors, blob spill, `audit export` (JSON Lines) and `audit verify [--strict]` in store and file mode; `TestAuditStrictOrdering`; tampered-store tests; deterministic audit fixtures in `internal/store/testdata/audit/`
 - [x] `internal/config` — `models.yaml` with unknown-field rejection and the A11 §5.2 rules; file-backed probe cache

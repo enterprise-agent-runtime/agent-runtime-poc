@@ -1,10 +1,14 @@
 // Package denylist is the platform deny-list of WRD-10 §6 (full list,
 // OQ-11) and its matcher (design A15 §4.2, CF-17). It is enforced at three
 // layers (INV-I): the policy engine (INV-1), the executor and the sandbox
-// mounts. It lives under internal/exec so the in-sandbox executor, which
-// imports nothing from the daemon (CLAUDE.md §6), can use the same
-// implementation as the policy engine and the secrets package
-// (docs/DECISIONS-poc.md D-014).
+// mounts. All three must use this one implementation
+// (docs/DECISIONS-poc.md D-014), so it lives in internal/execproto, the
+// leaf both sides of the executor protocol import, where design A06 §3.1
+// and §17 compile the deny-list matcher. Under internal/exec it was out of
+// reach: design A02 §5 R4 lets only the executor import internal/exec, so
+// internal/sandbox and internal/policy could not use it. Like the rest of
+// internal/execproto it imports only the standard library (A02 §5 R6,
+// enforced by internal/archtest).
 package denylist
 
 import (

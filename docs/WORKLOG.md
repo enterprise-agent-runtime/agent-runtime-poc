@@ -22,6 +22,56 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-019 · 2026-10-16 · WH-3: the client verifies who serves the daemon endpoint (pipe squatting)
+
+- **Asked:** M2 plan task WH-3, the most serious open finding from the FX-3 security review (2026-10-08). The owner scheduled it "before L2, in parallel" on 2026-10-16. Delivered under "merge each task when its review passes".
+- **Task:** Make sure the per-session token can only ever reach the real daemon, never a pipe or socket another local user created first.
+- **How:**
+  - `platform.Dial` checks before returning the connection (D-049). On Windows: the server process's token user, plus the pipe object's owner and DACL, all read on the connected handle. On Unix: the socket and directory ownership and mode, plus the peer credential on the connected fd.
+  - The daemon refuses a socket directory it does not own.
+  - The macOS peer check, on both client and daemon, replaces the earlier deferral.
+  - `Listen` states the pipe owner explicitly.
+  - Commits `963cc2b`, `f04a5d0`, `0365c39`.
+- **Rules kept:**
+  - Test first: every refusal test failed against the old code.
+  - Revert and mutation checks.
+  - Only typed x/sys APIs: no raw syscalls or DLL loading, and no archtest allowlist change.
+  - OS code only in `internal/platform`.
+  - `winio.ListenPipe` only in tests (INV-J exempts tests).
+  - Temp homes only.
+- **Rules changed or bent:**
+  - **D-011 amended:** the pipe SDDL now states `O:<sid>`. Without it, an elevated daemon's pipe would be owned by Administrators and wrongly refused. Decided by me, recorded.
+  - **`golang.org/x/sys` became a direct requirement** in go.mod, which D-041 already allows.
+  - **Not done here, on purpose:** the review's "autostart on a refusal" finding is fixed in WH-1+2, the task already rewriting `connect`, so two branches don't edit the same function.
+  - **Process slip:** two agents shared one scratch script, and one red run briefly tested another task's tree ("no Go files"). It was noticed and redone with a private script. Now prevented by a per-task scratch-directory rule in the implementer role.
+- **Verified:**
+  - `make check` green.
+  - Unix tests run in WSL2, with `-race`.
+  - A staged cross-user squat in WSL2 (uid 65534 owning `/tmp/warden-1000` and serving a socket there): the client refused, the squatter received 0 bytes, and the daemon refused the directory.
+  - The macOS path is vetted only; it is first exercised on the CI macOS runner.
+- **Left:**
+  - The Tauri bridge (M6) must apply the same server checks.
+  - The connect autostart fix is in WH-1+2.
+
+## W-018 · 2026-10-16 · M2-4b: the deny-list moves to a stdlib-only leaf; archtest enforces R6
+
+- **Asked:** Task M2-4b, which M2-4's review added to the plan. Under the new R4 rule, `internal/sandbox` and `internal/policy` could not import `internal/exec/denylist`, but INV-I needs the same list at the policy, executor and mount layers. Delivered under "merge each task when its review passes".
+- **Task:** Move the deny-list to where every layer may import it, and make the move safe to rely on.
+- **How:** `git mv internal/exec/denylist internal/execproto/denylist`. Only the package doc comment changed, and the tests are unchanged. A new archtest rule enforces A02 R6: non-test files in `internal/execproto/...` import only the standard library. The review found that `import "C"` counted as standard library, so cgo is now excluded; this also tightens R3. Commits `a99c8e9` and `26c4f4d`.
+- **Rules kept:**
+  - A pure move: the API and the tests are unchanged.
+  - Each new rule has fixtures that failed before, plus a revert check.
+  - `make check` green.
+  - No new dependency.
+- **Rules changed or bent:**
+  - **CLAUDE.md §6** gains the R6 sentence (from design A02, under the owner's A02-layout decision).
+  - **Test files are exempt from R6** (A02's `!$test`, the same convention as R3). Decided by me; the golden schema tests need jsonschema.
+  - **D-014** gets a note about the new location.
+- **Verified:** Reviewed once and approved. Every mutation in the review failed the suite, and the real tree passes R6.
+- **Left:**
+  - R6 also forbids execproto from importing its own `denylist` subpackage. That would need a narrow allowance if the wire types ever need `denylist.Version`.
+  - A02 R6 also makes `internal/model` a stdlib-only leaf. That half is not enforced yet.
+
 ## W-017 · 2026-10-16 · M2-4: executor wire types, command profiles, shell-string detection
 
 - **Asked:** M2 plan task M2-4. During review the owner made three decisions (2026-10-16): the package follows design A02's layout; shell-string detection denies more than A06; interpreter strings stay at approval. Delivered under "merge each task when its review passes".
