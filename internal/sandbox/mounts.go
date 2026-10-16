@@ -121,7 +121,20 @@ var errStopWalk = errors.New("stop")
 // list could leave a deny-listed file visible, so the sandbox is not
 // created.
 func WorktreeMasks(ctx context.Context, worktree fs.FS) ([]Mask, error) {
-	ctx, cancel := context.WithTimeout(ctx, MaskWalkTimeout)
+	return worktreeMasks(ctx, worktree, defaultWalkLimits)
+}
+
+// walkLimits are the walk bounds; a value rather than constants so a test
+// can shrink them instead of building 200,000 entries or racing a clock.
+type walkLimits struct {
+	entries, masks int
+	timeout        time.Duration
+}
+
+var defaultWalkLimits = walkLimits{entries: MaxWalkEntries, masks: MaxMasks, timeout: MaskWalkTimeout}
+
+func worktreeMasks(ctx context.Context, worktree fs.FS, lim walkLimits) ([]Mask, error) {
+	ctx, cancel := context.WithTimeout(ctx, lim.timeout)
 	defer cancel()
 	var masks []Mask
 	var n int
@@ -133,8 +146,8 @@ func WorktreeMasks(ctx context.Context, worktree fs.FS) ([]Mask, error) {
 		if p == "." {
 			return nil
 		}
-		if n++; n > MaxWalkEntries {
-			stop = fmt.Errorf("%w: worktree has more than %d entries (A06 §11.3)", ErrUnavailable, MaxWalkEntries)
+		if n++; n > lim.entries {
+			stop = fmt.Errorf("%w: worktree has more than %d entries (A06 §11.3)", ErrUnavailable, lim.entries)
 			return errStopWalk
 		}
 		if err := ctx.Err(); err != nil {
@@ -151,8 +164,8 @@ func WorktreeMasks(ctx context.Context, worktree fs.FS) ([]Mask, error) {
 		if !ok {
 			return nil
 		}
-		if masks = append(masks, Mask{RelPath: p, Dir: d.IsDir(), Pattern: pat}); len(masks) > MaxMasks {
-			stop = fmt.Errorf("%w: too_many_deny_list_matches (more than %d, A06 §11.3)", ErrUnavailable, MaxMasks)
+		if masks = append(masks, Mask{RelPath: p, Dir: d.IsDir(), Pattern: pat}); len(masks) > lim.masks {
+			stop = fmt.Errorf("%w: too_many_deny_list_matches (more than %d, A06 §11.3)", ErrUnavailable, lim.masks)
 			return errStopWalk
 		}
 		if d.IsDir() {
