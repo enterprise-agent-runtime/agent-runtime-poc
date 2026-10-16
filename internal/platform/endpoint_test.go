@@ -17,7 +17,7 @@ func TestPipeServerVerdict(t *testing.T) {
 	user := testSID(5, 21, 1111, 2222, 3333, 1001)
 	other := testSID(5, 21, 1111, 2222, 3333, 1002)
 	admins := testSID(5, 32, 544)
-	ownerOnly := testSD(seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user))
+	ownerOnly := testSD(nil, seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user))
 	good := withOwner(ownerOnly, user)
 
 	cases := []struct {
@@ -35,9 +35,9 @@ func TestPipeServerVerdict(t *testing.T) {
 		{"owner is another user", user, user, withOwner(ownerOnly, other), false},
 		{"owner is Administrators", user, user, withOwner(ownerOnly, admins), false},
 		{"no owner", user, user, ownerOnly, false},
-		{"DACL also grants Everyone", user, user, withOwner(testSD(seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user), testACE(0, 0, fileAllAccess, testSID(1, 0))), user), false},
-		{"DACL not protected", user, user, withOwner(testSD(seDACLPresent, testACE(0, 0, fileAllAccess, user)), user), false},
-		{"NULL DACL", user, user, withOwner(nullDACLSD(), user), false},
+		{"DACL also grants Everyone", user, user, withOwner(testSD(nil, seDACLPresent|seDACLProtected, testACE(0, 0, fileAllAccess, user), testACE(0, 0, fileAllAccess, testSID(1, 0))), user), false},
+		{"DACL not protected", user, user, withOwner(testSD(nil, seDACLPresent, testACE(0, 0, fileAllAccess, user)), user), false},
+		{"NULL DACL", user, user, withOwner(nullDACLSD(nil), user), false},
 		{"empty descriptor", user, user, nil, false},
 	}
 	for _, c := range cases {

@@ -22,6 +22,30 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-021 · 2026-10-16 · WH-1+2: the token file is owner-only from creation, and a second daemon cannot replace it
+
+- **Asked:** M2 plan tasks WH-1 and WH-2, the remaining FX-3 security-review findings on the token file. The owner scheduled them "before L2, in parallel" on 2026-10-16. Delivered under "merge each task when its review passes".
+- **Task:** Make sure the per-session token file can never be readable or replaceable by another local account, and that the CLI never starts a second daemon because of an error that is not "nothing is running".
+- **How:**
+  - **Write** (D-051): random exclusive temp name; on Windows the owner-only descriptor is passed to CreateFile; fsync and rename; wardend verifies the token after writing it.
+  - **Read** (D-051): `ReadOwnerOnly` opens once without following links and decides owner, type and permissions on that handle; the client uses it before dialling.
+  - **Home** (D-052): `Ensure` takes over only the default home, a home with an owner-only marker, or an empty directory, never through a link and never one owned by another account; every subdirectory is checked and tightened.
+  - **Start order** (D-053): bind first, then write the token; `ErrNotRunning` only when the endpoint is missing, and it is the only error that autostarts.
+  - **Commits:** `c8f81ca`, `4e452d5`, `19b0043`, `eebe8d7`, `330a5ed`, `9730d41`, `6e0f286`, `160d10e`, `5533efd`.
+- **Rules kept:**
+  - Test first: every guard has a test that failed against the old code (for example, the old code accepted any regular file as the marker, and the old order let a second daemon replace the token).
+  - OS code only in `internal/platform`; typed x/sys APIs only, no archtest allowlist change.
+  - Temp homes only; no credential in any file or log (`dialError` names only the endpoint path).
+- **Rules changed or bent:**
+  - **A05 §3.1/§3.4 start order reversed** (C-66): A05 writes the token before binding, which let a losing second daemon overwrite the live one. Decided by me under R3, recorded in D-053. The M6 desktop must retry through the gap rather than read the token at once on exit 3.
+  - **A05 §3.1 `token.tmp` replaced** by a random exclusive name (C-67), because a fixed name can be pre-created.
+  - **Empty directory accepted as a home** (D-052): decided by me; there is nothing in it to take over.
+- **Verified:**
+  - Three review rounds, code and security together; WSL2 and Windows binaries run with temp homes.
+  - Repro scripts: a loose token makes every command refuse with exit 2 and starts nothing; a second wardend exits 3 and the token is unchanged; 40 trials of 6 concurrent wardends after a crash left exactly one daemon.
+  - `-race` on platform and api in WSL2; `make check` green.
+- **Left:** WH-4 (in PROGRESS): reap the spawned wardend on Unix, compare the token before removing it at shutdown, a lock file for Unix Listen, a clearer message for elevated-owner directories, owner-only `keys/*.pub`, and the `ensureDir` wording.
+
 ## W-020 · 2026-10-16 · M2-5: the executor transport
 
 - **Asked:** M2 plan task M2-5. Delivered under "merge each task when its review passes".
