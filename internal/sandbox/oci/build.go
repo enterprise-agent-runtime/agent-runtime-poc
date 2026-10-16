@@ -354,10 +354,7 @@ func checkWorktree(s *sandbox.Spec, o Options) error {
 // administrator turning creation off for the volume.
 func shortNamesHint(worktree string) string {
 	return fmt.Sprintf("the volume of %q creates 8.3 names, so a sandboxed process could open a masked .env as ENV~1, "+
-		"or rename a directory to give it a new alias. Put WARDEN_HOME on a volume without 8.3 name creation "+
-		"(warden doctor reports it per volume; `fsutil 8dot3name query <drive>:` needs elevation), "+
-		"or have an administrator disable it for this volume with `fsutil 8dot3name set <drive>: 1`, "+
-		"which affects new names only, then remove existing ones with `fsutil 8dot3name strip`", worktree)
+		"or rename a directory to give it a new alias. %s", worktree, sandbox.ShortNamesFix)
 }
 
 func caseHint(hostOS, worktree string) string {
