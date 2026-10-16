@@ -36,8 +36,17 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **WH, Windows hardening** (before L2, in parallel with the executor work):
 
-- [ ] **WH-1** Token file created with its owner-only DACL already set (CreateFile security attributes), random O_EXCL temp name; protected DACLs on the home and run directories
-- [ ] **WH-2** Owner-only check also requires owner == token user (CWE-283); production callers in wardend after writing the token and in the client before sending it
+- [x] **WH-1** The token file is owner-only from creation: random exclusive temp name, descriptor set by CreateFile, verified after writing; existing homes and subdirectories are checked and tightened (D-051, D-052).
+- [x] **WH-2** Owner-only also requires owner == current user (CWE-283); the client reads the token once on a no-follow handle before dialling; bind before token, autostart only on `ErrNotRunning` (D-051, D-053, C-66, C-67).
+  - **Commits:** `c8f81ca`, `4e452d5`, `19b0043`, `eebe8d7`, `330a5ed`, `9730d41`, `6e0f286`, `160d10e`, `5533efd`.
+  - **Review:** three rounds, code and security together. An earlier round reproduced a second daemon overwriting the live token; round 3 approved after 40 crash-and-race trials with no anomaly and every earlier probe (symlink, FIFO, junction, loose marker, planted temp name) refused.
+- [ ] **WH-4** Follow-ups from the WH-1+2 review (all minor or low, none a confidentiality issue):
+  - Unix: the spawned wardend is released, not reaped, so a zombie looks alive and a failed start costs 16 s and the wrong message; reap it and test with a real child that exits 3.
+  - Shutdown removes the token file without checking it is still this daemon's (CWE-367); compare before removing.
+  - Unix Listen's stale-socket path is not exclusive under a race (CWE-367); hold a `run/wardend.lock` flock for the daemon's lifetime.
+  - Windows: a directory created earlier under an elevated token is owned by Administrators and refused with a confusing message; name elevation in it.
+  - `PublicKeys` should accept only owner-only `keys/*.pub` (CWE-732).
+  - `ensureDir`'s link message still names only the home and run directory.
 - [x] **WH-3** The client verifies that the endpoint's server is the current user before sending the token, on Windows and on Unix (D-049).
   - **Daemon side:** the socket directory must be owned by the uid; the macOS peer check is on.
   - **New test:** the Windows pipe DACL is owner-only, which was a missing M1 transport test.
