@@ -51,6 +51,9 @@ var listenAllowed = "; allowed only in " + strings.Join(listenDirs, ", ") + " an
 var dotWatchedExec = []string{"os/exec", "os", "syscall", "golang.org/x/sys/unix", "golang.org/x/sys/windows"}
 var dotWatchedListen = []string{"net", "net/http"}
 
+// rawSocketPkgs expose Bind and Listen on raw sockets, bypassing package net.
+var rawSocketPkgs = map[string]bool{"syscall": true, "golang.org/x/sys/unix": true, "golang.org/x/sys/windows": true}
+
 // osDirs may select behaviour by operating system (CLAUDE.md §3, §6). The
 // executor is included because its semantics are per OS (openat2, process
 // groups) and it must still compile on Windows (docs/CONFLICTS.md C-61).
@@ -107,8 +110,10 @@ func ExecRule(files []File) []Violation {
 // Server type is flagged wherever it is named, because its methods
 // (ListenAndServe, Serve) are called on a value and are invisible to a check
 // of package-qualified calls. Dot-imports of net and net/http are flagged for
-// the same reason. Test files are exempt (httptest servers bind 127.0.0.1
-// inside the test process).
+// the same reason. Also flagged: net.FileListener, raw Listen and Bind from
+// syscall and golang.org/x/sys/{unix,windows}, and importing net/http/httptest.
+// Test files are exempt (httptest servers bind 127.0.0.1 inside the test
+// process).
 func ListenRule(files []File) []Violation {
 	var out []Violation
 	for _, f := range files {
@@ -119,6 +124,10 @@ func ListenRule(files []File) []Violation {
 			if slices.Contains(dotWatchedListen, imp) {
 				out = append(out, Violation{f.Rel, 0, "INV-J", fmt.Sprintf("dot-import of %q hides listeners from this check", imp) + listenAllowed})
 			}
+		}
+		if slices.Contains(f.Imports, "net/http/httptest") {
+			// httptest.NewServer listens on 127.0.0.1; it belongs in tests.
+			out = append(out, Violation{f.Rel, 0, "INV-J", "net/http/httptest imported outside a test file" + listenAllowed})
 		}
 		for _, u := range f.Uses {
 			bad := ""
@@ -133,6 +142,12 @@ func ListenRule(files []File) []Violation {
 				bad = "http." + u.Name
 			case u.Pkg == "net/http" && u.Name == "Server":
 				bad = "http.Server (its ListenAndServe and Serve methods open or serve a listener)"
+			case u.Pkg == "net" && u.Name == "FileListener":
+				bad = "net.FileListener (a listener from an inherited or raw socket)"
+			case rawSocketPkgs[u.Pkg] && (u.Name == "Listen" || u.Name == "Bind"):
+				// The address family is not visible statically, so a raw Bind
+				// or Listen is flagged whatever it binds.
+				bad = fmt.Sprintf("raw socket %s.%s", path.Base(u.Pkg), u.Name)
 			}
 			if bad != "" {
 				out = append(out, Violation{f.Rel, u.Line, "INV-J", bad + listenAllowed})
@@ -211,15 +226,16 @@ func ImportRules(module string, files []File) []Violation {
 				} else if !isInternal && !isStdlib(imp) && !f.Test && !strings.HasPrefix(imp, "github.com/github/copilot-sdk/") {
 					bad = "harnesses import only their vendor SDK"
 				}
-			case underAny(f.Dir, executorDirs):
+			case underAny(f.Dir, executorDirs) && !f.Test:
 				// Design A02 §5 R3: the executor shares only the wire types with
 				// the daemon. R10: buildinfo reaches internal/exec through
 				// exec.Config, so only the binary imports it. Third-party: only
-				// golang.org/x/sys (CLAUDE.md §4, D-041).
+				// golang.org/x/sys (CLAUDE.md §4, D-041). Test files are exempt,
+				// as in A02's depguard rule ("!$test"); R4 still binds them.
 				binary := under(f.Dir, "cmd/warden-exec")
 				if isInternal && !under(internal, "internal/exec") && !under(internal, "internal/execproto") && !(binary && internal == "internal/buildinfo") {
 					bad = "R3: the executor imports only internal/exec/..., internal/execproto and (cmd/warden-exec only) internal/buildinfo"
-				} else if !isInternal && !isStdlib(imp) && !f.Test && !under(imp, "golang.org/x/sys") {
+				} else if !isInternal && !isStdlib(imp) && !under(imp, "golang.org/x/sys") {
 					bad = "R3: the executor imports no third-party module except golang.org/x/sys"
 				}
 			case under(f.Dir, "internal/policy"):
@@ -232,7 +248,7 @@ func ImportRules(module string, files []File) []Violation {
 				// daemon. It is also what keeps listenFiles safe: a daemon
 				// package cannot import the forwarder and listen on the host.
 				// Test files are included.
-				bad = "R4: only cmd/warden-exec imports internal/exec"
+				bad = "R4: only internal/exec/... and cmd/warden-exec may import internal/exec/..."
 			}
 			if isInternal && under(internal, "cmd") {
 				// cmd/ holds binaries; nothing imports them. Without this a

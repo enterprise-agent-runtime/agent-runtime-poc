@@ -79,6 +79,12 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 			t.Errorf("INV-J message does not name the allowlist: %s", v)
 		}
 	}
+	// The R4 message states the rule exactly, including the subpackages.
+	for _, v := range ImportRules("warden.dev/warden", files) {
+		if strings.Contains(v.Detail, "R4") && !strings.HasPrefix(v.Detail, "R4: only internal/exec/... and cmd/warden-exec may import internal/exec/...") {
+			t.Errorf("R4 message does not state the rule: %s", v)
+		}
+	}
 	var got []string
 	for _, vs := range [][]Violation{
 		ExecRule(files), ListenRule(files), OSRule(files), ImportRules("warden.dev/warden", files),
@@ -129,10 +135,23 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		// depth, names starting with "." or "_" (internal/api/testdata/l.go,
 		// internal/api/_old/l.go, internal/api/_x.go), and the root-level build
 		// and doc trees (docs/l.go).
-		"imports cmd/warden-exec/lib/lib.go",     // only package main under cmd/warden-exec
-		"imports internal/api/fixtures/x.go",     // R4 inside a nested fixtures/ dir
-		"imports internal/api/importslib.go",     // nothing imports a cmd/ package
-		"INV-J internal/api/docs/l.go",           // net.Listen("tcp") inside a nested docs/ dir
+		"imports cmd/warden-exec/lib/lib.go", // only package main under cmd/warden-exec
+		"imports internal/api/fixtures/x.go", // R4 inside a nested fixtures/ dir
+		"imports internal/api/importslib.go", // nothing imports a cmd/ package
+		"INV-J internal/api/docs/l.go",       // net.Listen("tcp") inside a nested docs/ dir
+		// Re-review minors. Other listener entry points; httptest servers are
+		// for test files only. Previously untested branches: dot-imports of os
+		// and x/sys/unix, and R4 applying to test files. R3 does not apply to
+		// executor test files (A02 "!$test"): internal/exec/x_test.go and
+		// cmd/warden-exec/main_test.go import internal/store and are allowed.
+		"INV-H internal/store/dotos.go",          // import . "os" hides StartProcess
+		"INV-H internal/store/dotunix.go",        // import . "golang.org/x/sys/unix" hides Exec
+		"INV-J internal/api/filelistener.go",     // net.FileListener
+		"INV-J internal/api/httptest.go",         // net/http/httptest in a non-test file
+		"INV-J internal/api/syslisten.go",        // syscall.Listen
+		"INV-J internal/api/unixbind.go",         // unix.Bind
+		"INV-J internal/api/winlisten.go",        // windows.Listen
+		"imports internal/api/x_test.go",         // R4 includes test files
 		"imports internal/policy/bad.go",         // policy importing a provider
 		"imports internal/providers/bad/bad.go",  // third-party import in a provider
 		"imports internal/providers/bad/bad.go",  // provider importing internal/store
