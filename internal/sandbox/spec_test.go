@@ -185,6 +185,15 @@ func TestSpecValidate_Rejects(t *testing.T) {
 		{"toolchain root /", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/"}} }, ErrInvalidSpec, "overlaps"},
 		{"toolchain root over /work", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/work/node"}} }, ErrInvalidSpec, "overlaps"},
 		{"toolchain root containing /warden", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/warden"}} }, ErrInvalidSpec, "overlaps"},
+		// The kernel file systems and /run are what the backend mounts
+		// fresh (/proc, /dev) or never (/sys, the host /run with
+		// docker.sock); a toolchain there would bind the host's (M2-13).
+		{"toolchain root under /sys", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/sys/fs/cgroup"}} }, ErrInvalidSpec, "/sys"},
+		{"toolchain root /sys", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/sys"}} }, ErrInvalidSpec, "/sys"},
+		{"toolchain root under /proc", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/proc/1/root"}} }, ErrInvalidSpec, "/proc"},
+		{"toolchain root under /dev", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/dev/shm"}} }, ErrInvalidSpec, "/dev"},
+		{"toolchain root under /run", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/run/docker"}} }, ErrInvalidSpec, "/run"},
+		{"toolchain root /var/run", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/var/run"}} }, ErrInvalidSpec, "/var/run"},
 		{"toolchain root deny-listed", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/home/ana/.aws/cli"}} }, ErrInvalidSpec, "deny-listed"},
 		{"toolchain root relative", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "opt/node"}} }, ErrInvalidSpec, "slash path"},
 		{"toolchain roots overlap", LevelL1, func(l testLayout, s *Spec) {
