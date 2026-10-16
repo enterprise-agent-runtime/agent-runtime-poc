@@ -22,6 +22,31 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-015 · 2026-10-16 · M2-3: terminal-safe CLI output (CWE-150)
+
+- **Asked:** M2 plan task M2-3, carried over from the security review of FX-2. Delivered under "merge each task when its review passes".
+- **Task:** Text the CLI prints but did not write itself (Docker engine answers, model endpoint errors, imported audit files) must not be able to control the terminal.
+- **How:** A new package `internal/termsafe` (D-045):
+  - **`SanitizeDetail`:** applied to every human renderer that prints remote or daemon-supplied text (doctor, audit verify, provider, models, error text).
+  - **`EscapeJSON`:** applied to all `--json` output and to event payloads.
+  - **Docker:** engine errors keep only the numeric status; Version and Os are validated.
+  - **Commits:** `bd2fe0d`, `d92f362`, `35ebc68`, `6d89542`, `5e98358`, `df0724e`.
+  - **Merge:** a merge conflict with M2-1 in `cmd/warden/main.go` (two independent new functions at the same spot) was resolved by keeping both. `make check` was green on the merged tree.
+- **Rules kept:**
+  - Test first: every new test failed on the old code.
+  - A revert check per fix.
+  - `cmd/*` stays wiring plus renderers (CLAUDE.md §6).
+  - No new dependency.
+  - The FX-2 test passes unedited.
+- **Rules changed or bent:** none. The first version assumed "JSON output is already safe" (encoding/json escapes only C0). The review found this false, and it was corrected before merge.
+- **Verified:**
+  - `make check` green, and CI on the PR.
+  - The re-review approved after 40 s fuzz runs of both functions (about 2M inputs) with no failure, plus a sweep of every print in `cmd/warden`.
+- **Left (follow-ups):**
+  - `provider list` now caps the model list at 1 KiB, so long lists are shortened. Accepted as intended.
+  - The event TS and Type in `warden events` print unsanitized. Only the daemon writes those, so it is outside the attacker model.
+  - Protection assumes a UTF-8 terminal; Latin-1 8-bit C1 terminals are not defended.
+
 ## W-014 · 2026-10-16 · M2-1: `warden daemon stop` waits for wardend to exit
 
 - **Asked:** M2 plan task M2-1, from a preflight finding: on Windows, cleanup right after `warden daemon stop` failed with "Device or resource busy". Delivered under the owner's "merge each task when its review passes".
