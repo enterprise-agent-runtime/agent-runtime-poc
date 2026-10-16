@@ -15,20 +15,22 @@ const (
 )
 
 // SpawnDaemon starts wardend detached (no console, own process group) with
-// output appended to logPath, and returns its pid.
+// output appended to logPath. The returned Daemon holds a handle to the
+// process, opened while os.Process still held its own, so it is the same
+// process object even if the pid is reused after the exit (WH-4).
 //
 // sandboxed: host-trusted self-spawn of wardend for "warden daemon start";
 // never an agent-requested process (CONFLICTS C-45, DECISIONS-poc D-006).
-func SpawnDaemon(exe string, args []string, logPath string, stdin *os.File) (int, error) {
+func SpawnDaemon(exe string, args []string, logPath string, stdin *os.File) (*Daemon, error) {
 	logf, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer logf.Close()
 	in := stdin
 	if in == nil {
 		if in, err = os.Open(os.DevNull); err != nil {
-			return 0, err
+			return nil, err
 		}
 		defer in.Close()
 	}
@@ -37,11 +39,29 @@ func SpawnDaemon(exe string, args []string, logPath string, stdin *os.File) (int
 		Sys:   &syscall.SysProcAttr{CreationFlags: createNewProcessGroup | detachedProcess | createNoWindow, HideWindow: true},
 	})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	pid := p.Pid
+	h, herr := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(pid))
 	_ = p.Release()
-	return pid, nil
+	if herr != nil {
+		// The process is running; only its exit status will be unknown.
+		// Fall back to the pid probe rather than fail a start that worked.
+		return &Daemon{PID: pid, poll: func() (ExitStatus, bool) {
+			return ExitStatus{Code: -1, Other: "exit status unknown"}, !Alive(pid)
+		}}, nil
+	}
+	return &Daemon{
+		PID: pid,
+		poll: func() (ExitStatus, bool) {
+			var code uint32
+			if err := syscall.GetExitCodeProcess(h, &code); err != nil || code == stillActive {
+				return ExitStatus{}, false
+			}
+			return ExitStatus{Code: int(code)}, true
+		},
+		close: func() { _ = syscall.CloseHandle(h) },
+	}, nil
 }
 
 // TerminateGroup ends a process on Windows. Agent processes never run on
