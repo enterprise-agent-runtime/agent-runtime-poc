@@ -22,6 +22,51 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-023 · 2026-10-16 · M2-12: the sandbox Spec, its mounts and its environment
+
+- **Asked:** M2 plan task M2-12. Delivered under "merge each task when its review passes".
+- **Task:** One backend-neutral description of a sandbox from which the mount table and the environment are derived, checked so that no backend can be handed a sandbox the invariants forbid.
+- **How:**
+  - **Spec and Validate** (D-056): the exact A06 §2 session layout, required `HostHome`, host sources checked against both homes and the deny-list, L2 per C-03.
+  - **Mounts and Env:** exactly the C-24 list and the A06 §8 allowlist; nothing read from the host environment.
+  - **Mask walk** (D-057): the A06 §11.3 walk over an `fs.FS`, failing closed at its bounds.
+  - **FakeSandbox:** built through the same code, keeping its own deep copy of the Spec.
+  - **Commits:** `4a530f3`, `d9d381d`, `abd1dc5`, `fa795a5`, `c8fce80`.
+- **Rules kept:**
+  - R4: `internal/sandbox` imports only `execproto` and `execproto/denylist`.
+  - No processes, no real mounts (the walk takes an `fs.FS`), no `runtime.GOOS`, no new dependency.
+  - Mutation checks: 28 of 29 mutants caught after round 2.
+- **Rules changed or bent:**
+  - **Test first was partial for `Validate`** in the first commit (it was written alongside its tests); the mutation check covers it.
+  - **"Worktree inside the Warden home is an error" replaced** by the exact session layout, because in A06 §2 every worktree lives under `<home>/sessions`. Decided by me.
+  - **Upper-case sidecar hosts are refused**, not lower-cased: the daemon names the sidecar, so a capital letter means the address came from somewhere else.
+  - **Test layout** uses a fixed `/srv/warden-test` base on slash hosts, because `t.TempDir()` lives under the reserved `/tmp`; the L1 toolchain-root rows skip on Windows, where L1 does not exist, and run on Linux and macOS CI.
+- **A semantic merge conflict, found by CI:** M2-6 merged first and added the 8.3 rule to the shared matcher; this branch applied that matcher to absolute host paths. Each branch was green alone, and the merge had no textual conflict. On GitHub's Windows runner TEMP is `C:\Users\RUNNER~1\...`, so about 60 subtests refused their own test layout; the local Windows check passed because its TEMP has no short name. Fixed with host-path variants of the matcher (D-055 amendment) and a test whose layout contains a `RUNNER~1` segment on every OS.
+- **Verified:** two review rounds, code and security together; `make check` green; `-race` in WSL2; a case-insensitivity probe on WSL drvfs (which found the L2 mask bypass recorded in PROGRESS).
+- **Left:** see the M2-12 entry in PROGRESS (M2-13 items, the L2 case-sensitivity fix, git object reads for A14).
+
+## W-022 · 2026-10-16 · M2-6: the executor resolves and opens model paths without escaping the roots
+
+- **Asked:** M2 plan task M2-6. Delivered under "merge each task when its review passes".
+- **Task:** Turn a model-proposed path into a canonical path under one of the sandbox roots, refusing every escape with an A06 code, and open it so that nothing swapped in between can redirect the open.
+- **How:**
+  - **Resolve** (pure, every OS): input checks, root choice, lexical clean, deny-list, the per-method root table (D-054).
+  - **Walk and open** (Linux, macOS): the symlink walk on an fd stack, then openat2 with RESOLVE_BENEATH, or a component walk with O_NOFOLLOW and st_dev where openat2 is missing.
+  - **8.3 short names** refused in the shared deny-list matcher (D-055).
+  - **Commits:** `ab63720`, `6e260c3`, `deeea82`.
+- **Rules kept:**
+  - Test first, revert and mutation checks; `FuzzResolve` committed.
+  - Only typed x/sys calls, no raw syscall numbers; OS tags per C-61; R3 imports.
+  - No wall-clock assertions; `-race` in WSL2 from a private copy.
+- **Rules changed or bent:**
+  - **A06 §5.1 step 4 pseudo-code not followed literally** (C-68): the link target is walked, not prepended to nothing. Decided by me under R2.
+  - **The deny-list now refuses 8.3-shaped segments** (D-055), stricter than WRD-10 §6. Decided by me after the review reproduced a `.env` read through `ENV~1`.
+  - **The `.git` write ban** is per segment and case-insensitive, not a prefix ban (A06 §5.3 read literally would forbid `.gitignore`).
+- **Verified:**
+  - Three review rounds, code and security together, with probes for traversal, symlink swaps at each step, `/proc` magic links, mount crossings, and NTFS short names generated with `dir /x`.
+  - `make check` green; `-race` and the Linux open tests in WSL2 (kernel 5.15) with openat2 really used, and the fallback forced.
+- **Left:** see the M2-6 entry in PROGRESS (hard links and temp names for M2-7, 8.3 for spawned processes in L2, U+017F).
+
 ## W-021 · 2026-10-16 · WH-1+2: the token file is owner-only from creation, and a second daemon cannot replace it
 
 - **Asked:** M2 plan tasks WH-1 and WH-2, the remaining FX-3 security-review findings on the token file. The owner scheduled them "before L2, in parallel" on 2026-10-16. Delivered under "merge each task when its review passes".

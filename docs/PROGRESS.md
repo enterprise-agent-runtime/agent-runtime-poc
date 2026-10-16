@@ -65,7 +65,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Commits:** `bcfa1fc`, `c37e6d7`, `8bcce6f`, `fdbde48`.
   - **Review:** three rounds. They found a write that ignored its deadline (CWE-1088), unsanitized executor text, silently ignored unknown ids, and a cancel-while-waiting teardown. Fuzzing ran 5.3M + 1.5M execs with no failure; `-race -count=20` passes; coverage 94–98%.
   - **Left for M3:** check `WaitResult.State == exited && ExitCode != nil` before trusting that all output is in.
-- [ ] **M2-6** Resolve and race-free open
+- [x] **M2-6** Resolve and race-free open under the roots (D-054, D-055, C-68).
+  - **Pieces:** pure `Resolve` in `internal/exec` (every OS), the fd-stack walk and `OpenCanonical` (openat2, or the O_NOFOLLOW walk) on Linux and macOS.
+  - **Commits:** `ab63720`, `6e260c3`, `deeea82`.
+  - **Review:** three rounds. They found `/work//../..` clamped instead of refused (CWE-22), NTFS short names past every deny-list layer (CWE-41), an untested st_dev check, an open that trusted a forged `Resolved`, and the 8.3 rule over-blocking `git diff HEAD~1`. FuzzResolve ran 1.38M execs clean; `-race` passes in WSL2.
+  - **Left for M2-7:** refuse reads of regular files with `st_nlink > 1` (hard links, CWE-59); pass only `Tree.Resolve` output to `OpenCanonical`; temp names that cannot match the deny-list or the 8.3 rule (e.g. `.warden-tmp-<rand>`); reject `Resolved.Root != worktree` for model-originated calls.
+  - **Left for L2 (owner sign-off):** a spawned process in Windows L2 can still open `ENV~1` past the `/dev/null` mask; disable 8.3 names on the sessions volume or have doctor refuse.
+  - **Low:** `strings.ToLower` does not fold U+017F (matters on case-insensitive APFS).
 - [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
 - [ ] **M2-8** proc operations, rlimits and output cap
 - [ ] **M2-9** git.run
@@ -78,7 +84,15 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **Group D** (L1 sandbox, WSL2):
 
-- [ ] **M2-12** Spec, mounts and env model; `TestSandboxSpecMounts`, `TestSandboxEnvAllowlist`, `TestDenyListThreeLayers` with the exec and mount layers
+- [x] **M2-12** Spec, mounts and env model, with `TestSandboxSpecMounts`, `TestSandboxEnvAllowlist` and `TestDenyListThreeLayers` (D-056, D-057).
+  - **Pieces:** `Spec`, `Validate`, `Mounts`, `Env`, `WorktreeMasks`, the `Manager` interface, and `sandboxtest.FakeSandbox` built from the same code. The shared three-layer corpus is in `internal/execproto/denylist/testdata/three-layers.json`; the executor and policy layers load it too.
+  - **Commits:** `4a530f3`, `d9d381d`, `abd1dc5`, `fa795a5`, `c8fce80`.
+  - **Review:** two rounds. Four checks had no test (the sidecar host, the walk entry cap, the toolchain-root overlap, the main objects deny-list); a custom WARDEN_HOME let `$HOME` be a toolchain root; the proxy socket and the session directory were not pinned. After the fixes 28 of 29 mutants are caught; coverage 94%%.
+  - **Low, left:** the `ids.Valid` check on the session id has no isolating test row (the ulid match still guards it).
+  - **Left for M2-13:** EvalSymlinks each toolchain root and re-check (`/var/run` is a link to `/run`, exposing docker.sock); consider reserving `/sys`; Lstat the proxy socket for S_ISSOCK before binding; pin the backend-added mounts to A06 §11.1 in the bwrap argv test; a real-disk walk test with `os.DirFS`; `Manager.RecoverOrphans` with the A06 §13.5 sweep.
+  - **Must fix before the L2 backend merges (high, CWE-178):** bind masks are keyed on the on-disk case, so on a case-insensitive host file system (Windows L2 over NTFS through Docker Desktop, macOS L2) `.ENV` reads the masked `.env`; reproduced on WSL drvfs. Make S/worktree case-sensitive before checkout and fail closed if it is not, or mask host-side; add an escape-check row. NTFS 8.3 names (`ENV~1`) bypass the masks the same way for spawned processes (D-055).
+  - **Before a real Spec is built (platform layer):** expand host paths to their long form (GetLongPathName) before they reach the Spec; host-path checks skip the 8.3 rule (D-055 amendment), so a short-form host path would otherwise dodge it.
+  - **For A14 / the policy engine:** masks hide only the working tree; `git show HEAD:.env` through /git reads a committed secret, and `denylist.Argv` does not match `HEAD:.env`. A deny-listed pathspec rule for git object reads is needed.
 - [ ] **M2-13** bwrap argv
 - [ ] **M2-14** seccomp in pure Go
 - [ ] **M2-15** launch, rlimits, `sandbox.cgroup` doctor check
