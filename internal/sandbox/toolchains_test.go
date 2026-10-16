@@ -57,6 +57,7 @@ func TestResolveToolchains_RefusesWhatTheLinkReaches(t *testing.T) {
 		{"link to /sys", "/sys/fs/cgroup", "/sys"},
 		{"link to /proc", "/proc/1/root", "/proc"},
 		{"link to /dev", "/dev", "/dev"},
+		{"link to the nix-daemon socket dir", "/nix/var/nix/daemon-socket", "/nix/store"},
 		{"link to /", "/", "overlaps"},
 		{"link to a task root path", "/work", "/work"},
 		{"link to the user's home", "/srv/warden-test/home/ana", "home"},
@@ -78,6 +79,61 @@ func TestResolveToolchains_RefusesWhatTheLinkReaches(t *testing.T) {
 				t.Errorf("error %q does not name the resolved path %q", err, c.target)
 			}
 		})
+	}
+}
+
+// TestResolveToolchains_ComparesWithResolvedHomes exists for the M2-13
+// review finding (INV-B): the resolved root was compared with the
+// configured spellings of the home directories only. On Fedora Atomic /home
+// is a link to var/home, so a toolchain root linking back to the home
+// resolves to /var/home/ana, matches neither /home/ana nor its Warden home,
+// and the whole home (secrets.enc, run/token) was bound read-only. The
+// home, the Warden home, the session and the main objects directory are
+// resolved through the same eval and both spellings are checked.
+func TestResolveToolchains_ComparesWithResolvedHomes(t *testing.T) {
+	cases := []struct {
+		name   string
+		links  func(l testLayout) map[string]string
+		target func(l testLayout) string
+		custom bool
+	}{
+		{"home behind a symlinked parent", func(l testLayout) map[string]string {
+			return map[string]string{l.hostHome: "/srv/real/var/home/ana", l.home: "/srv/real/var/home/ana/.warden"}
+		}, func(l testLayout) string { return "/srv/real/var/home/ana" }, false},
+		{"parent of the resolved home", func(l testLayout) map[string]string {
+			return map[string]string{l.hostHome: "/srv/real/var/home/ana", l.home: "/srv/real/var/home/ana/.warden"}
+		}, func(l testLayout) string { return "/srv/real/var/home" }, false},
+		{"custom warden home behind a link", func(l testLayout) map[string]string {
+			return map[string]string{l.home: "/srv/real/wh", l.session: "/srv/real/wh/sessions/01jaxr8q7m2v9ktc3f6yh5n0pb"}
+		}, func(l testLayout) string { return "/srv/real/wh/cache" }, true},
+		{"session behind a link", func(l testLayout) map[string]string {
+			return map[string]string{l.session: "/srv/real/session"}
+		}, func(l testLayout) string { return "/srv/real/session/worktree" }, true},
+		{"main objects behind a link", func(l testLayout) map[string]string {
+			return map[string]string{l.objects: "/srv/real/repo/.git/objects"}
+		}, func(l testLayout) string { return "/srv/real/repo/.git" }, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			l := layoutAt(t, c.custom)
+			s := validSpec(l, LevelL1)
+			links := c.links(l)
+			links["/opt/node-v22"] = c.target(l)
+			_, err := s.ResolveToolchains(fakeEval(links))
+			if !errors.Is(err, ErrInvalidSpec) {
+				t.Fatalf("ResolveToolchains() = %v, want %v", err, ErrInvalidSpec)
+			}
+		})
+	}
+	// Control: the same links with a toolchain elsewhere are fine.
+	l := newLayout(t)
+	s := validSpec(l, LevelL1)
+	if _, err := s.ResolveToolchains(fakeEval(map[string]string{l.hostHome: "/srv/real/var/home/ana", "/opt/node-v22": "/opt/nodes/22"})); err != nil {
+		t.Errorf("control: ResolveToolchains() = %v, want nil", err)
+	}
+	// A home that cannot be resolved cannot be compared: fail closed.
+	if _, err := s.ResolveToolchains(fakeEval(map[string]string{l.hostHome: ""})); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("unresolvable home: ResolveToolchains() = %v, want %v", err, ErrUnavailable)
 	}
 }
 
@@ -116,5 +172,15 @@ func TestResolveToolchains_ValidatesFirst(t *testing.T) {
 	}
 	if called {
 		t.Error("eval was called for an invalid Spec")
+	}
+}
+
+// A store path is the one toolchain root under /nix (the backend then binds
+// /nix/store whole, A06 §11.1).
+func TestSpecValidate_AcceptsNixStoreToolchain(t *testing.T) {
+	s := validSpec(newLayout(t), LevelL1)
+	s.Toolchains = []Toolchain{{Root: "/nix/store/0abc-nodejs-22", BinDirs: []string{"/nix/store/0abc-nodejs-22/bin"}}}
+	if err := s.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want a /nix/store toolchain accepted", err)
 	}
 }

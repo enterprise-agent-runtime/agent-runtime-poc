@@ -30,6 +30,7 @@ var systemTry = []string{
 
 const (
 	nixStore    = "/nix/store"
+	sslPrivate  = "/etc/ssl/private"
 	shmBytes    = 268435456 // /dev/shm, A06 §11.1
 	mib         = 1 << 20
 	childNofile = 4096 // A06 §7.3
@@ -38,8 +39,12 @@ const (
 // HostLayout is what the host's root looks like where A06 §11.1 depends on
 // it. Linked[d] is true when /d is a symlink to usr/d (merged /usr); the
 // sandbox then gets the same symlink instead of a bind through it.
+// SSLPrivate is true when the host has the directory /etc/ssl/private, which
+// the /etc/ssl bind would expose; it is masked with an empty read-only
+// tmpfs.
 type HostLayout struct {
-	Linked map[string]bool
+	Linked     map[string]bool
+	SSLPrivate bool
 }
 
 // buildInput is everything build needs. ToolchainSources are the resolved
@@ -112,6 +117,11 @@ func build(in buildInput) (*Plan, error) {
 	}
 	for _, p := range systemTry {
 		a.add("--ro-bind-try", p, p)
+		if p == "/etc/ssl" && in.Host.SSLPrivate {
+			// TLS private keys: 0640 root:ssl-cert on Debian, and the
+			// sandbox keeps the user's supplementary groups (CWE-250).
+			a.add("--tmpfs", sslPrivate, "--remount-ro", sslPrivate)
+		}
 	}
 	for _, src := range in.ToolchainSources {
 		if src == nixStore || strings.HasPrefix(src, nixStore+"/") {

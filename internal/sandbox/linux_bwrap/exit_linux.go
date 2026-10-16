@@ -2,7 +2,7 @@
 
 package linux_bwrap
 
-// SIGSYS deaths as A06 §7.4's seccomp_kill.
+// SIGSYS deaths as A06 §7.4's seccomp_kill, on the daemon side.
 
 import "syscall"
 
@@ -11,14 +11,15 @@ import "syscall"
 // propagate_exit_status), like a shell.
 const sigsysExit = 128 + int(syscall.SIGSYS)
 
-// SeccompKill reports whether a wait status means the A06 §11.5 filter
-// killed the process (KILL_PROCESS delivers SIGSYS). viaBwrap is true when
-// ws is bwrap's own status, as the daemon sees it; the executor waits on
-// its children directly and passes false. An exit code of 159 from a
-// directly waited process is an ordinary exit and is not counted.
-func SeccompKill(ws syscall.WaitStatus, viaBwrap bool) bool {
+// SeccompKill reports whether bwrap's wait status means the A06 §11.5
+// filter killed warden-exec (KILL_PROCESS delivers SIGSYS, bwrap reports
+// 159). bwrap itself runs unfiltered; a SIGSYS death of bwrap is counted
+// too. The executor's report for its own children (internal/exec keeps its
+// own one-line check, A02 R3) means only "died by SIGSYS": a tool can send
+// itself SIGSYS, so that event is a hint, not proof of a filter hit.
+func SeccompKill(ws syscall.WaitStatus) bool {
 	if ws.Signaled() && ws.Signal() == syscall.SIGSYS {
 		return true
 	}
-	return viaBwrap && ws.Exited() && ws.ExitStatus() == sigsysExit
+	return ws.Exited() && ws.ExitStatus() == sigsysExit
 }

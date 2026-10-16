@@ -7,7 +7,9 @@
 package linux_bwrap
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -71,7 +73,7 @@ func testSpec() *sandbox.Spec {
 var (
 	features090 = Features{Version: "0.9.0", AddSeccompFD: true, Size: true, DisableUserns: true}
 	features061 = Features{Version: "0.6.1", AddSeccompFD: true}
-	mergedUsr   = HostLayout{Linked: map[string]bool{"bin": true, "sbin": true, "lib": true, "lib64": true}}
+	mergedUsr   = HostLayout{Linked: map[string]bool{"bin": true, "sbin": true, "lib": true, "lib64": true}, SSLPrivate: true}
 	splitUsr    = HostLayout{Linked: map[string]bool{}}
 	cgroupExec  = ExecFlags{CPUSeconds: 2400, Cgroup: true, MaxProcs: 8}
 	rlimitExec  = ExecFlags{CPUSeconds: 2400, Cgroup: false, Nproc: 812, MaxProcs: 8}
@@ -516,7 +518,68 @@ func TestPlan_FdPlanMatchesArgv(t *testing.T) {
 	if i := slices.Index(cmd, "--rpc-fd"); i < 0 || cmd[i+1] != "3" {
 		t.Errorf("executor does not read RPC on fd 3: %q", cmd)
 	}
-	if _, err := p.ExtraFiles(nil, nil, nil, nil); err == nil {
-		t.Error("ExtraFiles accepted missing files")
+	if _, err := p.Command(context.Background(), "/usr/bin/bwrap", nil, nil, nil, nil); err == nil {
+		t.Error("Command accepted missing files")
+	}
+}
+
+// TestPlan_CommandOwnsTheEnvironment exists for the M2-13 review finding
+// (INV-C; CWE-214, CWE-526): --clearenv clears only what bwrap passes to
+// the command. bwrap's own PID 1 in the namespace keeps the environment it
+// was started with, and /proc/1/environ is readable by the sandboxed
+// process (same uid). An exec.Cmd with Env == nil inherits the daemon's
+// environment, so every daemon variable, an exported ANTHROPIC_API_KEY
+// included, was readable inside. The Plan builds the Cmd and gives bwrap
+// an empty environment; it is started by absolute path, so it needs no
+// PATH.
+func TestPlan_CommandOwnsTheEnvironment(t *testing.T) {
+	t.Setenv("FAKE_DAEMON_SECRET", "fake-not-a-secret")
+	p := mustBuild(t, buildInput{Spec: testSpec(), Features: features090, Host: mergedUsr, Exec: cgroupExec})
+	var files []*os.File
+	for range 2 {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		defer w.Close()
+		files = append(files, r, w)
+	}
+	cmd, err := p.Command(context.Background(), "/usr/bin/bwrap", files[0], files[1], files[2], files[3])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Env == nil || len(cmd.Env) != 0 {
+		t.Errorf("Cmd.Env = %#v, want a non-nil empty slice (nil inherits the daemon's environment)", cmd.Env)
+	}
+	if cmd.Path != "/usr/bin/bwrap" || !slices.Equal(cmd.Args[1:], p.Argv[1:]) {
+		t.Errorf("Cmd = %q %q, want /usr/bin/bwrap with the plan's argv", cmd.Path, cmd.Args)
+	}
+	if !slices.Equal(cmd.ExtraFiles, files) {
+		t.Errorf("Cmd.ExtraFiles = %v, want the four files as fds 3-6", cmd.ExtraFiles)
+	}
+	if _, err := p.Command(context.Background(), "bwrap", files[0], files[1], files[2], files[3]); err == nil {
+		t.Error("Command accepted a relative bwrap path (it would be looked up in the daemon's PATH)")
+	}
+}
+
+// TestBuild_MasksSSLPrivate exists for the M2-13 review finding (CWE-250):
+// /etc/ssl/private is inside the /etc/ssl bind, and the sandboxed process
+// keeps the user's supplementary groups, so a member of ssl-cert (Debian:
+// keys 0640 root:ssl-cert) could read TLS private keys. When the host has
+// the directory it is covered by an empty read-only tmpfs right after the
+// /etc/ssl bind.
+func TestBuild_MasksSSLPrivate(t *testing.T) {
+	for _, private := range []bool{true, false} {
+		host := HostLayout{Linked: mergedUsr.Linked, SSLPrivate: private}
+		ops, _ := parseArgv(t, mustBuild(t, buildInput{Spec: testSpec(), Features: features090, Host: host, Exec: cgroupExec}).Argv)
+		i := slices.IndexFunc(ops, func(o op) bool { return o.flag == "--ro-bind-try" && o.args[0] == "/etc/ssl" })
+		masked := i >= 0 && i+2 < len(ops) && hasOp(ops[i+1:i+2], "--tmpfs", "/etc/ssl/private") && hasOp(ops[i+2:i+3], "--remount-ro", "/etc/ssl/private")
+		if masked != private {
+			t.Errorf("SSLPrivate=%v: /etc/ssl/private masked right after the /etc/ssl bind = %v", private, masked)
+		}
+		if !private && (hasOp(ops, "--tmpfs", "/etc/ssl/private") || hasOp(ops, "--remount-ro", "/etc/ssl/private")) {
+			t.Error("/etc/ssl/private masked on a host without it (bwrap would create it)")
+		}
 	}
 }

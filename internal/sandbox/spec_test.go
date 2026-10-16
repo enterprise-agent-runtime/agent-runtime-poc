@@ -193,6 +193,12 @@ func TestSpecValidate_Rejects(t *testing.T) {
 		{"toolchain root under /proc", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/proc/1/root"}} }, ErrInvalidSpec, "/proc"},
 		{"toolchain root under /dev", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/dev/shm"}} }, ErrInvalidSpec, "/dev"},
 		{"toolchain root under /run", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/run/docker"}} }, ErrInvalidSpec, "/run"},
+		// Under /nix only the store is a toolchain: /nix/var holds the
+		// nix-daemon socket, and the daemon runs fixed-output builds with
+		// network access (M2-13 review).
+		{"toolchain root /nix/var", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/nix/var/nix/daemon-socket"}} }, ErrInvalidSpec, "/nix/store"},
+		{"toolchain root /nix", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/nix"}} }, ErrInvalidSpec, "/nix/store"},
+		{"toolchain root /NIX/var (case)", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/NIX/var"}} }, ErrInvalidSpec, "/nix/store"},
 		{"toolchain root /var/run", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/var/run"}} }, ErrInvalidSpec, "/var/run"},
 		{"toolchain root deny-listed", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "/home/ana/.aws/cli"}} }, ErrInvalidSpec, "deny-listed"},
 		{"toolchain root relative", LevelL1, func(l testLayout, s *Spec) { s.Toolchains = []Toolchain{{Root: "opt/node"}} }, ErrInvalidSpec, "slash path"},

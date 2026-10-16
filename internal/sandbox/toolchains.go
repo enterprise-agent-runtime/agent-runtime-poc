@@ -17,7 +17,10 @@ import (
 // (filepath.EvalSymlinks in production, injectable for tests) and runs every
 // Spec check again with the resolved roots in place of the configured ones:
 // reserved sandbox paths (/run, /sys, /proc, /dev, ...), the user's home and
-// the Warden home, the deny-list and overlaps between roots. It returns the
+// the Warden home, the deny-list and overlaps between roots. The home, the
+// Warden home, the session directory and the main objects directory are
+// resolved through eval as well, and the checks run against both their
+// configured and resolved spellings. It returns the
 // resolved roots in Spec order; a backend binds resolved root i at the
 // configured root i, so inside the sandbox the toolchain stays where PATH
 // and its masks expect it. The Spec is not modified.
@@ -46,6 +49,24 @@ func (s *Spec) ResolveToolchains(eval func(string) (string, error)) ([]string, e
 	}
 	if err := c.validateToolchains(); err != nil {
 		return nil, fmt.Errorf("%w (toolchain roots %q resolve to %q)", err, roots(s.Toolchains), resolved)
+	}
+	// The paths the roots are compared with can be links too: on Fedora
+	// Atomic /home is a link to var/home, so a root resolving to
+	// /var/home/ana matches neither spelling of the configured home. Check
+	// again against the resolved spellings (M2-13 review, INV-B).
+	for _, p := range []*string{&c.HostHome, &c.WardenHome, &c.SessionDir, &c.MainObjects} {
+		if *p == "" {
+			continue
+		}
+		r, err := eval(*p)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %q cannot be resolved to compare toolchain roots with: %w", ErrUnavailable, *p, err)
+		}
+		*p = filepath.FromSlash(r)
+	}
+	if err := c.validateToolchains(); err != nil {
+		return nil, fmt.Errorf("%w (toolchain roots %q resolve to %q; home %q, warden home %q, session %q, objects %q resolved)",
+			err, roots(s.Toolchains), resolved, c.HostHome, c.WardenHome, c.SessionDir, c.MainObjects)
 	}
 	return resolved, nil
 }

@@ -108,5 +108,17 @@ func ProbeHost(lstat func(string) (fs.FileInfo, error), readlink func(string) (s
 		}
 		h.Linked[d] = true
 	}
+	// /etc/ssl/private: masked when it is a directory. A link or a file
+	// there cannot be covered by a tmpfs safely (a mount onto a link follows
+	// it), so the layout is refused.
+	switch fi, err := lstat(sslPrivate); {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return HostLayout{}, fmt.Errorf("%w: host %s: %w", sandbox.ErrUnavailable, sslPrivate, err)
+	case fi.Mode().Type() == fs.ModeDir:
+		h.SSLPrivate = true
+	default:
+		return HostLayout{}, fmt.Errorf("%w: host %s is not a directory (%s); it cannot be masked", sandbox.ErrUnavailable, sslPrivate, fi.Mode().Type())
+	}
 	return h, nil
 }

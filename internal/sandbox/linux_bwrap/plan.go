@@ -43,11 +43,11 @@ func fdPlan() []Fd {
 	}
 }
 
-// ExtraFiles orders the four files as the plan's fds (fd 3, 4, 5, 6). Every
+// extraFiles orders the four files as the plan's fds (fd 3, 4, 5, 6). Every
 // file is required: harnessStdio is /dev/null for a tool sandbox. A missing
 // file would shift the numbering or leave bwrap reading a closed fd, so it
 // is refused.
-func (p *Plan) ExtraFiles(rpc, harnessStdio, seccompProg, info *os.File) ([]*os.File, error) {
+func (p *Plan) extraFiles(rpc, harnessStdio, seccompProg, info *os.File) ([]*os.File, error) {
 	files := []*os.File{rpc, harnessStdio, seccompProg, info}
 	for i, f := range files {
 		if f == nil {

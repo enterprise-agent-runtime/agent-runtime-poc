@@ -383,6 +383,12 @@ func (s *Spec) validateToolchains() error {
 					return invalid("toolchain root %q overlaps the sandbox path %q", tc.Root, r)
 				}
 			}
+			// Under /nix only a store path is a toolchain: /nix/var holds
+			// the nix-daemon socket, and the daemon runs fixed-output
+			// builds with network access (M2-13 review).
+			if lr := strings.ToLower(tc.Root); slashWithin(lr, "/nix") && !slashStrictlyWithin(lr, "/nix/store") {
+				return invalid("toolchain root %q is under /nix but not inside /nix/store", tc.Root)
+			}
 			// The user's home: a root inside it is a normal toolchain
 			// (~/.nvm, ~/.local/share/mise), a root that is or contains it
 			// would mount all of it (INV-B "no $HOME", CWE-552). This does

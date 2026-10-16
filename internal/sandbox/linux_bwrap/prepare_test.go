@@ -68,6 +68,8 @@ func (f *fakeProbes) probes() Probes {
 				return nil, fs.ErrNotExist
 			case t == "":
 				return fakeInfo{p, fs.ModeDir | 0o755}, nil
+			case t == "<file>":
+				return fakeInfo{p, 0o644}, nil
 			}
 			return fakeInfo{p, fs.ModeSymlink | 0o777}, nil
 		},
@@ -238,5 +240,40 @@ func TestEtcFiles(t *testing.T) {
 	}
 	if !slices.Equal(EtcFileNames(), []string{"passwd", "group", "hosts", "resolv.conf", "nsswitch.conf"}) {
 		t.Errorf("EtcFileNames() = %q", EtcFileNames())
+	}
+}
+
+// TestProbeHost_SSLPrivate: /etc/ssl/private is masked only where it
+// exists as a directory (Debian, Ubuntu). Anything else there (a link to
+// elsewhere, a file) is a layout the mask cannot cover safely: refused.
+func TestProbeHost_SSLPrivate(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry string // "" dir, "<file>", "-" absent, else a link target
+		want  bool
+		ok    bool
+	}{
+		{"directory", "", true, true},
+		{"absent", "-", false, true},
+		{"symlink", "/srv/keys", false, false},
+		{"file", "<file>", false, false},
+	}
+	for _, c := range cases {
+		f := newFakeProbes()
+		if c.entry != "-" {
+			f.host["/etc/ssl/private"] = c.entry
+		}
+		p := f.probes()
+		got, err := ProbeHost(p.Lstat, p.Readlink)
+		if c.ok != (err == nil) {
+			t.Errorf("%s: ProbeHost() = %v, want ok=%v", c.name, err, c.ok)
+			continue
+		}
+		if !c.ok && !errors.Is(err, sandbox.ErrUnavailable) {
+			t.Errorf("%s: ProbeHost() = %v, want %v", c.name, err, sandbox.ErrUnavailable)
+		}
+		if c.ok && got.SSLPrivate != c.want {
+			t.Errorf("%s: SSLPrivate = %v, want %v", c.name, got.SSLPrivate, c.want)
+		}
 	}
 }
