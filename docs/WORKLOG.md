@@ -22,6 +22,35 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-016 · 2026-10-16 · M2-2: archtest guards for the executor (INV-H, INV-J, A02 import rules)
+
+- **Asked:** M2 plan task M2-2. Two owner decisions came during review (2026-10-16): the executor follows design A02's package layout, and CLAUDE.md §5's INV-J row may be updated. Delivered under "merge each task when its review passes".
+- **Task:** Let the executor use OS build tags and admit the one in-sandbox forwarder listener, without weakening INV-H (no process creation outside the sandbox packages) or INV-J (no host TCP listener).
+- **How:**
+  - **Exemptions:** OS tags are allowed in `internal/exec` and `cmd/warden-exec` (C-61). The forwarder's listener is exempt at file level (D-030).
+  - **Import rules (A02):** R3 limits what the executor may import, and R4 lets only the executor import `internal/exec`. Nothing may import `cmd/`, and `cmd/warden-exec` may contain only `package main`.
+  - **Fail-closed scanner:** it skips only what the go tool skips, and refuses links, imports of ignored paths, non-Go sources, local `replace` directives, `go.work`, and an unreadable module path.
+  - **INV-J list completed:** `http.Server`, `httptest`, TLS listeners, raw `Listen`/`Bind`, `FileListener`, dot-imports.
+  - **INV-H list completed:** execabs, `net/http/cgi`, `go/build`, `go/importer`, `plugin`, Windows process APIs, raw numbered syscalls, DLL loading (exact-file allowlists, D-044), `//go:linkname`.
+  - **Contract:** CLAUDE.md §5 and §6 were realigned after every round, so they state exactly what the check enforces.
+- **Rules kept:**
+  - INV-H and INV-J were only ever tightened.
+  - Every rule has seeded fixtures that failed before, and a revert check.
+  - `make check` green on every commit.
+  - The real tree needed no changes.
+- **Rules changed or bent:**
+  - **CLAUDE.md §6**, the executor layout: from "internal/exec holds the daemon-side client" to design A02's layout (internal/execproto, internal/tools, internal/exec only inside warden-exec). Why: a CLAUDE.md-vs-design conflict exposed by the security review. Under CLAUDE.md's layout, the import rule that keeps the forwarder out of the daemon could not be enforced. Approved: owner, 2026-10-16.
+  - **CLAUDE.md §5**, the INV-J and INV-H rows now name the precise checks. Approved: owner, 2026-10-16.
+  - **CLAUDE.md §6**, the scanner scope and the R3/R4 import rules are now part of the contract.
+  - **Process:** one test (the in-memory irregular-entry test) was written after its code, because Windows refuses `os.Symlink` without privilege. The real-symlink test skips here and runs on Linux and macOS CI.
+- **Verified:** Six review rounds with probe copies. Each round's bypasses were re-run against the next round's code. The final round approved with nothing blocking under the convergence rule: block only on routes that ordinary code could take, since this check is defence in depth behind the sandbox, review and CI.
+- **Left (follow-ups):**
+  - a per-file allowlist of proc names for `.NewProc`/`.FindProc` in `dllFiles`;
+  - exported `*LazyProc` values called across packages;
+  - `modernc.org/libc` `Xbind`/`Xlisten`;
+  - `apps/desktop/node_modules` at M6;
+  - `internal/exec/denylist` must move to a shared leaf before `internal/policy` or `internal/sandbox` can use it (task M2-4b).
+
 ## W-015 · 2026-10-16 · M2-3: terminal-safe CLI output (CWE-150)
 
 - **Asked:** M2 plan task M2-3, carried over from the security review of FX-2. Delivered under "merge each task when its review passes".

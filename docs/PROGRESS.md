@@ -28,7 +28,10 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 **Group A** (platform and guard rails; no Docker):
 
 - [x] **M2-1** `warden daemon stop` waits for wardend to exit (D-029). Commits `1ff879a`, `5f4a238`, `0894d6d`, `89dbdac`, `4812dae`. The review also found that test daemons shared the owner's keychain, so each home now has its own keychain namespace (D-042, C-63) and the integration test cleans up after itself (D-043). Evidence: on Windows the new integration test failed 3/3 before the fix and passed after, leaving no new Credential Manager entry. Two reviews and two re-reviews.
-- [ ] **M2-2** archtest: OS tags for `internal/exec` and `cmd/warden-exec` (C-61), and a file-level forwarder listener exemption
+- [x] **M2-2** archtest guards for the executor.
+  - **What landed:** OS tags allowed in the executor (C-61); one file-level forwarder listener exemption (D-030); the A02 import rules R3/R4/R10; a ban on importing `cmd/`; a fail-closed scanner; complete INV-H/INV-J API lists; exact-file allowlists for raw syscalls and DLLs (D-044).
+  - **Commits:** `6bdf845`, `fb26514`, `9f196a5`, `dc6cb2e`, `0323023`, `b952d49`, `baa9d11`, `13e7bca`, `9df8fec`, `3cfdfb6`, `d56d865`, `9be7467`, plus the CLAUDE.md alignments `788c9e2`, `93b19af`, `3cb2b58`, `a1e0e83`, `8d51530`.
+  - **Review:** six rounds, each closing a bypass class: the daemon linking the forwarder, intermediate packages, skipped directories, links, imports of ignored paths, execabs. The last round approved under an explicit convergence rule.
 - [x] **M2-3** CLI output is terminal-safe (CWE-150, D-045). Human output is sanitized, all `--json` output and event payloads are escaped, a Docker engine error keeps only its status code, and Docker Version/Os are validated. Commits `bd2fe0d`, `d92f362`, `35ebc68`, `6d89542`, `5e98358`, `df0724e`. The review found that `--json` passed C1 controls raw. The re-review approved, after fuzzing both functions for 40 s each (about 2M inputs) with no failure.
 
 **WH, Windows hardening** (before L2, in parallel with the executor work):
