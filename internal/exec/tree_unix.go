@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -44,6 +45,14 @@ type Tree struct {
 	// component index before each step of the walk. It lets a test change
 	// the file system exactly inside the window the open must survive.
 	beforeOpen func(step int)
+
+	// beforeCommit, when set by a test, runs before each step of the
+	// exec.fs.patch commit with the step's index; an error it returns
+	// fails that step, so a test can prove the rollback restores
+	// everything (fs_unix.go).
+	beforeCommit func(step int) error
+
+	now func() time.Time
 }
 
 type treeRoot struct {
@@ -339,12 +348,26 @@ func (t *Tree) OpenCanonical(r execproto.Resolved, flags int) (*os.File, error) 
 	if err := checkResult(acc, &discard, strings.Join(comps, "/")); err != nil {
 		return nil, err
 	}
-	flags |= unix.O_NOFOLLOW | unix.O_CLOEXEC
+	fd, err := t.openBeneath(idx, comps, flags)
+	if err != nil {
+		return nil, err
+	}
 	name := root.Path
 	if len(comps) > 0 {
 		name += "/" + strings.Join(comps, "/")
 	}
+	return os.NewFile(uintptr(fd), name), nil
+}
 
+// openBeneath is the race-free open of OpenCanonical without its access
+// checks: comps (no "." or "..") beneath root idx, with flags plus
+// O_NOFOLLOW and O_CLOEXEC, refusing a symlink, a mount crossing or a climb
+// as conflict. The fs methods use it for directories only (to list one,
+// stat an entry in one, create a file in one); every open of a file goes
+// through OpenCanonical with a Resolved from Tree.Resolve.
+func (t *Tree) openBeneath(idx int, comps []string, flags int) (int, error) {
+	root := t.roots[idx]
+	flags |= unix.O_NOFOLLOW | unix.O_CLOEXEC
 	if t.openat2 != nil {
 		t.hook(0)
 		rel := "."
@@ -353,10 +376,12 @@ func (t *Tree) OpenCanonical(r execproto.Resolved, flags int) (*os.File, error) 
 		}
 		fd, err := t.openat2(root.fd, rel, flags)
 		if err == nil {
-			return os.NewFile(uintptr(fd), name), nil
+			return fd, nil
 		}
-		if !errors.Is(err, unix.ENOSYS) {
-			return nil, openError(err)
+		// ENOTDIR for a directory open is also what a symlink in the last
+		// component gives; the walk below tells the two apart.
+		if !errors.Is(err, unix.ENOSYS) && !(errors.Is(err, unix.ENOTDIR) && flags&unix.O_DIRECTORY != 0) {
+			return -1, openError(err)
 		}
 	}
 
@@ -364,9 +389,9 @@ func (t *Tree) OpenCanonical(r execproto.Resolved, flags int) (*os.File, error) 
 		t.hook(0)
 		fd, err := unix.Openat(root.fd, ".", flags, createMode)
 		if err != nil {
-			return nil, openError(err)
+			return -1, openError(err)
 		}
-		return os.NewFile(uintptr(fd), name), nil
+		return fd, nil
 	}
 	dir := root.fd
 	closeDir := func() {
@@ -379,24 +404,29 @@ func (t *Tree) OpenCanonical(r execproto.Resolved, flags int) (*os.File, error) 
 		t.hook(i)
 		fd, err := openDir(dir, c)
 		if err != nil {
-			return nil, err
+			return -1, err
 		}
 		closeDir()
 		dir = fd
 		if !sameDev(fd, root.dev) {
-			return nil, conflict()
+			return -1, conflict()
 		}
 	}
 	t.hook(len(comps) - 1)
-	fd, err := unix.Openat(dir, comps[len(comps)-1], flags, createMode)
+	last := comps[len(comps)-1]
+	fd, err := unix.Openat(dir, last, flags, createMode)
 	if err != nil {
-		return nil, openError(err)
+		var st unix.Stat_t
+		if errors.Is(err, unix.ENOTDIR) && unix.Fstatat(dir, last, &st, unix.AT_SYMLINK_NOFOLLOW) == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK {
+			return -1, conflict() // as in openDir: a symlink where a directory was
+		}
+		return -1, openError(err)
 	}
 	if !sameDev(fd, root.dev) {
 		_ = unix.Close(fd)
-		return nil, conflict()
+		return -1, conflict()
 	}
-	return os.NewFile(uintptr(fd), name), nil
+	return fd, nil
 }
 
 // openDir opens one directory component without following it. Linux
@@ -435,14 +465,17 @@ func conflict() error {
 // openError maps an open failure to an A06 §4.4 code. A symlink where none
 // was (ELOOP; EMLINK on some BSDs), a mount crossing or a ".." trick (EXDEV)
 // and a rename race openat2 detected (EAGAIN) mean the tree changed:
-// conflict. The OS error text is not passed on (io_error: "message
-// sanitized").
+// conflict. A Unix socket cannot be opened at all (ENXIO; EOPNOTSUPP on
+// macOS): not_regular, as A06 §4.4 says for sockets. The OS error text is
+// not passed on (io_error: "message sanitized").
 func openError(err error) error {
 	switch {
 	case errors.Is(err, unix.ELOOP), errors.Is(err, unix.EMLINK), errors.Is(err, unix.EXDEV), errors.Is(err, unix.EAGAIN):
 		return conflict()
 	case errors.Is(err, unix.ENOENT), errors.Is(err, unix.ENOTDIR):
 		return execproto.NewError(execproto.ErrNotFound, "path does not exist")
+	case errors.Is(err, unix.ENXIO), errors.Is(err, unix.EOPNOTSUPP):
+		return notRegular()
 	}
 	return execproto.NewError(execproto.ErrIOError, "open failed")
 }
