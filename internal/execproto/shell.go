@@ -22,18 +22,25 @@ import "strings"
 //     one or two leading dashes.
 //   - argv[0]'s basename is an exec wrapper: env, nice, nohup, timeout,
 //     stdbuf, setsid, xargs, busybox, time, command (A06), exec, taskset,
-//     chrt, ionice, prlimit, flock, script, watch (owner); and either the
-//     first later element whose basename is a shell is followed by a
-//     command option as above (A06), or an env among the wrappers is given
-//     -S, an -S cluster or attachment, or --split-string[=…] or a prefix of
-//     it (owner): env -S builds argv from a string and so can build any
-//     shell string.
-//   - among the wrappers, ones that hand their own argument to a shell, with
-//     no shell in argv (owner): script or flock given -c / --command (any
-//     getopt prefix, =value or attached, anywhere after it, since getopt
-//     permutes); watch without -x / --exec among its own options, since
-//     watch runs its command through sh -c. With -x the remaining argv is
-//     checked as an ordinary command (watch -x sh -c … is still caught).
+//     chrt, ionice, prlimit, flock, script, watch (owner). Wrappers are
+//     recognised only in command position, as A08 §2.4 step 4 does: the
+//     walk starts at argv[0], skips each wrapper's own options, their
+//     arguments, NAME=VALUE pairs and the wrapper's operands (timeout's
+//     duration, taskset's mask, chrt's priority, flock's lock file) and
+//     applies the rules above to the first command that is not a wrapper.
+//     `timeout 600 npm run watch` is therefore an ordinary command.
+//   - a wrapper's own options build a shell string (owner): env -S, an -S
+//     cluster or attachment, --split-string[=…] or a prefix (env -S builds
+//     argv from a string); script with -c / --command anywhere (getopt
+//     permutes, and script takes no command operand); flock with -c /
+//     --command right after the lock file (util-linux's "+" optstring:
+//     options come first, and the command option is only special there);
+//     watch without -x / --exec, since watch runs its command through sh -c
+//     (with -x the walk continues at watch's command).
+//   - safety net: an element a wrapper's table consumed as an option
+//     argument or operand that names a shell followed by a command option
+//     still counts, so a table that is wrong about one option fails closed
+//     (chrt -i sh -c …, where newer chrt allows the priority to be omitted).
 //
 // Names are compared with strings.EqualFold (owner): on macOS the default
 // file system is case-insensitive, so "BASH" and "ſh" (U+017F folds to s)
@@ -49,45 +56,177 @@ import "strings"
 // IsShellStringResolved again once argv[0] is resolved (A06 §6 step 3).
 // Empty argv is not a shell string; the shape check rejects it first.
 func IsShellString(argv []string) bool {
-	if len(argv) == 0 {
-		return false
-	}
-	b := baseName(argv[0])
-	if isShell(b) {
-		return hasCommandOption(b, argv[1:])
-	}
-	if !isExecWrapper(b) {
-		return false
-	}
-	for i := 0; i < len(argv); i++ {
-		bi := baseName(argv[i])
-		if i > 0 && isShell(bi) {
-			return hasCommandOption(bi, argv[i+1:])
+	for i := 0; i < len(argv); {
+		b := baseName(argv[i])
+		rest := argv[i+1:]
+		if isShell(b) {
+			return hasCommandOption(b, rest)
 		}
+		n, shellString, isWrapper := wrapperArgs(b, rest)
 		switch {
-		case strings.EqualFold(bi, "env"):
-			if envSplitsString(argv[i+1:]) {
-				return true
-			}
-		case foldIn(bi, "script", "flock"):
-			if runsOwnCommand(argv[i+1:]) {
-				return true
-			}
-		case strings.EqualFold(bi, "watch"):
-			n, exec := watchOptions(argv[i+1:])
-			if !exec {
-				return true // watch runs its command through sh -c
-			}
-			i += n // with -x the rest is an ordinary command: keep checking it
+		case !isWrapper:
+			return false // the command, and not a shell
+		case shellString:
+			return true
+		case skippedShell(rest[:n], rest):
+			return true
+		}
+		i += 1 + n
+	}
+	return false
+}
+
+// wrapperArgs reports whether b is an exec wrapper and, if so, how many of
+// the following elements are its own (options, their arguments,
+// assignments, operands; the command starts after them) and whether those
+// already make a shell string.
+func wrapperArgs(b string, rest []string) (n int, shellString, isWrapper bool) {
+	switch {
+	case strings.EqualFold(b, "env"):
+		split, n := envOptions(rest)
+		return n, split, true
+	case strings.EqualFold(b, "script"):
+		// script runs no command operand; only -c does.
+		return len(rest), scriptRunsCommand(rest), true
+	case strings.EqualFold(b, "flock"):
+		n, sh := flockArgs(rest)
+		return n, sh, true
+	case strings.EqualFold(b, "watch"):
+		n, exec := watchOptions(rest)
+		return n, !exec, true // without -x, watch runs its command through sh -c
+	case strings.EqualFold(b, "busybox"):
+		return 0, false, true // the next element is the applet
+	}
+	spec, ok := wrapperSpecFor(b)
+	if !ok {
+		return 0, false, false
+	}
+	return skipArgs(rest, spec), false, true
+}
+
+// skippedShell is the safety net: an element consumed as an option argument
+// or operand that names a shell followed by a command option.
+func skippedShell(skipped, rest []string) bool {
+	for i, s := range skipped {
+		if b := baseName(s); isShell(b) && hasCommandOption(b, rest[i+1:]) {
+			return true
 		}
 	}
 	return false
 }
 
-// runsOwnCommand reports whether script or flock is given -c / --command
-// (any getopt prefix, =value or attached), which they run through a shell.
+// wrapperSpec describes a wrapper's command line: the short options that
+// take an argument (attached or as the next element), the long options
+// that take one (as =value or the next element), and how many operands
+// come before the command.
+type wrapperSpec struct {
+	shortArg string
+	longArg  []string
+	operands int
+}
+
+// wrapperSpecFor gives the GNU coreutils / util-linux / bash-builtin
+// command lines of the generic wrappers.
+func wrapperSpecFor(b string) (wrapperSpec, bool) {
+	switch strings.ToLower(b) {
+	case "nice":
+		return wrapperSpec{shortArg: "n", longArg: []string{"adjustment"}}, true
+	case "nohup", "setsid", "command":
+		return wrapperSpec{}, true
+	case "timeout":
+		return wrapperSpec{shortArg: "ks", longArg: []string{"kill-after", "signal"}, operands: 1}, true
+	case "stdbuf":
+		return wrapperSpec{shortArg: "ioe", longArg: []string{"input", "output", "error"}}, true
+	case "xargs":
+		return wrapperSpec{shortArg: "aEIdLnPs", longArg: []string{"arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"}}, true
+	case "time":
+		return wrapperSpec{shortArg: "fo", longArg: []string{"format", "output"}}, true
+	case "exec":
+		return wrapperSpec{shortArg: "a"}, true
+	case "taskset":
+		return wrapperSpec{operands: 1}, true
+	case "chrt":
+		return wrapperSpec{shortArg: "TPD", longArg: []string{"sched-runtime", "sched-period", "sched-deadline"}, operands: 1}, true
+	case "ionice":
+		return wrapperSpec{shortArg: "cnpPu", longArg: []string{"class", "classdata", "pid", "pgid", "uid"}}, true
+	case "prlimit":
+		return wrapperSpec{shortArg: "p", longArg: []string{"pid"}}, true
+	}
+	return wrapperSpec{}, false
+}
+
+// skipArgs counts a wrapper's own options (up to "--" or the first
+// non-option, as the "+" optstrings of these tools do) and its operands.
+func skipArgs(args []string, spec wrapperSpec) int {
+	j := 0
+	for j < len(args) {
+		a := args[j]
+		if a == "--" {
+			j++
+			break
+		}
+		if len(a) < 2 || a[0] != '-' {
+			break
+		}
+		if name, ok := strings.CutPrefix(a, "--"); ok {
+			name, _, hasValue := strings.Cut(name, "=")
+			if !hasValue && takesArg(name, spec.longArg) {
+				j++
+			}
+			j++
+			continue
+		}
+		for k := 1; k < len(a); k++ {
+			if strings.IndexByte(spec.shortArg, a[k]) >= 0 {
+				if k == len(a)-1 {
+					j++ // the argument is the next element
+				}
+				break // or the rest of this element
+			}
+		}
+		j++
+	}
+	j += spec.operands
+	return min(j, len(args))
+}
+
+func takesArg(name string, long []string) bool {
+	for _, l := range long {
+		if isPrefixOf(name, l, 1) {
+			return true
+		}
+	}
+	return false
+}
+
+// flockArgs parses util-linux flock: options (its optstring starts with
+// "+", so they stop at the first non-option), the lock file, then either
+// -c / --command, which runs the next element through sh -c, or the
+// command. n counts the options and the lock file.
+func flockArgs(args []string) (n int, shellString bool) {
+	j := skipArgs(args, wrapperSpec{shortArg: "wE", longArg: []string{"timeout", "wait", "conflict-exit-code"}})
+	if j >= len(args) {
+		return len(args), false
+	}
+	j++ // the lock file
+	if j < len(args) && isFlockCommandOption(args[j]) {
+		return j, true
+	}
+	return j, false
+}
+
+func isFlockCommandOption(a string) bool {
+	if name, ok := strings.CutPrefix(a, "--"); ok {
+		name, _, _ = strings.Cut(name, "=")
+		return isPrefixOf(name, "command", 1)
+	}
+	return isShortCommandOption(a, false)
+}
+
+// scriptRunsCommand reports whether script is given -c / --command (any
+// getopt prefix, =value or attached), which it runs through $SHELL -c.
 // getopt permutes, so the option may come after the file operand.
-func runsOwnCommand(args []string) bool {
+func scriptRunsCommand(args []string) bool {
 	for _, a := range args {
 		if a == "--" {
 			return false
@@ -184,11 +323,6 @@ func isShell(b string) bool {
 
 func isPowerShell(b string) bool { return foldIn(b, "pwsh", "powershell") }
 
-func isExecWrapper(b string) bool {
-	return foldIn(b, "env", "nice", "nohup", "timeout", "stdbuf", "setsid", "xargs", "busybox", "time", "command",
-		"exec", "taskset", "chrt", "ionice", "prlimit", "flock", "script", "watch")
-}
-
 func hasCommandOption(shell string, args []string) bool {
 	pwsh, fish := isPowerShell(shell), strings.EqualFold(shell, "fish")
 	for _, a := range args {
@@ -252,20 +386,23 @@ func isPrefixOf(s, full string, minLen int) bool {
 	return len(s) >= minLen && strings.HasPrefix(full, s)
 }
 
-// envSplitsString parses env's own options (they come before the command)
-// and reports whether one of them is -S or --split-string (any prefix, as
-// getopt_long accepts). -u NAME and -C DIR take an argument, attached or
-// separate, which is skipped.
-func envSplitsString(args []string) bool {
+// envOptions parses env's own options and NAME=VALUE assignments (they come
+// before the command), reports whether one of the options is -S or
+// --split-string (any prefix, as getopt_long accepts), and returns how many
+// elements precede the command. -u NAME and -C DIR take an argument,
+// attached or separate, which is skipped.
+func envOptions(args []string) (split bool, n int) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--":
-			return false
+			return false, i + 1
+		case a == "-":
+			// a lone "-" is -i
 		case strings.HasPrefix(a, "--"):
 			name, _, hasValue := strings.Cut(a[2:], "=")
 			if isPrefixOf(name, "split-string", 1) {
-				return true
+				return true, i
 			}
 			if !hasValue && (isPrefixOf(name, "unset", 1) || isPrefixOf(name, "chdir", 1)) {
 				i++
@@ -275,7 +412,7 @@ func envSplitsString(args []string) bool {
 			for j := 1; j < len(a); j++ {
 				switch a[j] {
 				case 'S':
-					return true
+					return true, i
 				case 'u', 'C':
 					if j == len(a)-1 {
 						i++ // the argument is the next element
@@ -286,8 +423,8 @@ func envSplitsString(args []string) bool {
 		case strings.Contains(a, "="):
 			// NAME=VALUE assignment
 		default:
-			return false // the command
+			return false, i // the command
 		}
 	}
-	return false
+	return false, len(args)
 }

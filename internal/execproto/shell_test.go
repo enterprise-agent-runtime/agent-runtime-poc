@@ -214,3 +214,80 @@ func TestIsShellStringResolved(t *testing.T) {
 		}
 	}
 }
+
+// TestIsShellString_CommandPosition: wrappers are recognised only where a
+// command stands (A08 §2.4 step 4): from argv[0], each wrapper's own
+// options, NAME=VALUE pairs and operands are skipped and the walk stops at
+// the first command that is not a wrapper. The re-review of 223b804 found
+// the earlier any-position scan hard-denying ordinary commands such as
+// `timeout 600 npm run watch`; every evasion it verified must stay caught.
+func TestIsShellString_CommandPosition(t *testing.T) {
+	cases := []struct {
+		name string
+		argv []string
+		want bool
+	}{
+		// Ordinary commands whose arguments merely name a wrapper.
+		{"npm script named watch", []string{"timeout", "600", "npm", "run", "watch"}, false},
+		{"make target watch", []string{"nice", "make", "watch"}, false},
+		{"yarn watch with env", []string{"env", "NODE_ENV=dev", "yarn", "watch"}, false},
+		{"make target script with -c", []string{"time", "make", "script", "-c"}, false},
+		{"env -S inside a docker command", []string{"timeout", "60", "docker", "run", "img", "env", "-S", "x"}, false},
+		{"flock around go test -cover", []string{"flock", "/tmp/l", "go", "test", "-cover", "./..."}, false},
+		{"flock around gcc -c", []string{"flock", "build.lock", "gcc", "-c", "x.c"}, false},
+		{"flock around go test -c", []string{"flock", ".lock", "go", "test", "-c"}, false},
+		{"flock with options around a command", []string{"flock", "-x", "-w", "10", "/tmp/l", "make", "-C", "src"}, false},
+		{"env -S after the command", []string{"env", "A=1", "npm", "test", "-S"}, false},
+		{"timeout around a non-shell", []string{"timeout", "-s", "KILL", "30", "go", "test", "-c"}, false},
+
+		// flock: -c / --command right after the lock file.
+		{"flock f -c", []string{"flock", "f", "-c", "id"}, true},
+		{"flock options f -c", []string{"flock", "-n", "-E", "3", "/tmp/l", "-c", "id"}, true},
+		{"flock f --command", []string{"flock", "--timeout", "5", "f", "--command", "id"}, true},
+		{"flock f shell", []string{"flock", "f", "sh", "-c", "id"}, true},
+		{"flock -- f -c", []string{"flock", "--", "f", "-c", "id"}, true},
+
+		// Evasions the re-review verified, still caught.
+		{"env -iS", []string{"env", "-iS", "sh -c id"}, true},
+		{"env --split-string", []string{"env", "--split-string=sh -c id"}, true},
+		{"nice -n 5 -- sh -c", []string{"nice", "-n", "5", "--", "sh", "-c", "id"}, true},
+		{"env -- sh -c", []string{"env", "--", "sh", "-c", "id"}, true},
+		{"env - (lone dash is -i) sh -c", []string{"env", "-", "sh", "-c", "id"}, true},
+		{"env -u NAME sh -c", []string{"env", "-u", "HOME", "sh", "-c", "id"}, true},
+		{"watch -x sh -c", []string{"watch", "-x", "sh", "-c", "id"}, true},
+		{"busybox sh -c", []string{"busybox", "sh", "-c", "id"}, true},
+		{"/bin/SH -c", []string{"/bin/SH", "-c", "id"}, true},
+		{"bash --rcfile x -ic", []string{"bash", "--rcfile", "x", "-ic", "id"}, true},
+		{"sh -o posix -c", []string{"sh", "-o", "posix", "-c", "id"}, true},
+
+		// Option arguments and operands of each wrapper are skipped.
+		{"timeout -k 5 -s TERM 30", []string{"timeout", "-k", "5", "-s", "TERM", "30", "sh", "-c", "id"}, true},
+		{"timeout --signal=KILL --foreground", []string{"timeout", "--signal=KILL", "--foreground", "10", "sh", "-c", "id"}, true},
+		{"nice -n10 attached", []string{"nice", "-n10", "sh", "-c", "id"}, true},
+		{"nice old style -10", []string{"nice", "-10", "sh", "-c", "id"}, true},
+		{"stdbuf -o L separate", []string{"stdbuf", "-o", "L", "sh", "-c", "id"}, true},
+		{"xargs -n 1 -P 4", []string{"xargs", "-n", "1", "-P", "4", "sh", "-c", "id"}, true},
+		{"xargs -0 -a file", []string{"xargs", "-0", "-a", "list", "bash", "-c", "id"}, true},
+		{"time -f fmt -o out", []string{"time", "-f", "%e", "-o", "t.txt", "sh", "-c", "id"}, true},
+		{"exec -a name", []string{"exec", "-a", "x", "sh", "-c", "id"}, true},
+		{"exec -c is not a shell flag", []string{"exec", "-c", "npm", "test"}, false},
+		{"taskset -c 0", []string{"taskset", "-c", "0", "sh", "-c", "id"}, true},
+		{"chrt -f 10", []string{"chrt", "-f", "10", "sh", "-c", "id"}, true},
+		{"ionice -c 2 -n 7", []string{"ionice", "-c", "2", "-n", "7", "sh", "-c", "id"}, true},
+		{"prlimit --pid", []string{"prlimit", "--nofile=1024", "sh", "-c", "id"}, true},
+		{"setsid -c is ctty", []string{"setsid", "-c", "npm", "test"}, false},
+		{"command -p", []string{"command", "-p", "sh", "-c", "id"}, true},
+		{"nohup --", []string{"nohup", "--", "sh", "-c", "id"}, true},
+		{"chained wrappers", []string{"env", "-i", "A=1", "nice", "-n", "5", "timeout", "10", "stdbuf", "-oL", "sh", "-c", "id"}, true},
+
+		// Safety net: a shell that a wrapper table would have consumed as an
+		// option argument or operand is still caught (chrt without the
+		// priority operand that newer util-linux allows to omit).
+		{"chrt -i without priority", []string{"chrt", "-i", "sh", "-c", "id"}, true},
+	}
+	for _, tc := range cases {
+		if got := IsShellString(tc.argv); got != tc.want {
+			t.Errorf("%s: IsShellString(%q) = %v, want %v", tc.name, tc.argv, got, tc.want)
+		}
+	}
+}
