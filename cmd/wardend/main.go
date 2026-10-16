@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -139,10 +140,10 @@ func run() int {
 		slog.Error("api", "error", err.Error())
 		return 1
 	}
-	// Bind first, exclusively, then write the token: a second daemon must
-	// fail before it can replace the live daemon's token (WH-1+2; this
+	// Lock, bind, then write the token: a second daemon must
+	// fail before it can replace the live daemon's token (WH-1+2, WH-4; this
 	// reverses A05 §3.1's token-then-bind order).
-	ln, err := listenThenPublish(home, l.Token(), token, platform.Listen, platform.WriteOwnerOnly)
+	ln, unlock, err := listenThenPublish(home, l.Token(), token, platform.LockDaemon, platform.Listen, platform.WriteOwnerOnly)
 	if errors.Is(err, platform.ErrDaemonRunning) {
 		fmt.Fprintln(os.Stderr, "wardend: already running for", home)
 		return 3
@@ -151,6 +152,9 @@ func run() int {
 		slog.Error("refusing to serve", "endpoint", platform.Endpoint(home), "error", err.Error())
 		return 1
 	}
+	// Held until the token and pid file are removed at shutdown, so no
+	// other daemon publishes in between (removeOwnToken).
+	defer unlock()
 	_ = platform.WriteOwnerOnly(l.PID(), []byte(strconv.Itoa(os.Getpid())))
 	if err := srv.RuntimeStart(ctx); err != nil {
 		slog.Error("cannot record runtime.start; the runtime fails closed", "error", err.Error())
@@ -177,7 +181,7 @@ func run() int {
 	}
 	broker.Flush()
 	// Shutdown order: endpoint (closed by Serve), token, pid (A05 §3.1).
-	os.Remove(l.Token())
+	removeOwnToken(l.Token(), token)
 	os.Remove(l.PID())
 	slog.Info("wardend stopped", "reason", reason)
 	return 0
@@ -251,20 +255,47 @@ func writeToken(path, token string, write func(string, []byte) error) error {
 	return nil
 }
 
-// listenThenPublish binds the daemon endpoint, which only one daemon per
-// home can hold (platform.Listen creates it exclusively), and only then
-// writes and verifies the token file (writeToken). A second daemon fails
-// with ErrDaemonRunning before it can touch the live daemon's token
-// (WH-1+2). Clients that connect in between find no token, or a stale one,
-// and retry: startDaemon polls, and a client sees ErrNotRunning.
-func listenThenPublish(home, tokenPath, token string, listen func(string) (net.Listener, error), write func(string, []byte) error) (net.Listener, error) {
+// removeOwnToken removes the token file at shutdown only if it still holds
+// this daemon's token (A05 §3.1, WH-4, CWE-367). A daemon that started in
+// the shutdown window has written its own token there, and removing it
+// would lock that daemon's clients out. The file is read through the same
+// no-follow, owner-only check the client uses; a file that fails it, or
+// holds another value, is left alone. The daemon lock (platform.LockDaemon)
+// is held until after this step, so no other daemon can publish between
+// the read and the remove.
+func removeOwnToken(path, token string) {
+	got, err := platform.ReadOwnerOnly(path, api.MaxTokenFile)
+	if err != nil || subtle.ConstantTimeCompare(got, []byte(token)) != 1 {
+		return
+	}
+	os.Remove(path)
+}
+
+// listenThenPublish takes the daemon lock (platform.LockDaemon, held for
+// the daemon's lifetime; the caller releases it after the shutdown
+// cleanup), binds the daemon endpoint, and only then writes and verifies
+// the token file (writeToken). The lock makes the whole sequence, Listen's
+// stale-socket removal included, exclusive per home: after a crash two
+// wardends could both remove the stale socket and bind, the second
+// removing the first one's fresh socket (WH-4, CWE-367). A second daemon
+// fails with ErrDaemonRunning before it can touch the endpoint or the live
+// daemon's token (WH-1+2). Clients that connect in between find no token,
+// or a stale one, and retry: startDaemon polls, and a client sees
+// ErrNotRunning.
+func listenThenPublish(home, tokenPath, token string, lock func(string) (func(), error), listen func(string) (net.Listener, error), write func(string, []byte) error) (net.Listener, func(), error) {
+	unlock, err := lock(home)
+	if err != nil {
+		return nil, nil, err
+	}
 	ln, err := listen(home)
 	if err != nil {
-		return nil, err
+		unlock()
+		return nil, nil, err
 	}
 	if err := writeToken(tokenPath, token, write); err != nil {
 		ln.Close()
-		return nil, err
+		unlock()
+		return nil, nil, err
 	}
-	return ln, nil
+	return ln, unlock, nil
 }

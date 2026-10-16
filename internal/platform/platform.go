@@ -72,6 +72,9 @@ func (l Layout) Config() string { return l.path("config.yaml") }
 // Token is the API token file.
 func (l Layout) Token() string { return l.path("run", "token") }
 
+// Lock is the daemon lock file, held for the daemon's lifetime (LockDaemon).
+func (l Layout) Lock() string { return l.path("run", "wardend.lock") }
+
 // PID is the daemon pid file.
 func (l Layout) PID() string { return l.path("run", "wardend.pid") }
 
