@@ -77,7 +77,7 @@ Every invariant has a named test that must exist and pass from the milestone whe
 | INV-G | `confidential` routes only to T0–T2; fallback never widens tier | `TestAdmissionMatrix`, `TestFallbackNeverWidens` in `internal/router` |
 | INV-H | No agent-requested process outside a sandbox, including tests | `TestExecutorOnlyViaSandbox` (static check: `os/exec` allowed only in `internal/sandbox`, `internal/exec`, `internal/worktree`, `internal/harness`, each with a `//sandboxed` justification comment) via `scripts/lint-exec.sh` |
 | INV-I | Deny-list enforced at policy, executor and mount level | `TestDenyListThreeLayers` spanning policy, exec and sandbox spec |
-| INV-J | Daemon listens on no host TCP port (the L2 proxy sidecar listens on TCP only inside the task's internal Docker network) | `TestNoListenTCP` (static grep for `net.Listen("tcp"` outside `cmd/warden-proxy` and tests) |
+| INV-J | Daemon listens on no host TCP port (the L2 proxy sidecar listens on TCP only inside the task's internal Docker network) | `TestNoListenTCP` (static check in `internal/archtest`: no TCP listener, no `net/http` `Server`, no dot-import of `net`/`net/http`, outside `cmd/warden-proxy`, the one in-sandbox forwarder file `internal/exec/forward/listen.go` and tests; safe only together with the import rule that keeps `internal/exec` out of the daemon, §6) (owner approval 2026-10-16) |
 
 Platform invariants INV-1–INV-9 of WRD-08 §5 are implemented as code checks in `internal/policy/invariants.go` with one golden test each.
 
@@ -101,7 +101,9 @@ internal/harness/{copilot,codex,claudecode}   vendor CLIs in sandbox, hooks → 
 internal/sandbox/{linux_bwrap,darwin_seatbelt,oci}   spec → launch; limits; env; oci = internal network + sandbox + proxy sidecar   WRD-10 §5, WRD-16 §10.4, design A06
 cmd/warden-proxy            proxy sidecar binary (L2) and in-process proxy (L1); allowlist; events over stdio          WRD-16 §10.4–§10.5
 images/                     Dockerfiles: warden/proxy, warden/sandbox-{node,go,python}; pinned digests
-internal/exec               executor protocol client (daemon side) and server (warden-exec side)   WRD-04 §5
+internal/execproto          executor wire types, error codes, command profiles, shell-string check; stdlib-only leaf   WRD-04 §5, design A02, A06 §4
+internal/exec               executor server (runs only inside warden-exec, inside the sandbox)   WRD-04 §5, design A06
+internal/tools              daemon side: tool descriptors and the executor protocol client   design A02
 internal/proxy              per-task CONNECT proxy, allowlist, events                              WRD-10 §7, design A07
 internal/secrets            keychain backends, secret:// refs, deny-list helper, redaction         WRD-10 §6, design A15
 internal/worktree           session branch, worktree, hook neutralization, checkpoints, cleanup    WRD-07 §10, design A14
@@ -115,7 +117,7 @@ apps/desktop                Tauri 2 (src-tauri: sidecar + socket bridge) + React
 docs/                       specification, design, working files
 ```
 
-Import rules enforced by `scripts/lint-imports.sh` (run in `make check`): `internal/providers/*` and `internal/harness/*` import only `internal/model` (and stdlib); `internal/exec` imports nothing from the daemon; `internal/policy` imports no provider or harness package; `apps/desktop` contains no Go; `cmd/*` contain only wiring; `runtime.GOOS` and build tags for OS selection appear only in `internal/platform`, `internal/sandbox/*`, `internal/secrets` backends, and the executor (`internal/exec`, `cmd/warden-exec`), whose semantics are per OS (owner approval 2026-10-16, C-61).
+Import rules enforced by `scripts/lint-imports.sh` (run in `make check`): `internal/providers/*` and `internal/harness/*` import only `internal/model` (and stdlib); `internal/exec` and `cmd/warden-exec` import from this module only `internal/exec/...` and `internal/execproto` (plus `internal/buildinfo` for `cmd/warden-exec`), and of third-party modules only `golang.org/x/sys` (design A02 §5 R3, D-041); no package outside `internal/exec/...` and `cmd/warden-exec` imports `internal/exec` (A02 R4), which is what keeps the in-sandbox forwarder out of the daemon (owner decision 2026-10-16: the executor follows design A02's package layout); `internal/policy` imports no provider or harness package; `apps/desktop` contains no Go; `cmd/*` contain only wiring; `runtime.GOOS` and build tags for OS selection appear only in `internal/platform`, `internal/sandbox/*`, `internal/secrets` backends, and the executor (`internal/exec`, `cmd/warden-exec`), whose semantics are per OS (owner approval 2026-10-16, C-61).
 
 ## 7. Coding standards
 
