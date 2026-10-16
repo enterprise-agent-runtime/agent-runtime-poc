@@ -219,20 +219,56 @@ func TestFSPatch_UndoFailureKeepsStaging(t *testing.T) {
 // swept (a full walk at every start is not worth it; they are inert).
 func TestTree_SweepTemps(t *testing.T) {
 	f := newFixture(t, modeFallback)
-	f.file("work/"+tempPrefix+"0011/t0", "staged")
-	f.file("work/"+tempPrefix+"0011/b0", "backup")
-	f.file("work/"+tempPrefix+"22", "temp")
-	f.link(t, "../outside", "work/"+tempPrefix+"33")
+	stage, temp, link := tempPrefix+"0123456789abcdef", tempPrefix+"fedcba9876543210", tempPrefix+"00000000000000aa"
+	f.file("work/"+stage+"/t0", "staged")
+	f.file("work/"+stage+"/b0", "backup")
+	f.file("work/"+temp, "temp")
+	f.link(t, "../outside", "work/"+link)
 	f.file("work/keep.txt", "keep")
-	f.file("work/sub/"+tempPrefix+"44", "not at the root")
+	f.file("work/sub/"+tempPrefix+"4444444444444444", "not at the root")
+	// Review round 2: names only like the executor's. A repository can
+	// commit a file named .warden-tmp-anything; sweeping it would show the
+	// agent a deletion it could commit. Only tempPrefix followed by
+	// exactly 16 lowercase hex digits (randomName) is ever swept.
+	survivors := []string{
+		tempPrefix + "repo.txt",
+		tempPrefix + "0123456789abcdeg",   // one non-hex digit
+		tempPrefix + "0123456789ABCDEF",   // upper case: never generated
+		tempPrefix + "0123456789abcde",    // 15 digits
+		tempPrefix + "0123456789abcdef0",  // 17 digits
+		tempPrefix + "0123456789abcdef.x", // a suffix
+	}
+	for _, s := range survivors {
+		f.file("work/"+s, "committed by the repository")
+	}
 	n, err := f.tree.SweepTemps()
 	if err != nil || n != 3 {
 		t.Errorf("sweep: %d, %v", n, err)
 	}
-	for _, p := range []string{"work/" + tempPrefix + "0011", "work/" + tempPrefix + "22", "work/" + tempPrefix + "33"} {
-		f.missing(t, p)
+	for _, p := range []string{stage, temp, link} {
+		f.missing(t, "work/"+p)
 	}
-	if f.content(t, "outside/secret") != "outside the roots" || f.content(t, "work/keep.txt") != "keep" || f.content(t, "work/sub/"+tempPrefix+"44") != "not at the root" {
+	for _, s := range survivors {
+		if b, err := os.ReadFile(f.work + "/" + s); err != nil || string(b) != "committed by the repository" {
+			t.Errorf("the sweep removed or changed %s", s)
+		}
+	}
+	if f.content(t, "outside/secret") != "outside the roots" || f.content(t, "work/keep.txt") != "keep" || f.content(t, "work/sub/"+tempPrefix+"4444444444444444") != "not at the root" {
 		t.Error("the sweep removed something it must not")
+	}
+}
+
+// TestIsTempName pins the exact shape randomName produces.
+func TestIsTempName(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		n, err := randomName()
+		if err != nil || !isTempName(n) {
+			t.Fatalf("randomName %q is not a temp name", n)
+		}
+	}
+	for _, n := range []string{tempPrefix, tempPrefix + "repo.txt", tempPrefix + "0123456789abcdeg", tempPrefix + "0123456789ABCDEF", "x" + tempPrefix + "0123456789abcdef"} {
+		if isTempName(n) {
+			t.Errorf("isTempName(%q)", n)
+		}
 	}
 }

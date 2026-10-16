@@ -709,6 +709,28 @@ func randomName() (string, error) {
 	return tempPrefix + hex.EncodeToString(b[:]), nil
 }
 
+// tempHexLen is the length of randomName's random part: 8 bytes in hex.
+const tempHexLen = 16
+
+// isTempName reports whether name has exactly the shape randomName
+// produces (temporary files and staging directories alike): tempPrefix
+// and 16 lowercase hex digits, nothing more. SweepTemps removes only
+// these: a repository may commit a file named .warden-tmp-anything, and
+// sweeping it would leave a deletion the agent could commit (review
+// round 2).
+func isTempName(name string) bool {
+	rest, ok := strings.CutPrefix(name, tempPrefix)
+	if !ok || len(rest) != tempHexLen {
+		return false
+	}
+	for i := 0; i < len(rest); i++ {
+		if c := rest[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // createIn creates the file name in the directory dirComps of root through
 // Resolve and OpenCanonical (O_CREAT | O_EXCL), writes data, sets perm and
 // fsyncs. dirfd is the same directory, opened by the caller's walk: the
@@ -1339,7 +1361,8 @@ func (s *stager) commitOne(i int, it patchItem) (func() error, error) {
 }
 
 // SweepTemps removes what an interrupted exec.fs.patch or exec.fs.write
-// left at the worktree root: entries named .warden-tmp-* that the
+// left at the worktree root: entries named exactly as randomName names them
+// (isTempName: .warden-tmp- and 16 lowercase hex digits) that the
 // executor's user owns. A staging directory is emptied of its files and
 // removed; anything else (a file, or a link, which is removed as a link
 // and never followed) is unlinked. Nothing is followed and nothing outside
@@ -1364,7 +1387,7 @@ func (t *Tree) SweepTemps() (int, error) {
 	uid := os.Geteuid()
 	n := 0
 	for _, name := range names {
-		if !strings.HasPrefix(name, tempPrefix) {
+		if !isTempName(name) {
 			continue
 		}
 		var st unix.Stat_t
