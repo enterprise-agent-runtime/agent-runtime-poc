@@ -47,8 +47,20 @@ func Normalize(p string) string {
 
 // Match reports the first pattern matching p. Matching is ASCII
 // case-insensitive. p is a path relative to a mounted root (CF-17) or an
-// absolute path; both use the same globs.
+// absolute path; both use the same globs. A path with an NTFS 8.3
+// short-name segment matches too (ShortNameMatch, see IsShortName).
+//
+// Because of the 8.3 rule, Match and MatchUnder are not suitable for
+// absolute Windows host paths in their short form: C:\Users\RUNNER~1\...
+// (the TEMP of GitHub's Windows runners) is denied as a whole. Callers pass
+// root-relative paths, or expand host paths to their long form first
+// (GetLongPathName). No caller passes such a path today.
 func Match(p string) (string, bool) {
+	return match(p, true)
+}
+
+// match is Match, with the 8.3 rule only when shortNames is set.
+func match(p string, shortNames bool) (string, bool) {
 	p = strings.ToLower(Normalize(p))
 	p = strings.TrimPrefix(p, "./")
 	segs := split(p)
@@ -57,12 +69,61 @@ func Match(p string) (string, bool) {
 			return pat, true
 		}
 	}
+	if shortNames {
+		for _, s := range segs {
+			if IsShortName(s) {
+				return ShortNameMatch, true
+			}
+		}
+	}
 	return "", false
+}
+
+// ShortNameMatch is what Match reports for a path with an NTFS 8.3
+// short-name segment (see IsShortName).
+const ShortNameMatch = "8.3-short-name"
+
+// IsShortName reports whether one path segment has the form of an NTFS 8.3
+// short name: a base of at most 8 characters made of a non-empty prefix
+// without "." or "~", then "~" and 1-6 digits, and optionally "." and an
+// extension of at most 3 characters without "." (an empty one too: Windows
+// drops a trailing dot). Case does not matter; the shape has no letters.
+//
+// NTFS creates such an alias for long names by default on the system drive,
+// and opening the alias opens the file: ENV~1 is .env, GIT~1 is .git,
+// KUBE~1 is .kube, CREDEN~1.JSO is credentials.json (CWE-41; git refuses
+// git~1 for the same reason, CVE-2014-9390, CVE-2019-1353). On Windows L2
+// the worktree is a bind mount from NTFS. Which long name an alias stands
+// for depends on the volume, so it cannot be mapped back here: every
+// segment of this shape is denied, at all three INV-I layers through Match.
+// Real files named like this ("draft~1.txt") are denied too; that is the
+// accepted false positive.
+func IsShortName(seg string) bool {
+	base, ext, hasExt := strings.Cut(seg, ".")
+	if hasExt && (len(ext) > 3 || strings.Contains(ext, ".")) {
+		return false
+	}
+	if len(base) > 8 {
+		return false
+	}
+	prefix, digits, ok := strings.Cut(base, "~")
+	if !ok || prefix == "" || len(digits) == 0 || len(digits) > 6 {
+		return false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // MatchUnder additionally denies anything under one of the given absolute
 // roots (the effective Warden home, CONFLICTS C-53), except paths inside an
-// allowed root (the task's own mounted roots, CF-17).
+// allowed root (the task's own mounted roots, CF-17). It applies the 8.3
+// short-name rule like Match, so the same caveat holds: an absolute Windows
+// host path in short form (C:\Users\RUNNER~1\...) outside the allowed roots
+// is denied. Pass long-form paths (GetLongPathName).
 func MatchUnder(abs string, denyRoots, allowRoots []string) (string, bool) {
 	n := strings.ToLower(Normalize(abs))
 	for _, a := range allowRoots {
@@ -121,6 +182,13 @@ func matchSegs(pat, segs []string) bool {
 // argv[0] (or the value of --flag=value) without whitespace, at most 4096
 // bytes, that names a deny-listed path relative to cwd or absolutely,
 // denies the call. ["cat", ".env"] is denied before approval is asked.
+//
+// Argv leaves out the 8.3 short-name rule: git revision syntax has that
+// shape (HEAD~1, origin/main~3), and routine git commands would be denied
+// before approval. Nothing is lost by it. An argv check is a heuristic that
+// a spawned process defeats anyway (it can build any path at run time); the
+// defence against 8.3 aliases of paths is Match and MatchUnder, which the
+// executor applies to every path it opens and the mask layer to every mount.
 func Argv(argv []string, cwdRel string) (string, bool) {
 	for _, a := range argv[min(1, len(argv)):] {
 		if _, v, ok := strings.Cut(a, "="); ok && strings.HasPrefix(a, "-") {
@@ -129,11 +197,11 @@ func Argv(argv []string, cwdRel string) (string, bool) {
 		if a == "" || len(a) > 4096 || strings.ContainsAny(a, " \t\n") {
 			continue
 		}
-		if pat, ok := Match(a); ok {
+		if pat, ok := match(a, false); ok {
 			return pat, true
 		}
 		if cwdRel != "" {
-			if pat, ok := Match(path.Join(cwdRel, strings.ReplaceAll(a, "\\", "/"))); ok {
+			if pat, ok := match(path.Join(cwdRel, strings.ReplaceAll(a, "\\", "/")), false); ok {
 				return pat, true
 			}
 		}
