@@ -89,16 +89,28 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		"INV-J internal/api/listen.go",          // http.ListenAndServe
 		// internal/exec/forward/listen.go (the C-46 forwarder) listens on TCP and
 		// is allowed; the exemption is that one file, not its package or parent.
-		"INV-J internal/exec/forward/other.go",   // net.ListenTCP beside the forwarder file
-		"INV-J internal/exec/other.go",           // net.Listen("tcp", ...) elsewhere in the executor
-		"imports apps/desktop/x.go",              // Go under apps/
-		"imports internal/exec/bad.go",           // exec importing the daemon
-		"imports internal/policy/bad.go",         // policy importing a provider
-		"imports internal/providers/bad/bad.go",  // third-party import in a provider
-		"imports internal/providers/bad/bad.go",  // provider importing internal/store
-		"os-selection internal/api/os.go",        // //go:build linux
-		"os-selection internal/api/os.go",        // runtime.GOOS
-		"os-selection internal/api/x_windows.go", // file-name suffix
+		"INV-J internal/exec/forward/other.go", // net.ListenTCP beside the forwarder file
+		"INV-J internal/exec/other.go",         // net.Listen("tcp", ...) elsewhere in the executor
+		"imports apps/desktop/x.go",            // Go under apps/
+		"imports internal/exec/bad.go",         // exec importing the daemon
+		// Design A02 §5 R3/R4. The review of 6bdf845 showed that the file-level
+		// listener exemption is only safe if no daemon package can link the
+		// forwarder: cmd/wardend importing internal/exec/forward and calling an
+		// exported listener would pass ListenRule. R4 closes that. Allowed here:
+		// internal/exec/proto.go and cmd/warden-exec/ok.go (execproto, exec/...,
+		// x/sys per D-041, buildinfo for the binary only) and
+		// internal/sandbox/proto.go (execproto is not internal/exec).
+		"imports cmd/warden-exec/importsstore.go", // R3: the executor binary imports a daemon package
+		"imports cmd/wardend/importsexec.go",      // R4: the daemon links executor code
+		"imports internal/exec/buildinfo.go",      // R3/R10: buildinfo reaches exec only through exec.Config
+		"imports internal/exec/thirdparty.go",     // R3: third-party module other than x/sys
+		"imports internal/sandbox/importsfwd.go",  // R4: a daemon package links the forwarder
+		"imports internal/policy/bad.go",          // policy importing a provider
+		"imports internal/providers/bad/bad.go",   // third-party import in a provider
+		"imports internal/providers/bad/bad.go",   // provider importing internal/store
+		"os-selection internal/api/os.go",         // //go:build linux
+		"os-selection internal/api/os.go",         // runtime.GOOS
+		"os-selection internal/api/x_windows.go",  // file-name suffix
 		// internal/exec/sys_linux.go and cmd/warden-exec/main_darwin.go select by
 		// OS and are allowed (C-61); these two are still rejected.
 		"os-selection internal/executor/x_linux.go", // a name prefix of internal/exec is not internal/exec

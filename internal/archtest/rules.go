@@ -135,6 +135,10 @@ func OSRule(files []File) []Violation {
 	return out
 }
 
+// executorDirs hold the in-sandbox executor: the only places that may import
+// internal/exec (design A02 §5 R4), and bound by R3 themselves.
+var executorDirs = []string{"internal/exec", "cmd/warden-exec"}
+
 // ImportRules implements the import rules of CLAUDE.md §6 (design A02 import
 // matrix). module is the module path ("warden.dev/warden").
 func ImportRules(module string, files []File) []Violation {
@@ -165,14 +169,28 @@ func ImportRules(module string, files []File) []Violation {
 				} else if !isInternal && !isStdlib(imp) && !f.Test && !strings.HasPrefix(imp, "github.com/github/copilot-sdk/") {
 					bad = "harnesses import only their vendor SDK"
 				}
-			case under(f.Dir, "internal/exec"):
-				if isInternal && !under(internal, "internal/exec") {
-					bad = "internal/exec imports nothing from the daemon"
+			case underAny(f.Dir, executorDirs):
+				// Design A02 §5 R3: the executor shares only the wire types with
+				// the daemon. R10: buildinfo reaches internal/exec through
+				// exec.Config, so only the binary imports it. Third-party: only
+				// golang.org/x/sys (CLAUDE.md §4, D-041).
+				binary := under(f.Dir, "cmd/warden-exec")
+				if isInternal && !under(internal, "internal/exec") && !under(internal, "internal/execproto") && !(binary && internal == "internal/buildinfo") {
+					bad = "R3: the executor imports only internal/exec/..., internal/execproto and (cmd/warden-exec only) internal/buildinfo"
+				} else if !isInternal && !isStdlib(imp) && !f.Test && !under(imp, "golang.org/x/sys") {
+					bad = "R3: the executor imports no third-party module except golang.org/x/sys"
 				}
 			case under(f.Dir, "internal/policy"):
 				if isInternal && (under(internal, "internal/providers") || under(internal, "internal/harness")) {
 					bad = "internal/policy imports no provider or harness package"
 				}
+			}
+			if isInternal && under(internal, "internal/exec") && !underAny(f.Dir, executorDirs) {
+				// Design A02 §5 R4: executor code is never linked into the
+				// daemon. It is also what keeps listenFiles safe: a daemon
+				// package cannot import the forwarder and listen on the host.
+				// Test files are included.
+				bad = "R4: only cmd/warden-exec imports internal/exec"
 			}
 			if isInternal && under(internal, "spikes") {
 				bad = "nothing imports spikes/"
