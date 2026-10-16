@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -138,19 +139,16 @@ func run() int {
 		slog.Error("api", "error", err.Error())
 		return 1
 	}
-	// Token file first, then bind, so any client that can connect can read
-	// the token (A05 §3.1).
-	if err := platform.WriteOwnerOnly(l.Token(), []byte(token)); err != nil {
-		slog.Error("cannot write the token file", "error", err.Error())
-		return 1
-	}
-	ln, err := platform.Listen(home)
+	// Bind first, exclusively, then write the token: a second daemon must
+	// fail before it can replace the live daemon's token (WH-1+2; this
+	// reverses A05 §3.1's token-then-bind order).
+	ln, err := listenThenPublish(home, l.Token(), token, platform.Listen, platform.WriteOwnerOnly)
 	if errors.Is(err, platform.ErrDaemonRunning) {
 		fmt.Fprintln(os.Stderr, "wardend: already running for", home)
 		return 3
 	}
 	if err != nil {
-		slog.Error("cannot listen", "endpoint", platform.Endpoint(home), "error", err.Error())
+		slog.Error("refusing to serve", "endpoint", platform.Endpoint(home), "error", err.Error())
 		return 1
 	}
 	_ = platform.WriteOwnerOnly(l.PID(), []byte(strconv.Itoa(os.Getpid())))
@@ -228,4 +226,45 @@ func newProvider(pc model.ProviderConfig, creds model.CredentialSource, cache mo
 		return openaicompat.New(pc, creds, cache)
 	}
 	return nil, fmt.Errorf("protocol %q is not supported in the PoC", pc.Protocol)
+}
+
+// writeToken writes the token file with write and verifies it before the
+// daemon binds and serves: read back once through the same no-follow,
+// owner-only check the client uses, and compared with the token. A token
+// file another account can read or replace defeats the handshake, so a
+// refused file is removed and wardend does not serve (WH-1+2; A05 §3.1).
+// On a volume without ACLs (FAT, some network shares) the check fails and
+// wardend refuses to start: fail closed.
+func writeToken(path, token string, write func(string, []byte) error) error {
+	if err := write(path, []byte(token)); err != nil {
+		return fmt.Errorf("cannot write the token file: %w", err)
+	}
+	got, err := platform.ReadOwnerOnly(path, api.MaxTokenFile)
+	if err != nil {
+		os.Remove(path)
+		return fmt.Errorf("the token file failed its owner-only check: %w", err)
+	}
+	if string(got) != token {
+		os.Remove(path)
+		return fmt.Errorf("the token file %s does not hold the token just written", path)
+	}
+	return nil
+}
+
+// listenThenPublish binds the daemon endpoint, which only one daemon per
+// home can hold (platform.Listen creates it exclusively), and only then
+// writes and verifies the token file (writeToken). A second daemon fails
+// with ErrDaemonRunning before it can touch the live daemon's token
+// (WH-1+2). Clients that connect in between find no token, or a stale one,
+// and retry: startDaemon polls, and a client sees ErrNotRunning.
+func listenThenPublish(home, tokenPath, token string, listen func(string) (net.Listener, error), write func(string, []byte) error) (net.Listener, error) {
+	ln, err := listen(home)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeToken(tokenPath, token, write); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
 }

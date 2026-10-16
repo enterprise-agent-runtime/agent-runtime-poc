@@ -22,6 +22,108 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-021 · 2026-10-16 · WH-1+2: the token file is owner-only from creation, and a second daemon cannot replace it
+
+- **Asked:** M2 plan tasks WH-1 and WH-2, the remaining FX-3 security-review findings on the token file. The owner scheduled them "before L2, in parallel" on 2026-10-16. Delivered under "merge each task when its review passes".
+- **Task:** Make sure the per-session token file can never be readable or replaceable by another local account, and that the CLI never starts a second daemon because of an error that is not "nothing is running".
+- **How:**
+  - **Write** (D-051): random exclusive temp name; on Windows the owner-only descriptor is passed to CreateFile; fsync and rename; wardend verifies the token after writing it.
+  - **Read** (D-051): `ReadOwnerOnly` opens once without following links and decides owner, type and permissions on that handle; the client uses it before dialling.
+  - **Home** (D-052): `Ensure` takes over only the default home, a home with an owner-only marker, or an empty directory, never through a link and never one owned by another account; every subdirectory is checked and tightened.
+  - **Start order** (D-053): bind first, then write the token; `ErrNotRunning` only when the endpoint is missing, and it is the only error that autostarts.
+  - **Commits:** `c8f81ca`, `4e452d5`, `19b0043`, `eebe8d7`, `330a5ed`, `9730d41`, `6e0f286`, `160d10e`, `5533efd`.
+- **Rules kept:**
+  - Test first: every guard has a test that failed against the old code (for example, the old code accepted any regular file as the marker, and the old order let a second daemon replace the token).
+  - OS code only in `internal/platform`; typed x/sys APIs only, no archtest allowlist change.
+  - Temp homes only; no credential in any file or log (`dialError` names only the endpoint path).
+- **Rules changed or bent:**
+  - **A05 §3.1/§3.4 start order reversed** (C-66): A05 writes the token before binding, which let a losing second daemon overwrite the live one. Decided by me under R3, recorded in D-053. The M6 desktop must retry through the gap rather than read the token at once on exit 3.
+  - **A05 §3.1 `token.tmp` replaced** by a random exclusive name (C-67), because a fixed name can be pre-created.
+  - **Empty directory accepted as a home** (D-052): decided by me; there is nothing in it to take over.
+- **Verified:**
+  - Three review rounds, code and security together; WSL2 and Windows binaries run with temp homes.
+  - Repro scripts: a loose token makes every command refuse with exit 2 and starts nothing; a second wardend exits 3 and the token is unchanged; 40 trials of 6 concurrent wardends after a crash left exactly one daemon.
+  - `-race` on platform and api in WSL2; `make check` green.
+- **Left:** WH-4 (in PROGRESS): reap the spawned wardend on Unix, compare the token before removing it at shutdown, a lock file for Unix Listen, a clearer message for elevated-owner directories, owner-only `keys/*.pub`, and the `ensureDir` wording.
+
+## W-020 · 2026-10-16 · M2-5: the executor transport
+
+- **Asked:** M2 plan task M2-5. Delivered under "merge each task when its review passes".
+- **Task:** The protocol pipe between the daemon and `warden-exec`: one ordered JSON-RPC transport over a socketpair (L1) or container stdio (L2).
+- **How:**
+  - **Codec:** a strict Content-Length codec and envelope in `internal/execproto`.
+  - **Server:** the executor-side server in `internal/exec`, with a hello gate and a single writer.
+  - **Client:** the daemon-side client in `internal/tools`, which delivers notifications in order, binds each write to the call's context, takes the meaning of an error code from its own table, and neutralises executor text.
+  - **Commits:** `bcfa1fc`, `c37e6d7`, `8bcce6f`, `fdbde48`.
+- **Rules kept:**
+  - R3, R4 and R6: the client imports only `execproto`, the server only `execproto`, and `execproto` only the standard library.
+  - INV-C: `secret_env` goes on the wire only through `MarshalWire`, and no frame is ever logged; a test checks both.
+  - Every goroutine has a stop path (§7).
+  - No wall-clock budgets in tests.
+  - Every guarded behaviour has a test that failed first and fails on revert.
+- **Rules changed or bent:**
+  - **Client API:** `New(ctx, rwc, onIO)` instead of A02 §4.8's `New(net.Conn)`, so it runs over stdio too. Decided by me; recorded in D-050.
+  - **Two test-only hook fields** (`afterWrite`, `beforeWrite`), nil in production.
+  - **Broken by mistake and repaired:** raw bidi characters got into a test source (the editing tool decoded `\u` escapes), and a GNU sed repair then damaged the file. It was caught by staticcheck ST1018, restored from HEAD and rewritten with numeric runes.
+- **Verified:**
+  - Three review rounds, the security boundary reviewed as hostile-executor.
+  - Fuzzing ran 5.3M + 1.5M execs with no failure.
+  - `-race -count=20` passes; `make check` is green; coverage is 94–98%.
+- **Left:**
+  - M3 must check `WaitResult` completeness before trusting it.
+  - A02 R7 ("only `internal/agentloop` imports `internal/tools`") is not enforced yet.
+  - Accepted minor (review round 4): `cutUTF8` walks back over any run of non-RuneStart bytes, so a detail of invalid UTF-8 longer than the limit can be cut to "". That costs diagnostics from a misbehaving peer, not safety. A fix would bound the walk to `utf8.UTFMax - 1` bytes.
+
+## W-019 · 2026-10-16 · WH-3: the client verifies who serves the daemon endpoint (pipe squatting)
+
+- **Asked:** M2 plan task WH-3, the most serious open finding from the FX-3 security review (2026-10-08). The owner scheduled it "before L2, in parallel" on 2026-10-16. Delivered under "merge each task when its review passes".
+- **Task:** Make sure the per-session token can only ever reach the real daemon, never a pipe or socket another local user created first.
+- **How:**
+  - `platform.Dial` checks before returning the connection (D-049). On Windows: the server process's token user, plus the pipe object's owner and DACL, all read on the connected handle. On Unix: the socket and directory ownership and mode, plus the peer credential on the connected fd.
+  - The daemon refuses a socket directory it does not own.
+  - The macOS peer check, on both client and daemon, replaces the earlier deferral.
+  - `Listen` states the pipe owner explicitly.
+  - Commits `963cc2b`, `f04a5d0`, `0365c39`.
+- **Rules kept:**
+  - Test first: every refusal test failed against the old code.
+  - Revert and mutation checks.
+  - Only typed x/sys APIs: no raw syscalls or DLL loading, and no archtest allowlist change.
+  - OS code only in `internal/platform`.
+  - `winio.ListenPipe` only in tests (INV-J exempts tests).
+  - Temp homes only.
+- **Rules changed or bent:**
+  - **D-011 amended:** the pipe SDDL now states `O:<sid>`. Without it, an elevated daemon's pipe would be owned by Administrators and wrongly refused. Decided by me, recorded.
+  - **`golang.org/x/sys` became a direct requirement** in go.mod, which D-041 already allows.
+  - **Not done here, on purpose:** the review's "autostart on a refusal" finding is fixed in WH-1+2, the task already rewriting `connect`, so two branches don't edit the same function.
+  - **Process slip:** two agents shared one scratch script, and one red run briefly tested another task's tree ("no Go files"). It was noticed and redone with a private script. Now prevented by a per-task scratch-directory rule in the implementer role.
+- **Verified:**
+  - `make check` green.
+  - Unix tests run in WSL2, with `-race`.
+  - A staged cross-user squat in WSL2 (uid 65534 owning `/tmp/warden-1000` and serving a socket there): the client refused, the squatter received 0 bytes, and the daemon refused the directory.
+  - The macOS path is vetted only; it is first exercised on the CI macOS runner.
+- **Left:**
+  - The Tauri bridge (M6) must apply the same server checks.
+  - The connect autostart fix is in WH-1+2.
+
+## W-018 · 2026-10-16 · M2-4b: the deny-list moves to a stdlib-only leaf; archtest enforces R6
+
+- **Asked:** Task M2-4b, which M2-4's review added to the plan. Under the new R4 rule, `internal/sandbox` and `internal/policy` could not import `internal/exec/denylist`, but INV-I needs the same list at the policy, executor and mount layers. Delivered under "merge each task when its review passes".
+- **Task:** Move the deny-list to where every layer may import it, and make the move safe to rely on.
+- **How:** `git mv internal/exec/denylist internal/execproto/denylist`. Only the package doc comment changed, and the tests are unchanged. A new archtest rule enforces A02 R6: non-test files in `internal/execproto/...` import only the standard library. The review found that `import "C"` counted as standard library, so cgo is now excluded; this also tightens R3. Commits `a99c8e9` and `26c4f4d`.
+- **Rules kept:**
+  - A pure move: the API and the tests are unchanged.
+  - Each new rule has fixtures that failed before, plus a revert check.
+  - `make check` green.
+  - No new dependency.
+- **Rules changed or bent:**
+  - **CLAUDE.md §6** gains the R6 sentence (from design A02, under the owner's A02-layout decision).
+  - **Test files are exempt from R6** (A02's `!$test`, the same convention as R3). Decided by me; the golden schema tests need jsonschema.
+  - **D-014** gets a note about the new location.
+- **Verified:** Reviewed once and approved. Every mutation in the review failed the suite, and the real tree passes R6.
+- **Left:**
+  - R6 also forbids execproto from importing its own `denylist` subpackage. That would need a narrow allowance if the wire types ever need `denylist.Version`.
+  - A02 R6 also makes `internal/model` a stdlib-only leaf. That half is not enforced yet.
+
 ## W-017 · 2026-10-16 · M2-4: executor wire types, command profiles, shell-string detection
 
 - **Asked:** M2 plan task M2-4. During review the owner made three decisions (2026-10-16): the package follows design A02's layout; shell-string detection denies more than A06; interpreter strings stay at approval. Delivered under "merge each task when its review passes".

@@ -36,9 +36,22 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **WH, Windows hardening** (before L2, in parallel with the executor work):
 
-- [ ] **WH-1** Token file created with its owner-only DACL already set (CreateFile security attributes), random O_EXCL temp name; protected DACLs on the home and run directories
-- [ ] **WH-2** Owner-only check also requires owner == token user (CWE-283); production callers in wardend after writing the token and in the client before sending it
-- [ ] **WH-3** Client verifies the named pipe's server is the current user before sending the token (pipe squatting); Windows test that the pipe DACL is owner-only
+- [x] **WH-1** The token file is owner-only from creation: random exclusive temp name, descriptor set by CreateFile, verified after writing; existing homes and subdirectories are checked and tightened (D-051, D-052).
+- [x] **WH-2** Owner-only also requires owner == current user (CWE-283); the client reads the token once on a no-follow handle before dialling; bind before token, autostart only on `ErrNotRunning` (D-051, D-053, C-66, C-67).
+  - **Commits:** `c8f81ca`, `4e452d5`, `19b0043`, `eebe8d7`, `330a5ed`, `9730d41`, `6e0f286`, `160d10e`, `5533efd`.
+  - **Review:** three rounds, code and security together. An earlier round reproduced a second daemon overwriting the live token; round 3 approved after 40 crash-and-race trials with no anomaly and every earlier probe (symlink, FIFO, junction, loose marker, planted temp name) refused.
+- [ ] **WH-4** Follow-ups from the WH-1+2 review (all minor or low, none a confidentiality issue):
+  - Unix: the spawned wardend is released, not reaped, so a zombie looks alive and a failed start costs 16 s and the wrong message; reap it and test with a real child that exits 3.
+  - Shutdown removes the token file without checking it is still this daemon's (CWE-367); compare before removing.
+  - Unix Listen's stale-socket path is not exclusive under a race (CWE-367); hold a `run/wardend.lock` flock for the daemon's lifetime.
+  - Windows: a directory created earlier under an elevated token is owned by Administrators and refused with a confusing message; name elevation in it.
+  - `PublicKeys` should accept only owner-only `keys/*.pub` (CWE-732).
+  - `ensureDir`'s link message still names only the home and run directory.
+- [x] **WH-3** The client verifies that the endpoint's server is the current user before sending the token, on Windows and on Unix (D-049).
+  - **Daemon side:** the socket directory must be owned by the uid; the macOS peer check is on.
+  - **New test:** the Windows pipe DACL is owner-only, which was a missing M1 transport test.
+  - **Commits:** `963cc2b`, `f04a5d0`, `0365c39`.
+  - **Review:** a combined code and security review approved it after a real cross-user squat in WSL2. The squatter got 0 bytes, and the daemon refused the squatted directory.
 
 **Group B** (executor; no Docker):
 
@@ -46,8 +59,12 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Scope:** error codes, command profiles and matching (A08 limits), and shell-string detection stricter than A06 (C-64, D-047).
   - **Commits:** `38efd07`, `eb427b2`, `0b7ef4e`, `5d1c6de`, `223b804`, `0fee0cc`, `3ddbd15`, `8272194`, `8e49d97`.
   - **Review:** four rounds. They found secret leaks, a parser differential, two quadratic slow inputs (measured at 9.7 GiB and 84 s), a panic and over-blocking. The final review fuzzed it for 70 s per target with no failure, and package coverage is 96%.
-- [ ] **M2-4b** Move the deny-list from `internal/exec/denylist` to a stdlib-only leaf under `internal/execproto` (design A06 §3.1, §17). R4 forbids `internal/policy` and `internal/sandbox` from importing `internal/exec`. Also add an archtest rule that `internal/execproto` imports only the standard library (A02 R6).
-- [ ] **M2-5** ordered transport
+- [x] **M2-4b** The deny-list moved to `internal/execproto/denylist`, a pure move with its tests unchanged (D-014 note). archtest enforces A02 R6: non-test `internal/execproto/...` imports only the standard library, and `import "C"` is not counted as standard library, which also tightens R3. Commits `a99c8e9`, `26c4f4d`. Reviewed once and approved.
+- [x] **M2-5** Ordered JSON-RPC transport for the executor (D-050).
+  - **Pieces:** the Content-Length codec in `internal/execproto`, the server in `internal/exec`, the client in `internal/tools`; it runs over a socketpair or stdio.
+  - **Commits:** `bcfa1fc`, `c37e6d7`, `8bcce6f`, `fdbde48`.
+  - **Review:** three rounds. They found a write that ignored its deadline (CWE-1088), unsanitized executor text, silently ignored unknown ids, and a cancel-while-waiting teardown. Fuzzing ran 5.3M + 1.5M execs with no failure; `-race -count=20` passes; coverage 94–98%.
+  - **Left for M3:** check `WaitResult.State == exited && ExitCode != nil` before trusting that all output is in.
 - [ ] **M2-6** Resolve and race-free open
 - [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
 - [ ] **M2-8** proc operations, rlimits and output cap
@@ -102,7 +119,7 @@ Legend: `[x]` done and tested · `[~]` done with a recorded limitation · `[ ]` 
 - [x] Neutrality: `TestNeutrality_SameRequestYieldsToolProposals` — one `ModelRequest` → the same canonical tool proposal from Anthropic (T3), Ollama-style (T0) and a gateway vLLM (T1)
 - [x] `internal/platform` — home (`~/.warden`, `%LOCALAPPDATA%\Warden`, `WARDEN_HOME`), Unix socket (0600, SO_PEERCRED on Linux) / named pipe with owner-only DACL, owner-only files (Windows ACL), default sandbox level, detached daemon spawn, process-group termination, no-echo input, free space
 - [x] `internal/secrets` — keyring (Secret Service / Keychain / Credential Manager), encrypted file (PBKDF2 + AES-256-GCM, D-010), memory; strict `secret://` parsing and consumer binding; broker with `secret.access` events; redaction (16 types + known values) with `TestRedactionCorpus`; redacting log handler; Ed25519 checkpoint signer
-- [x] `internal/exec/denylist` — WRD-10 §6 deny-list, CF-17 matcher, argv heuristic (D-014)
+- [x] `internal/execproto/denylist` — WRD-10 §6 deny-list, CF-17 matcher, argv heuristic (D-014)
 - [x] `internal/ids` (ULID), `internal/store/jcs` (RFC 8785 with the RFC vectors)
 - [x] `internal/store` — A04 DDL as migration 0001, append-only triggers, per-session + `sys` hash chains (CF-09), signed `chain.checkpoint` with session-close anchors, blob spill, `audit export` (JSON Lines) and `audit verify [--strict]` in store and file mode; `TestAuditStrictOrdering`; tampered-store tests; deterministic audit fixtures in `internal/store/testdata/audit/`
 - [x] `internal/config` — `models.yaml` with unknown-field rejection and the A11 §5.2 rules; file-backed probe cache

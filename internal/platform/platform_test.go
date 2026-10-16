@@ -155,3 +155,144 @@ func TestUser(t *testing.T) {
 		t.Fatal("Alive")
 	}
 }
+
+// TestWriteOwnerOnly_OldTempNamePlanted guards WH-1+2 (a): the temp file was
+// always path+".tmp", which another account able to write the directory
+// could pre-create (owning it on Windows, so keeping WRITE_DAC). Something
+// planted at the old name no longer affects the write; a directory makes
+// the old code fail outright on every OS.
+func TestWriteOwnerOnly_OldTempNamePlanted(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "token")
+	if err := os.Mkdir(p+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteOwnerOnly(p, []byte("tok")); err != nil {
+		t.Fatalf("WriteOwnerOnly with %s.tmp planted: %v", p, err)
+	}
+	if ok, err := OwnerOnly(p); err != nil || !ok {
+		t.Fatalf("owner-only %v %v; read back %s", ok, err, ownerOnlyDetail(p))
+	}
+}
+
+// TestWriteOwnerOnly_TempNameRandomAndExclusive guards WH-1+2 (a): the temp
+// name is unpredictable (two writes use different names, never the old
+// path+".tmp"), lives next to the target so the rename stays on one volume,
+// is gone afterwards, and an existing file at the chosen name is refused
+// (O_EXCL / CREATE_NEW), never truncated and reused.
+func TestWriteOwnerOnly_TempNameRandomAndExclusive(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "token")
+	var names []string
+	h := writeHooks{afterCreate: func(tmp string) error { names = append(names, tmp); return nil }}
+	for i := 0; i < 2; i++ {
+		if err := writeOwnerOnly(p, []byte("tok"), h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(names) != 2 || names[0] == names[1] {
+		t.Fatalf("temp names %q: want two different names", names)
+	}
+	for _, n := range names {
+		if n == p+".tmp" || filepath.Dir(n) != filepath.Dir(p) || !strings.HasPrefix(filepath.Base(n), "token.") {
+			t.Errorf("temp name %s: want a random name next to %s", n, p)
+		}
+		if _, err := os.Lstat(n); !os.IsNotExist(err) {
+			t.Errorf("temp file %s left behind (%v)", n, err)
+		}
+	}
+
+	planted := filepath.Join(filepath.Dir(p), "planted")
+	if err := os.WriteFile(planted, []byte("theirs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	q := filepath.Join(filepath.Dir(p), "other")
+	if err := writeOwnerOnly(q, []byte("tok"), writeHooks{tempName: func(string) string { return planted }}); err == nil {
+		t.Fatal("write through an existing temp file succeeded")
+	}
+	if b, _ := os.ReadFile(planted); string(b) != "theirs" {
+		t.Errorf("planted file rewritten: %q", b)
+	}
+	if _, err := os.Lstat(q); !os.IsNotExist(err) {
+		t.Errorf("%s created through a planted temp file (%v)", q, err)
+	}
+}
+
+// TestEnsure_RefusesForeignDirectory guards the review of c8f81ca (WH-1+2):
+// Ensure replaced the owner and DACL of whatever existing directory
+// WARDEN_HOME named (D:\work, say). An existing directory that is not empty,
+// not the default home and has no .warden-home marker is refused, and its
+// permissions are left exactly as they were. Ensure leaves the marker,
+// owner-only, in every home it creates or accepts.
+func TestEnsure_RefusesForeignDirectory(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "work")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "notes.txt"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := ownerOnlyDetail(work)
+	err := Layout{Home: work}.Ensure()
+	if err == nil || !strings.Contains(err.Error(), "is not a Warden home") {
+		t.Fatalf("Ensure on a foreign directory = %v; want a refusal", err)
+	}
+	if after := ownerOnlyDetail(work); after != before {
+		t.Fatalf("foreign directory re-permissioned:\nbefore %s\nafter  %s", before, after)
+	}
+	if _, err := os.Lstat(filepath.Join(work, "run")); !os.IsNotExist(err) {
+		t.Fatalf("run created in a refused home (%v)", err)
+	}
+
+	home := filepath.Join(t.TempDir(), "home")
+	if err := (Layout{Home: home}).Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := OwnerOnly(filepath.Join(home, HomeMarker)); err != nil || !ok {
+		t.Fatalf("marker owner-only %v %v", ok, err)
+	}
+	if err := (Layout{Home: home}).Ensure(); err != nil { // accepted again by its marker
+		t.Fatalf("second Ensure: %v", err)
+	}
+}
+
+// TestWriteOwnerOnly_FailedWriteLeavesNothing: when the write fails after the
+// temp file exists, neither a temp file nor the target is left behind, so
+// no half-written token file can be found and no *.tmp accumulates (WH-1+2
+// review of c8f81ca).
+func TestWriteOwnerOnly_FailedWriteLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "token")
+	errHook := errors.New("injected")
+	err := writeOwnerOnly(p, []byte("tok"), writeHooks{afterCreate: func(string) error { return errHook }})
+	if !errors.Is(err, errHook) {
+		t.Fatalf("writeOwnerOnly = %v; want the injected error", err)
+	}
+	left, err := filepath.Glob(filepath.Join(dir, "*"))
+	if err != nil || len(left) != 0 {
+		t.Fatalf("left behind: %v %v", left, err)
+	}
+}
+
+// TestEnsure_LooseMarkerIsNoProof guards WH-1+2 (re-review of 330a5ed): a
+// .warden-home that others can write proves nothing, since anyone who can
+// write the directory could have planted it. The marker counts only if it
+// passes ReadOwnerOnly; otherwise the directory is refused like any other.
+func TestEnsure_LooseMarkerIsNoProof(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.Mkdir(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(home, HomeMarker)
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(marker, 0o644); err != nil { // past the umask; on Windows the DACL is inherited
+		t.Fatal(err)
+	}
+	before := ownerOnlyDetail(home)
+	if err := (Layout{Home: home}).Ensure(); err == nil || !strings.Contains(err.Error(), "is not a Warden home") {
+		t.Fatalf("Ensure with a loose marker = %v; want a refusal", err)
+	}
+	if after := ownerOnlyDetail(home); after != before {
+		t.Fatalf("home re-permissioned:\nbefore %s\nafter  %s", before, after)
+	}
+}
