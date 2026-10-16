@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/exec/fs.json",
+  "$defs": {
+    "ReadParams": {
+      "type": "object", "required": ["path"], "additionalProperties": false,
+      "properties": {
+        "path": { "$ref": "common.json#/$defs/InputPath" },
+        "root": { "$ref": "common.json#/$defs/RootName", "default": "worktree" },
+        "offset": { "type": "integer", "minimum": 0, "default": 0 },
+        "length": { "type": "integer", "minimum": 1, "maximum": 2097152, "default": 2097152 },
+        "expect_canonical": { "type": "string", "description": "Canonical path the PDP decided on; mismatch fails with conflict" }
+      }
+    },
+    "ReadResult": {
+      "type": "object", "required": ["resolved", "content", "encoding", "size", "offset", "returned", "eof", "sha256"], "additionalProperties": false,
+      "properties": {
+        "resolved": { "$ref": "common.json#/$defs/Resolved" },
+        "content": { "type": "string" },
+        "encoding": { "$ref": "common.json#/$defs/Encoding" },
+        "size": { "type": "integer", "description": "Total file size" },
+        "offset": { "type": "integer" },
+        "returned": { "type": "integer" },
+        "eof": { "type": "boolean" },
+        "sha256": { "$ref": "common.json#/$defs/Sha256", "description": "Of the returned bytes" }
+      }
+    },
+    "ListParams": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "default": "" },
+        "root": { "$ref": "common.json#/$defs/RootName", "default": "worktree" },
+        "depth": { "type": "integer", "minimum": 1, "maximum": 4, "default": 1 },
+        "max_entries": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 500 }
+      }
+    },
+    "ListResult": {
+      "type": "object", "required": ["resolved", "entries", "truncated"], "additionalProperties": false,
+      "properties": {
+        "resolved": { "$ref": "common.json#/$defs/Resolved" },
+        "entries": { "type": "array", "items": {
+          "type": "object", "required": ["rel_path", "kind", "denied"], "additionalProperties": false,
+          "properties": {
+            "rel_path": { "$ref": "common.json#/$defs/RelPath" },
+            "kind": { "$ref": "common.json#/$defs/Kind" },
+            "size": { "type": "integer" },
+            "mode": { "type": "string", "pattern": "^0[0-7]{3,4}$" },
+            "mtime": { "type": "string", "format": "date-time" },
+            "link_target": { "type": "string", "description": "Raw readlink value for symlinks; not followed" },
+            "denied": { "type": "boolean", "description": "Name matches the deny-list; size and mtime omitted" } } } },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "SearchParams": {
+      "type": "object", "required": ["query"], "additionalProperties": false,
+      "properties": {
+        "query": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "regex": { "type": "boolean", "default": false, "description": "RE2 syntax when true; literal otherwise" },
+        "case_sensitive": { "type": "boolean", "default": true },
+        "path": { "type": "string", "default": "" },
+        "root": { "$ref": "common.json#/$defs/RootName", "default": "worktree" },
+        "include": { "type": "array", "maxItems": 32, "items": { "type": "string", "maxLength": 256 } },
+        "exclude": { "type": "array", "maxItems": 32, "items": { "type": "string", "maxLength": 256 } },
+        "max_matches": { "type": "integer", "minimum": 1, "maximum": 200, "default": 200 },
+        "context_lines": { "type": "integer", "minimum": 0, "maximum": 3, "default": 0 },
+        "max_file_bytes": { "type": "integer", "minimum": 1, "maximum": 2097152, "default": 2097152 }
+      }
+    },
+    "SearchResult": {
+      "type": "object", "required": ["matches", "files_scanned", "truncated", "skipped"], "additionalProperties": false,
+      "properties": {
+        "matches": { "type": "array", "maxItems": 200, "items": {
+          "type": "object", "required": ["rel_path", "line", "column", "text"], "additionalProperties": false,
+          "properties": {
+            "rel_path": { "$ref": "common.json#/$defs/RelPath" },
+            "line": { "type": "integer", "minimum": 1 },
+            "column": { "type": "integer", "minimum": 1 },
+            "text": { "type": "string", "maxLength": 512 },
+            "before": { "type": "array", "items": { "type": "string", "maxLength": 512 } },
+            "after": { "type": "array", "items": { "type": "string", "maxLength": 512 } } } } },
+        "files_scanned": { "type": "integer" },
+        "truncated": { "type": "boolean" },
+        "skipped": { "type": "object", "additionalProperties": false, "properties": {
+          "denied": { "type": "integer" }, "binary": { "type": "integer" }, "too_large": { "type": "integer" }, "unreadable": { "type": "integer" } } }
+      }
+    },
+    "WriteParams": {
+      "type": "object", "required": ["path", "content"], "additionalProperties": false,
+      "properties": {
+        "path": { "$ref": "common.json#/$defs/InputPath" },
+        "content": { "type": "string", "maxLength": 5592406, "description": "≤ 4 MiB after decoding" },
+        "encoding": { "$ref": "common.json#/$defs/Encoding", "default": "utf-8" },
+        "mode": { "enum": ["create", "overwrite"], "default": "overwrite" },
+        "executable": { "type": "boolean", "default": false },
+        "expect_canonical": { "type": "string" }
+      }
+    },
+    "WriteResult": {
+      "type": "object", "required": ["resolved", "bytes_written", "created", "sha256"], "additionalProperties": false,
+      "properties": {
+        "resolved": { "$ref": "common.json#/$defs/Resolved" },
+        "bytes_written": { "type": "integer" },
+        "created": { "type": "boolean" },
+        "sha256": { "$ref": "common.json#/$defs/Sha256" }
+      }
+    },
+    "PatchParams": {
+      "type": "object", "required": ["patch"], "additionalProperties": false,
+      "properties": {
+        "patch": { "type": "string", "minLength": 1, "maxLength": 4194304, "description": "Unified diff (git or plain); may touch several files" },
+        "strip": { "type": "integer", "minimum": 0, "maximum": 2, "default": 1 },
+        "dry_run": { "type": "boolean", "default": false }
+      }
+    },
+    "PatchResult": {
+      "type": "object", "required": ["files", "applied"], "additionalProperties": false,
+      "properties": {
+        "applied": { "type": "boolean" },
+        "files": { "type": "array", "items": {
+          "type": "object", "required": ["rel_path", "op", "hunks"], "additionalProperties": false,
+          "properties": {
+            "rel_path": { "$ref": "common.json#/$defs/RelPath" },
+            "from_rel_path": { "$ref": "common.json#/$defs/RelPath" },
+            "op": { "enum": ["modify", "create", "delete", "rename"] },
+            "hunks": { "type": "integer" },
+            "sha256_after": { "$ref": "common.json#/$defs/Sha256" } } } }
+      }
+    },
+    "StatParams": {
+      "type": "object", "required": ["path"], "additionalProperties": false,
+      "properties": {
+        "path": { "$ref": "common.json#/$defs/InputPath" },
+        "root": { "$ref": "common.json#/$defs/RootName", "default": "worktree" }
+      }
+    },
+    "StatResult": {
+      "type": "object", "required": ["resolved", "exists"], "additionalProperties": false,
+      "properties": {
+        "resolved": { "$ref": "common.json#/$defs/Resolved" },
+        "exists": { "type": "boolean" },
+        "kind": { "$ref": "common.json#/$defs/Kind" },
+        "size": { "type": "integer" },
+        "mode": { "type": "string" },
+        "mtime": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

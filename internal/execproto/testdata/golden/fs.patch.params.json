@@ -1,0 +1,1 @@
+{"patch":"--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n","strip":0,"dry_run":true}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/exec/git.json",
+  "$defs": {
+    "RunParams": {
+      "type": "object", "required": ["op"], "additionalProperties": false,
+      "properties": {
+        "op": { "enum": ["status", "diff", "commit", "head"] },
+        "diff": { "type": "object", "additionalProperties": false, "properties": {
+          "against": { "type": "string", "pattern": "^(base|HEAD|[0-9a-f]{40}|[0-9a-f]{64})$", "default": "base" },
+          "paths": { "type": "array", "maxItems": 256, "items": { "type": "string", "maxLength": 4096 } },
+          "stat_only": { "type": "boolean", "default": false },
+          "context_lines": { "type": "integer", "minimum": 0, "maximum": 10, "default": 3 } } },
+        "commit": { "type": "object", "required": ["message"], "additionalProperties": false, "properties": {
+          "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "paths": { "type": "array", "maxItems": 256, "items": { "type": "string", "maxLength": 4096 } } } },
+        "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 120000, "default": 60000 }
+      }
+    },
+    "RunResult": {
+      "type": "object", "required": ["exit_code", "stdout", "stderr", "encoding", "truncated"], "additionalProperties": false,
+      "properties": {
+        "exit_code": { "type": "integer" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "encoding": { "$ref": "common.json#/$defs/Encoding" },
+        "truncated": { "type": "boolean" },
+        "head": { "type": "object", "additionalProperties": false, "properties": {
+          "commit": { "type": "string" }, "branch": { "type": "string" } } }
+      }
+    }
+  }
+}

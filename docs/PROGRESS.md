@@ -42,10 +42,14 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **Group B** (executor; no Docker):
 
-- [ ] **M2-4** wire types, error codes and profiles
+- [x] **M2-4** Executor wire types in `internal/execproto` (design A02 layout, D-046).
+  - **Scope:** error codes, command profiles and matching (A08 limits), and shell-string detection stricter than A06 (C-64, D-047).
+  - **Commits:** `38efd07`, `eb427b2`, `0b7ef4e`, `5d1c6de`, `223b804`, `0fee0cc`, `3ddbd15`, `8272194`, `8e49d97`.
+  - **Review:** four rounds. They found secret leaks, a parser differential, two quadratic slow inputs (measured at 9.7 GiB and 84 s), a panic and over-blocking. The final review fuzzed it for 70 s per target with no failure, and package coverage is 96%.
+- [x] **M2-4b** The deny-list moved to `internal/execproto/denylist`, a pure move with its tests unchanged (D-014 note). archtest enforces A02 R6: non-test `internal/execproto/...` imports only the standard library, and `import "C"` is not counted as standard library, which also tightens R3. Commits `a99c8e9`, `26c4f4d`. Reviewed once and approved.
 - [ ] **M2-5** ordered transport
 - [ ] **M2-6** Resolve and race-free open
-- [ ] **M2-7** fs operations
+- [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
 - [ ] **M2-8** proc operations, rlimits and output cap
 - [ ] **M2-9** git.run
 - [ ] **M2-10** the `cmd/warden-exec` binary and the forwarder
@@ -98,7 +102,7 @@ Legend: `[x]` done and tested · `[~]` done with a recorded limitation · `[ ]` 
 - [x] Neutrality: `TestNeutrality_SameRequestYieldsToolProposals` — one `ModelRequest` → the same canonical tool proposal from Anthropic (T3), Ollama-style (T0) and a gateway vLLM (T1)
 - [x] `internal/platform` — home (`~/.warden`, `%LOCALAPPDATA%\Warden`, `WARDEN_HOME`), Unix socket (0600, SO_PEERCRED on Linux) / named pipe with owner-only DACL, owner-only files (Windows ACL), default sandbox level, detached daemon spawn, process-group termination, no-echo input, free space
 - [x] `internal/secrets` — keyring (Secret Service / Keychain / Credential Manager), encrypted file (PBKDF2 + AES-256-GCM, D-010), memory; strict `secret://` parsing and consumer binding; broker with `secret.access` events; redaction (16 types + known values) with `TestRedactionCorpus`; redacting log handler; Ed25519 checkpoint signer
-- [x] `internal/exec/denylist` — WRD-10 §6 deny-list, CF-17 matcher, argv heuristic (D-014)
+- [x] `internal/execproto/denylist` — WRD-10 §6 deny-list, CF-17 matcher, argv heuristic (D-014)
 - [x] `internal/ids` (ULID), `internal/store/jcs` (RFC 8785 with the RFC vectors)
 - [x] `internal/store` — A04 DDL as migration 0001, append-only triggers, per-session + `sys` hash chains (CF-09), signed `chain.checkpoint` with session-close anchors, blob spill, `audit export` (JSON Lines) and `audit verify [--strict]` in store and file mode; `TestAuditStrictOrdering`; tampered-store tests; deterministic audit fixtures in `internal/store/testdata/audit/`
 - [x] `internal/config` — `models.yaml` with unknown-field rejection and the A11 §5.2 rules; file-backed probe cache

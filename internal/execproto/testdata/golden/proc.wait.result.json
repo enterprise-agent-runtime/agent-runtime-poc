@@ -1,0 +1,3 @@
+{"handle":"ph_1","state":"exited","exit_code":0,"reason":"exit","duration_ms":8123,
+ "bytes":{"stdout":20480,"stderr":312,"forwarded":20792,"discarded":0},
+ "rusage":{"user_ms":6100,"sys_ms":900,"max_rss_kb":184320}}

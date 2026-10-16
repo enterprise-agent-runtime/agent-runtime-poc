@@ -1,0 +1,7 @@
+{"resolved":{"root":"worktree","rel_path":"src","canonical":"/work/src","requested_rel_path":"src","deny_match":null},
+ "entries":[
+  {"rel_path":"src/routes","kind":"dir","mode":"0755","mtime":"2026-10-16T09:12:00Z","denied":false},
+  {"rel_path":"src/empty.ts","kind":"file","size":0,"mode":"0644","mtime":"2026-10-16T09:12:00Z","denied":false},
+  {"rel_path":"src/current","kind":"symlink","size":6,"mode":"0777","mtime":"2026-10-16T09:12:00Z","link_target":"routes","denied":false},
+  {"rel_path":"src/.env","kind":"file","denied":true}],
+ "truncated":false}

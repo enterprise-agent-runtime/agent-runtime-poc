@@ -1,0 +1,1 @@
+{"version":1,"task_key":"implement","profiles":{"node-test":[["npm","test"],["npm","test","--","<args>"],["pnpm","test"],["npx","vitest","run"],["npx","vitest","run","<args>"]],"install":[["npm","ci"],["npm","install"],["pnpm","install"],["go","mod","download"],["pip","install","-r","requirements.txt"]]}}
