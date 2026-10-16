@@ -22,6 +22,69 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-025 · 2026-10-16 · M2-14: the seccomp filter, in pure Go
+
+- **Asked:** M2 plan task M2-14. Delivered under "merge each task when its review passes".
+- **Task:** The A06 §11.5 syscall filter as one source of truth, rendered as the BPF program bwrap loads in L1 and the seccomp JSON Docker loads in L2.
+- **How:**
+  - **Table** as Go data with x86_64 and aarch64 numbers, checked at compile time against `x/sys/unix` (D-061).
+  - **Assembler** for classic BPF with far-jump trampolines; one program per arch.
+  - **Docker JSON** from the same rows, with masked 32-bit comparisons.
+  - **Commits:** `1d0e81b`, `dd19245`, `961e265`.
+- **Rules kept:**
+  - No new dependency (D-041); OS build tags only in `internal/sandbox/*`.
+  - INV-H: the kernel test re-executes only the test binary, from a `//sandboxed`-commented file.
+  - Test first, mutation check (30 mutants), golden file with `UPDATE_GOLDEN=1`.
+- **Rules changed or bent:**
+  - **A06 §11.5's generator not followed** (C-71): own assembler, one program per arch, numbers as data. Decided by me under R1/R3.
+  - **The ptrace row is stricter than A06** (D-062): `pidfd_getfd`, `process_madvise`, `kcmp`. Decided by me after the review stole a descriptor past the filter.
+  - **`scripts/make.sh` gains a linux/arm64 vet step** for `internal/sandbox`, because the aarch64 compile-time checks otherwise never ran (CI is amd64).
+- **Verified:** one review round with fixes; the filter installed in a child in WSL2 (kernel 5.15) refuses each listed call and allows the controls, and kills on `init_module` and x32; `-race` passes; `make check` green.
+- **Left:** see the M2-14 entry in PROGRESS (wiring in M2-13, `PR_SET_DUMPABLE` in M2-10, libseccomp version and bad-arch action in L2).
+
+## W-024 · 2026-10-16 · M2-11: the egress proxy core
+
+- **Asked:** M2 plan task M2-11, with the owner's proxy decisions of 2026-10-16 (proxy stricter than A07, all three; an unconditional IP floor). Delivered under "merge each task when its review passes".
+- **Task:** The per-task egress proxy that is the only network exit for sandboxed processes: one canonical target, deny by default, SSRF and rebinding protection, CONNECT and plain HTTP, one event per attempt.
+- **How:**
+  - **Target and ranges:** `Normalize` to one host:port key; refuse non-canonical literals and non-ASCII names (D-059); resolve once, drop denied ranges and host addresses, dial the checked IP.
+  - **Decision:** exact-match allowlist, then the `Decider` (`StaticDecider` in M2, D-058); private literals only per C-69.
+  - **Limits and events** (D-060): in-flight cap, post-evaluation slot, stall timeouts, detached event writes.
+  - **Commits:** `7ad63b0`, `eac0d47`, `f713670`, `41a09ae`, `bb6ef92`, `7b189e2`, `71a358f`.
+- **Rules kept:**
+  - INV-J: no listener in the package; tests use `net.Pipe` and in-memory listeners only.
+  - No global mutable state; no new dependency; test first, mutation checks every round; no wall-clock assertions.
+- **Rules changed or bent:**
+  - **A07 §7 contradicted** by the owner's floor and operator-only literals (C-69).
+  - **Stricter than A07** in nine places (C-70), each the owner's decision or a review finding.
+  - **The operator entry only lifts the range check:** I chose the stricter of two readings of the owner's decision after the round-2 review showed the other one bypasses the allowlist, the Decider and ID-12. The owner can loosen it.
+  - **Tool hazard:** the editing tool turned the escape for U+202E into a real RIGHT-TO-LEFT OVERRIDE in a comment and a test; caught and replaced with numeric runes.
+- **Verified:** three review rounds, code and security together, with an SSRF matrix and flood measurements; `make check` green; `-race -count=20` in WSL2.
+- **Left:** see the M2-11 entry in PROGRESS (M3 items, the burst-summary timer, the port-0 schema question in C-70).
+
+## W-023 · 2026-10-16 · M2-12: the sandbox Spec, its mounts and its environment
+
+- **Asked:** M2 plan task M2-12. Delivered under "merge each task when its review passes".
+- **Task:** One backend-neutral description of a sandbox from which the mount table and the environment are derived, checked so that no backend can be handed a sandbox the invariants forbid.
+- **How:**
+  - **Spec and Validate** (D-056): the exact A06 §2 session layout, required `HostHome`, host sources checked against both homes and the deny-list, L2 per C-03.
+  - **Mounts and Env:** exactly the C-24 list and the A06 §8 allowlist; nothing read from the host environment.
+  - **Mask walk** (D-057): the A06 §11.3 walk over an `fs.FS`, failing closed at its bounds.
+  - **FakeSandbox:** built through the same code, keeping its own deep copy of the Spec.
+  - **Commits:** `4a530f3`, `d9d381d`, `abd1dc5`, `fa795a5`, `c8fce80`.
+- **Rules kept:**
+  - R4: `internal/sandbox` imports only `execproto` and `execproto/denylist`.
+  - No processes, no real mounts (the walk takes an `fs.FS`), no `runtime.GOOS`, no new dependency.
+  - Mutation checks: 28 of 29 mutants caught after round 2.
+- **Rules changed or bent:**
+  - **Test first was partial for `Validate`** in the first commit (it was written alongside its tests); the mutation check covers it.
+  - **"Worktree inside the Warden home is an error" replaced** by the exact session layout, because in A06 §2 every worktree lives under `<home>/sessions`. Decided by me.
+  - **Upper-case sidecar hosts are refused**, not lower-cased: the daemon names the sidecar, so a capital letter means the address came from somewhere else.
+  - **Test layout** uses a fixed `/srv/warden-test` base on slash hosts, because `t.TempDir()` lives under the reserved `/tmp`; the L1 toolchain-root rows skip on Windows, where L1 does not exist, and run on Linux and macOS CI.
+- **A semantic merge conflict, found by CI:** M2-6 merged first and added the 8.3 rule to the shared matcher; this branch applied that matcher to absolute host paths. Each branch was green alone, and the merge had no textual conflict. On GitHub's Windows runner TEMP is `C:\Users\RUNNER~1\...`, so about 60 subtests refused their own test layout; the local Windows check passed because its TEMP has no short name. Fixed with host-path variants of the matcher (D-055 amendment) and a test whose layout contains a `RUNNER~1` segment on every OS.
+- **Verified:** two review rounds, code and security together; `make check` green; `-race` in WSL2; a case-insensitivity probe on WSL drvfs (which found the L2 mask bypass recorded in PROGRESS).
+- **Left:** see the M2-12 entry in PROGRESS (M2-13 items, the L2 case-sensitivity fix, git object reads for A14).
+
 ## W-022 · 2026-10-16 · M2-6: the executor resolves and opens model paths without escaping the roots
 
 - **Asked:** M2 plan task M2-6. Delivered under "merge each task when its review passes".

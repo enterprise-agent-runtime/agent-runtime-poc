@@ -79,14 +79,34 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **Group C** (proxy; no Docker):
 
-- [ ] **M2-11** normalize, range check, allowlist, CONNECT and plain HTTP, events
+- [x] **M2-11** Egress proxy core: normalize, range check, allowlist, CONNECT and plain HTTP, events (D-058, D-059, D-060, C-69, C-70).
+  - **Pieces:** `internal/proxy`: `Normalize`, the range and floor checks, exact-match `Allowlist`, the `Decider` hand-off with `StaticDecider`, CONNECT with the SNI check, plain HTTP, limits, `proxy.connect`/`proxy.denied` events. No listener (INV-J): `Serve` takes one the caller owns.
+  - **Commits:** `7ad63b0`, `eac0d47`, `f713670`, `41a09ae`, `bb6ef92`, `7b189e2`, `71a358f`.
+  - **Review:** three rounds. They found events lost at shutdown (CWE-778), an unbounded flood before evaluation (CWE-770), an operator entry acting as a standalone allow (CWE-863), operator entries in transition ranges (CWE-918), misleading shutdown reasons and an uncapped method. The SSRF matrix (every literal encoding, zone ids, mapped/NAT64/6to4/Teredo, DNS rebinding) was refused throughout. 47 + 7 + 7 mutants caught; `-race -count=20` in WSL2; coverage 92.6%.
+  - **Left for M3:** the PDP behind `Decider`, the 120 s approval hold, the deny cache and per-host rate-limit summaries.
+  - **Minor, left:** the burst summary is flushed only at the next accept or at shutdown (delayed, not lost; a 10 s timer would make it timely), and the flush runs in the accept loop (a slow store delays only the task's own accepts).
+  - **Accepted residual:** no tunnel inspection after a valid ClientHello, so domain fronting through the inner Host is possible.
 - [ ] **M2-12a** per-task Unix listener for L1
 
 **Group D** (L1 sandbox, WSL2):
 
-- [ ] **M2-12** Spec, mounts and env model; `TestSandboxSpecMounts`, `TestSandboxEnvAllowlist`, `TestDenyListThreeLayers` with the exec and mount layers
+- [x] **M2-12** Spec, mounts and env model, with `TestSandboxSpecMounts`, `TestSandboxEnvAllowlist` and `TestDenyListThreeLayers` (D-056, D-057).
+  - **Pieces:** `Spec`, `Validate`, `Mounts`, `Env`, `WorktreeMasks`, the `Manager` interface, and `sandboxtest.FakeSandbox` built from the same code. The shared three-layer corpus is in `internal/execproto/denylist/testdata/three-layers.json`; the executor and policy layers load it too.
+  - **Commits:** `4a530f3`, `d9d381d`, `abd1dc5`, `fa795a5`, `c8fce80`.
+  - **Review:** two rounds. Four checks had no test (the sidecar host, the walk entry cap, the toolchain-root overlap, the main objects deny-list); a custom WARDEN_HOME let `$HOME` be a toolchain root; the proxy socket and the session directory were not pinned. After the fixes 28 of 29 mutants are caught; coverage 94%%.
+  - **Low, left:** the `ids.Valid` check on the session id has no isolating test row (the ulid match still guards it).
+  - **Left for M2-13:** EvalSymlinks each toolchain root and re-check (`/var/run` is a link to `/run`, exposing docker.sock); consider reserving `/sys`; Lstat the proxy socket for S_ISSOCK before binding; pin the backend-added mounts to A06 §11.1 in the bwrap argv test; a real-disk walk test with `os.DirFS`; `Manager.RecoverOrphans` with the A06 §13.5 sweep.
+  - **Must fix before the L2 backend merges (high, CWE-178):** bind masks are keyed on the on-disk case, so on a case-insensitive host file system (Windows L2 over NTFS through Docker Desktop, macOS L2) `.ENV` reads the masked `.env`; reproduced on WSL drvfs. Make S/worktree case-sensitive before checkout and fail closed if it is not, or mask host-side; add an escape-check row. NTFS 8.3 names (`ENV~1`) bypass the masks the same way for spawned processes (D-055).
+  - **Before a real Spec is built (platform layer):** expand host paths to their long form (GetLongPathName) before they reach the Spec; host-path checks skip the 8.3 rule (D-055 amendment), so a short-form host path would otherwise dodge it.
+  - **For A14 / the policy engine:** masks hide only the working tree; `git show HEAD:.env` through /git reads a committed secret, and `denylist.Argv` does not match `HEAD:.env`. A deny-listed pathspec rule for git object reads is needed.
 - [ ] **M2-13** bwrap argv
-- [ ] **M2-14** seccomp in pure Go
+- [x] **M2-14** seccomp in pure Go (D-061, D-062, C-71).
+  - **Pieces:** `internal/sandbox/seccomp`: the A06 §11.5 table as data, the cBPF assembler and `Render(arch)`, `DockerProfile()`, `Version = "v1"`.
+  - **Commits:** `1d0e81b`, `dd19245`, `961e265`.
+  - **Review:** one round plus fixes. It confirmed every row on both arches, the fail-closed paths, the x32 check, the upper-32-bit behaviour in the kernel and 6.4M Docker-vs-program probes; it found the aarch64 numbers unchecked in CI and `pidfd_getfd` past the ptrace row. 30 mutants caught; the kernel test in WSL2 shows each filtered call refused and each control allowed.
+  - **Left for M2-13:** pick the arch at run time; write `Render(arch)` to fd 5 (memfd or pipe) and pass `--add-seccomp-fd 5` (fallback `--seccomp 5`); write `DockerProfile()` to `S/sandbox/<sb_id>/seccomp.json` and pass `--security-opt`; report `Version` in `sandbox.create.limits`; map a SIGSYS exit to `seccomp_kill`.
+  - **Left for M2-10:** `warden-exec` sets `PR_SET_DUMPABLE 0`; escape-check row "steal an executor descriptor".
+  - **Left for L2:** runc silently skips syscall names its libseccomp does not know (`mount_setattr` needs 2.5.2); have doctor check the version or verify in the L2 escape check; verify runc's bad-arch action.
 - [ ] **M2-15** launch, rlimits, `sandbox.cgroup` doctor check
 - [ ] **M2-16** `make escape-check` L1
 
