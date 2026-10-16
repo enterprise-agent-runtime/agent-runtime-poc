@@ -78,17 +78,27 @@ func connect(ctx context.Context, autostart bool) (*api.Client, error) {
 
 // connectTo is connect for a layout, with the daemon starter injected.
 func connectTo(ctx context.Context, l platform.Layout, autostart bool, start func(context.Context, platform.Layout) error) (*api.Client, error) {
-	c, err := api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil)
+	return connectWith(ctx, l, autostart, dialCLI, start)
+}
+
+func dialCLI(ctx context.Context, l platform.Layout) (*api.Client, error) {
+	return api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil)
+}
+
+// connectWith is connectTo with the dialer injected too.
+func connectWith(ctx context.Context, l platform.Layout, autostart bool, dial func(context.Context, platform.Layout) (*api.Client, error), start func(context.Context, platform.Layout) error) (*api.Client, error) {
+	c, err := dial(ctx, l)
 	// Start a daemon only when none answers: any other error (a refused
-	// token file above all) must reach the user, and starting a second
-	// wardend would replace the running one's token (WH-1+2).
+	// token file, an endpoint served by another user) must reach the user
+	// unchanged, and starting a second wardend would replace the running
+	// one's token (WH-1+2).
 	if err == nil || !autostart || !errors.Is(err, api.ErrNotRunning) {
 		return c, err
 	}
 	if err := start(ctx, l); err != nil {
 		return nil, err
 	}
-	return api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil)
+	return dial(ctx, l)
 }
 
 // wardendPath finds wardend next to this executable.

@@ -140,15 +140,8 @@ func run() int {
 	}
 	// Token file first, then bind, so any client that can connect can read
 	// the token (A05 §3.1).
-	if err := platform.WriteOwnerOnly(l.Token(), []byte(token)); err != nil {
-		slog.Error("cannot write the token file", "error", err.Error())
-		return 1
-	}
-	// Verify what was written before serving with it (WH-1+2): a token file
-	// another account can read or replace defeats the handshake.
-	if err := platform.CheckOwnerOnly(l.Token()); err != nil {
-		slog.Error("the token file is not owner-only; refusing to serve", "error", err.Error())
-		os.Remove(l.Token())
+	if err := writeToken(l.Token(), token, platform.WriteOwnerOnly); err != nil {
+		slog.Error("refusing to serve", "error", err.Error())
 		return 1
 	}
 	ln, err := platform.Listen(home)
@@ -235,4 +228,27 @@ func newProvider(pc model.ProviderConfig, creds model.CredentialSource, cache mo
 		return openaicompat.New(pc, creds, cache)
 	}
 	return nil, fmt.Errorf("protocol %q is not supported in the PoC", pc.Protocol)
+}
+
+// writeToken writes the token file with write and verifies it before the
+// daemon binds and serves: read back once through the same no-follow,
+// owner-only check the client uses, and compared with the token. A token
+// file another account can read or replace defeats the handshake, so a
+// refused file is removed and wardend does not serve (WH-1+2; A05 §3.1).
+// On a volume without ACLs (FAT, some network shares) the check fails and
+// wardend refuses to start: fail closed.
+func writeToken(path, token string, write func(string, []byte) error) error {
+	if err := write(path, []byte(token)); err != nil {
+		return fmt.Errorf("cannot write the token file: %w", err)
+	}
+	got, err := platform.ReadOwnerOnly(path, api.MaxTokenFile)
+	if err != nil {
+		os.Remove(path)
+		return fmt.Errorf("the token file failed its owner-only check: %w", err)
+	}
+	if string(got) != token {
+		os.Remove(path)
+		return fmt.Errorf("the token file %s does not hold the token just written", path)
+	}
+	return nil
 }

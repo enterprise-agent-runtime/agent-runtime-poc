@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -68,5 +69,38 @@ func TestConnect_NotRunningStarts(t *testing.T) {
 	defer cancel()
 	if _, err := connectTo(ctx, l, true, start); !started || !errors.Is(err, errStarter) {
 		t.Fatalf("connect without a daemon: started %v, err %v", started, err)
+	}
+}
+
+// TestConnect_StartsOnlyOnNotRunning pins the autostart rule on the error
+// alone (WH-1+2 review of c8f81ca): only an error matching api.ErrNotRunning
+// starts a daemon. Any other Dial error, such as the "endpoint served by
+// another user" error WH-3 adds to platform.Dial, is returned unchanged and
+// starts nothing: starting wardend there would hand our token to whoever
+// owns the endpoint, or replace the running daemon's token.
+func TestConnect_StartsOnlyOnNotRunning(t *testing.T) {
+	errNotOwned := errors.New("endpoint is served by another user") // stands in for platform.ErrEndpointNotOwned
+	cases := []struct {
+		name      string
+		dialErr   error
+		wantStart bool
+	}{
+		{"not running", fmt.Errorf("dial: %w", api.ErrNotRunning), true},
+		{"endpoint not owned", fmt.Errorf("dial: %w", errNotOwned), false},
+		{"token refused", errors.New("refusing to send the token: not owner-only"), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			started := false
+			dial := func(context.Context, platform.Layout) (*api.Client, error) { return nil, c.dialErr }
+			start := func(context.Context, platform.Layout) error { started = true; return nil }
+			_, err := connectWith(context.Background(), platform.Layout{Home: t.TempDir()}, true, dial, start)
+			if started != c.wantStart {
+				t.Fatalf("started = %v, want %v", started, c.wantStart)
+			}
+			if !c.wantStart && err != c.dialErr {
+				t.Fatalf("error = %v; want the Dial error unchanged", err)
+			}
+		})
 	}
 }

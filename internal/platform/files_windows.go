@@ -116,10 +116,15 @@ func writeOwnerOnly(path string, data []byte, h writeHooks) error {
 		os.Remove(tmp)
 		return err
 	}
-	_ = os.Remove(path) // Rename over an existing file fails on some Windows volumes
+	// os.Rename is MoveFileEx(MOVEFILE_REPLACE_EXISTING): the target is
+	// replaced atomically, so a client never finds it missing. Only if that
+	// fails (it does on some volumes) is the target removed first.
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
+		_ = os.Remove(path)
+		if err := os.Rename(tmp, path); err != nil {
+			os.Remove(tmp)
+			return err
+		}
 	}
 	return nil
 }

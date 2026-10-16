@@ -253,3 +253,21 @@ func TestEnsure_RefusesForeignDirectory(t *testing.T) {
 		t.Fatalf("second Ensure: %v", err)
 	}
 }
+
+// TestWriteOwnerOnly_FailedWriteLeavesNothing: when the write fails after the
+// temp file exists, neither a temp file nor the target is left behind, so
+// no half-written token file can be found and no *.tmp accumulates (WH-1+2
+// review of c8f81ca).
+func TestWriteOwnerOnly_FailedWriteLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "token")
+	errHook := errors.New("injected")
+	err := writeOwnerOnly(p, []byte("tok"), writeHooks{afterCreate: func(string) error { return errHook }})
+	if !errors.Is(err, errHook) {
+		t.Fatalf("writeOwnerOnly = %v; want the injected error", err)
+	}
+	left, err := filepath.Glob(filepath.Join(dir, "*"))
+	if err != nil || len(left) != 0 {
+		t.Fatalf("left behind: %v %v", left, err)
+	}
+}
