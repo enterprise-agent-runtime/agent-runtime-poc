@@ -20,6 +20,7 @@ import (
 
 	"warden.dev/warden/internal/execproto"
 	"warden.dev/warden/internal/execproto/denylist"
+	"warden.dev/warden/internal/ids"
 )
 
 // Errors returned at the package boundary. The API maps ErrUnavailable to
@@ -95,9 +96,14 @@ func DefaultLimits() Limits {
 //
 // On L1 Root is a host directory mounted read-only at the same path, BinDirs
 // lie under it and go first in PATH, and Masks are files under it that look
-// like credentials and are hidden. L1 exists only on Linux and macOS, so
-// these are slash paths. On L2 the toolchain is the image (A06 §15): Root
-// and Masks are empty and BinDirs name directories inside the image.
+// like credentials and are hidden. Masks are files only: the doctor scan
+// (A06 §10.5) reports credential-looking files, and the backend covers each
+// with /dev/null (A06 §11.1 TOOLCHAIN_MASK), which cannot cover a
+// directory. A plain path cannot say "directory", so there is no flag to
+// refuse; a directory given here fails the bind at launch, closed. L1
+// exists only on Linux and macOS, so these are slash paths. On L2 the
+// toolchain is the image (A06 §15): Root and Masks are empty and BinDirs
+// name directories inside the image.
 type Toolchain struct {
 	Root    string
 	BinDirs []string
@@ -133,6 +139,12 @@ type Spec struct {
 	Purpose   Purpose
 	Mode      execproto.Mode
 
+	// HostHome is the user's home directory, filled by the caller (from
+	// os.UserHomeDir). No mount source or toolchain root may equal or
+	// contain it (INV-B "no $HOME"); a toolchain root strictly inside it
+	// (~/.local/share/mise, ~/.nvm) is allowed unless deny-listed.
+	HostHome string
+
 	// WardenHome is the effective Warden home (internal/platform). Mount
 	// sources may lie inside it only in sessions/ and cache/; everything
 	// else there (run/token, secrets.enc, db/) must stay out (C-53).
@@ -158,11 +170,12 @@ type Spec struct {
 }
 
 var (
-	reSandboxID = regexp.MustCompile(`^sb_[0-9A-Za-z]{1,64}$`)
-	reTaskKey   = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	reDigest    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	reCommit    = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
-	reHostname  = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
+	reSandboxID   = regexp.MustCompile(`^sb_[0-9A-Za-z]{1,64}$`)
+	reTaskKey     = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	reDigest      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	reCommit      = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+	reProxySocket = regexp.MustCompile(`^px-[0-9]{1,9}\.sock$`)
+	reHostname    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
 )
 
 func invalid(format string, a ...any) error {
@@ -176,8 +189,8 @@ func (s *Spec) Validate() error {
 	if !reSandboxID.MatchString(s.ID) {
 		return invalid("sandbox id %q is not sb_<ulid>", s.ID)
 	}
-	if s.SessionID == "" {
-		return invalid("session id is empty")
+	if !ids.Valid(ids.Session, s.SessionID) {
+		return invalid("session id %q is not ses_<ulid>", s.SessionID)
 	}
 	if !reTaskKey.MatchString(s.TaskKey) {
 		return invalid("task key %q is not a plain name", s.TaskKey)
@@ -223,6 +236,7 @@ func (s *Spec) Validate() error {
 
 func (s *Spec) validateHostPaths() error {
 	for _, p := range []struct{ name, v string }{
+		{"user's home", s.HostHome},
 		{"warden home", s.WardenHome}, {"session dir", s.SessionDir}, {"worktree", s.Worktree},
 		{"scratch", s.Scratch}, {"cache", s.Cache}, {"git dir", s.GitDir},
 		{"executor binary", s.ExecBin}, {"profiles file", s.ProfilesFile},
@@ -235,8 +249,25 @@ func (s *Spec) validateHostPaths() error {
 	// the A06 §2 / core §10 paths. This is what keeps the user's own
 	// checkout (and with it the main repository's .git, CLAUDE.md §9 rule
 	// 6) and the rest of the Warden home out of every sandbox.
-	if !strictlyWithin(s.SessionDir, filepath.Join(s.WardenHome, "sessions")) {
-		return invalid("session dir %q is not inside <warden home>/sessions", s.SessionDir)
+	if filepath.Dir(s.SessionDir) != filepath.Join(s.WardenHome, "sessions") {
+		return invalid("session dir %q is not <warden home>/sessions/<ulid>", s.SessionDir)
+	}
+	if ulid := strings.TrimPrefix(s.SessionID, ids.Session+"_"); !strings.EqualFold(filepath.Base(s.SessionDir), ulid) {
+		return invalid("session dir %q does not belong to session id %q", s.SessionDir, s.SessionID)
+	}
+	// Nothing mounted may be or contain the user's home or the Warden home
+	// (INV-B "no $HOME"; the rest of the Warden home holds run/token and
+	// secrets.enc, C-53).
+	for _, src := range []struct{ name, v string }{
+		{"worktree", s.Worktree}, {"scratch", s.Scratch}, {"cache", s.Cache}, {"git dir", s.GitDir},
+		{"main objects", s.MainObjects}, {"executor binary", s.ExecBin}, {"profiles file", s.ProfilesFile},
+		{"proxy socket", s.Proxy.Socket},
+	} {
+		for _, h := range []string{s.HostHome, s.WardenHome} {
+			if src.v != "" && containsPath(src.v, h) {
+				return invalid("%s %q is or contains the user's home or the warden home %q", src.name, src.v, h)
+			}
+		}
 	}
 	for _, p := range []struct{ name, got, want string }{
 		{"worktree", s.Worktree, filepath.Join(s.SessionDir, "worktree")},
@@ -267,6 +298,10 @@ func (s *Spec) validateHostPaths() error {
 			return invalid("main objects %q is deny-listed (%s)", s.MainObjects, pat)
 		}
 	}
+	// Only the executor binary itself is bound at /warden/bin/warden-exec.
+	if filepath.Base(s.ExecBin) != "warden-exec" {
+		return invalid("executor binary %q is not a warden-exec binary", s.ExecBin)
+	}
 	// The executor is bound read-only, but a copy inside a writable root
 	// could be replaced by one sandbox for the next.
 	for _, r := range rw {
@@ -292,8 +327,11 @@ func (s *Spec) validateProxy() error {
 		if err := hostAbs("proxy socket", px.Socket); err != nil {
 			return err
 		}
-		if !strictlyWithin(px.Socket, s.SessionDir) {
-			return invalid("proxy socket %q is not inside the session dir (A07 §2)", px.Socket)
+		// Exactly S/scratch/px-<n>.sock (A06 §2, A07 §2): the backend binds
+		// it writable (A06 §11.1), so any other path in S would be a
+		// writable bind of something that is not the socket.
+		if filepath.Dir(px.Socket) != filepath.Join(s.SessionDir, "scratch") || !reProxySocket.MatchString(filepath.Base(px.Socket)) {
+			return invalid("proxy socket %q is not <session dir>/scratch/px-<n>.sock (A06 §2)", px.Socket)
 		}
 		for _, r := range []string{s.Worktree, s.Scratch, s.Cache, s.GitDir} {
 			if overlaps(px.Socket, r) {
@@ -338,6 +376,13 @@ func (s *Spec) validateToolchains() error {
 				if slashOverlaps(tc.Root, r) {
 					return invalid("toolchain root %q overlaps the sandbox path %q", tc.Root, r)
 				}
+			}
+			// The user's home: a root inside it is a normal toolchain
+			// (~/.nvm, ~/.local/share/mise), a root that is or contains it
+			// would mount all of it (INV-B "no $HOME", CWE-552). This does
+			// not depend on the Warden home living in the user's home.
+			if slashWithin(strings.ToLower(filepath.ToSlash(s.HostHome)), strings.ToLower(tc.Root)) {
+				return invalid("toolchain root %q is or contains the user's home %q", tc.Root, s.HostHome)
 			}
 			for _, h := range []string{s.WardenHome, s.SessionDir, s.MainObjects} {
 				if h != "" && slashOverlaps(tc.Root, filepath.ToSlash(h)) {
@@ -438,6 +483,12 @@ func strictlyWithin(p, root string) bool {
 func overlaps(a, b string) bool {
 	a, b = strings.ToLower(denylist.Normalize(a)), strings.ToLower(denylist.Normalize(b))
 	return slashWithin(a, b) || slashWithin(b, a)
+}
+
+// containsPath reports whether p equals or contains root, case-insensitively
+// (refusing more on case-insensitive file systems).
+func containsPath(p, root string) bool {
+	return slashWithin(strings.ToLower(denylist.Normalize(root)), strings.ToLower(denylist.Normalize(p)))
 }
 
 func slashOverlaps(a, b string) bool {

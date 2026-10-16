@@ -15,11 +15,11 @@ import (
 func spec(t *testing.T, id string) *sandbox.Spec {
 	t.Helper()
 	home := filepath.Join(t.TempDir(), ".warden")
-	s := filepath.Join(home, "sessions", "01jaxr")
+	s := filepath.Join(home, "sessions", "01jaxr8q7m2v9ktc3f6yh5n0pb")
 	return &sandbox.Spec{
-		ID: id, SessionID: "ses_01jaxr", TaskKey: "implement", Level: sandbox.LevelL2,
+		ID: id, SessionID: "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB", TaskKey: "implement", Level: sandbox.LevelL2,
 		Purpose: sandbox.PurposeTask, Mode: execproto.ModeTool,
-		WardenHome: home, SessionDir: s,
+		HostHome: filepath.Dir(home), WardenHome: home, SessionDir: s,
 		Worktree: filepath.Join(s, "worktree"), Scratch: filepath.Join(s, "scratch", "implement"),
 		Cache: filepath.Join(home, "cache", "wsp_1"), GitDir: filepath.Join(s, "git"),
 		ExecBin:        filepath.Join(filepath.Dir(home), "bin", "warden-exec"),

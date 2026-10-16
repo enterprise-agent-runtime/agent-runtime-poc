@@ -3,6 +3,7 @@ package sandbox
 import (
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,25 +12,46 @@ import (
 )
 
 // testLayout is the core §10 layout of one session in a temp Warden home.
-// The home is named ".warden", as on Linux and macOS, so a test would catch
-// the deny-list's **/.warden/** pattern wrongly refusing the task's own
-// roots (CF-17).
+// In the default layout the home is <user home>/.warden, as on Linux and
+// macOS, so a test would catch the deny-list's **/.warden/** pattern
+// wrongly refusing the task's own roots (CF-17). The custom layout is a
+// WARDEN_HOME outside the user's home, where no ".warden" segment exists.
 type testLayout struct {
-	tmp, home, session, objects, execBin string
+	tmp, hostHome, home, session, objects, execBin string
 }
 
-func newLayout(t *testing.T) testLayout {
+func newLayout(t *testing.T) testLayout { return layoutAt(t, false) }
+
+func layoutAt(t *testing.T, customHome bool) testLayout {
 	t.Helper()
+	// Validation is pure: nothing here touches the disk. On slash hosts the
+	// base is a fixed path outside /tmp, because /tmp is a reserved sandbox
+	// path and a toolchain root built under t.TempDir() would be refused for
+	// that reason instead of the one a row tests. On Windows t.TempDir()
+	// supplies a real absolute drive path.
 	tmp := t.TempDir()
-	home := filepath.Join(tmp, ".warden")
+	if path.IsAbs(filepath.ToSlash(tmp)) {
+		tmp = "/srv/warden-test"
+	}
+	hostHome := filepath.Join(tmp, "home", "ana")
+	home := filepath.Join(hostHome, ".warden")
+	if customHome {
+		home = filepath.Join(tmp, "wardenhome")
+	}
 	return testLayout{
-		tmp:     tmp,
-		home:    home,
-		session: filepath.Join(home, "sessions", "01jaxr8q7m2v9ktc3f6yh5n0pb"),
-		objects: filepath.Join(tmp, "project", ".git", "objects"),
-		execBin: filepath.Join(tmp, "bin", "warden-exec"),
+		tmp:      tmp,
+		hostHome: hostHome,
+		home:     home,
+		session:  filepath.Join(home, "sessions", "01jaxr8q7m2v9ktc3f6yh5n0pb"),
+		objects:  filepath.Join(hostHome, "project", ".git", "objects"),
+		execBin:  filepath.Join(tmp, "opt", "warden", "bin", "warden-exec"),
 	}
 }
+
+// slashHost reports whether host paths are slash paths here. L1 toolchain
+// roots are slash paths (L1 exists only on Linux and macOS), so rows that
+// build a toolchain root from a host path run only where both agree.
+func slashHost(l testLayout) bool { return path.IsAbs(filepath.ToSlash(l.tmp)) }
 
 const (
 	testID     = "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB"
@@ -48,6 +70,7 @@ func validSpec(l testLayout, level Level) *Spec {
 		Level:          level,
 		Purpose:        PurposeTask,
 		Mode:           execproto.ModeTool,
+		HostHome:       l.hostHome,
 		WardenHome:     l.home,
 		SessionDir:     l.session,
 		Worktree:       filepath.Join(l.session, "worktree"),
@@ -135,7 +158,7 @@ func TestSpecValidate_Rejects(t *testing.T) {
 		{"L1 without a proxy socket", LevelL1, func(l testLayout, s *Spec) { s.Proxy = ProxyEndpoint{} }, ErrInvalidSpec, "proxy socket"},
 		{"L1 with a sidecar", LevelL1, func(l testLayout, s *Spec) { s.Proxy.Sidecar = testSide }, ErrInvalidSpec, "sidecar"},
 		{"L1 proxy socket outside the session", LevelL1, func(l testLayout, s *Spec) { s.Proxy.Socket = filepath.Join(l.tmp, "px.sock") }, ErrInvalidSpec, "proxy socket"},
-		{"L1 proxy socket in the mounted scratch", LevelL1, func(l testLayout, s *Spec) { s.Proxy.Socket = filepath.Join(s.Scratch, "px.sock") }, ErrInvalidSpec, "writable root"},
+		{"L1 proxy socket in the mounted scratch", LevelL1, func(l testLayout, s *Spec) { s.Proxy.Socket = filepath.Join(s.Scratch, "px.sock") }, ErrInvalidSpec, "proxy socket"},
 		{"L2 with a mounted socket", LevelL2, func(l testLayout, s *Spec) { s.Proxy.Socket = filepath.Join(l.session, "scratch", "px-1.sock") }, ErrInvalidSpec, "sidecar"},
 		{"L2 sidecar with userinfo", LevelL2, func(l testLayout, s *Spec) { s.Proxy.Sidecar = "user:pw@proxy:3128" }, ErrInvalidSpec, "sidecar"},
 		{"L2 sidecar with a scheme", LevelL2, func(l testLayout, s *Spec) { s.Proxy.Sidecar = "http://proxy:3128" }, ErrInvalidSpec, "sidecar"},
