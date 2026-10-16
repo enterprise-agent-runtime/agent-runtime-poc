@@ -61,11 +61,15 @@ func goIgnored(name string) bool {
 	return name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
 
-// nonGoSources are linked into the binaries by the go tool but cannot be read
-// by any rule here: assembly, cgo C/C++/Objective-C sources and headers, and
-// prebuilt .syso objects. Scan refuses each one outside the ignored names
-// unless it is in nonGoFiles.
-var nonGoSources = map[string]bool{".s": true, ".S": true, ".syso": true, ".c": true, ".cc": true, ".cpp": true, ".h": true, ".m": true}
+// nonGoSources are the go tool's non-Go source files: it links them into the
+// binaries (assembly, cgo C/C++/Objective-C/Fortran sources and headers, SWIG
+// interfaces, prebuilt .syso objects) but no rule here can read them. Scan
+// refuses each one outside the ignored names unless it is in nonGoFiles.
+var nonGoSources = map[string]bool{
+	".s": true, ".S": true, ".sx": true, ".syso": true,
+	".c": true, ".cc": true, ".cpp": true, ".cxx": true, ".h": true, ".hh": true, ".hpp": true, ".hxx": true,
+	".m": true, ".f": true, ".F": true, ".for": true, ".f90": true, ".swig": true, ".swigcxx": true,
+}
 
 // nonGoFiles may hold a non-Go source. Empty: the tree has none, and adding
 // an entry needs its own justification.
@@ -85,20 +89,31 @@ func irregular(t fs.FileMode) bool {
 //   - symlinks, junctions and other irregular entries, which the go tool
 //     follows and Scan does not;
 //   - an import of a module-internal path with an element goIgnored matches,
-//     which the go tool compiles but Scan never reads (the module path is
-//     read from root's go.mod; without one, as in the seeded fixture tree,
-//     this check is off);
-//   - non-Go sources (nonGoSources) not in nonGoFiles.
+//     which the go tool compiles but Scan never reads;
+//   - non-Go sources (nonGoSources) not in nonGoFiles;
+//   - a go.mod "replace" with a filesystem target, and any go.work file, which
+//     compile code from directories Scan does not treat as this module;
+//   - a go.mod whose module path cannot be read. Without any go.mod, as in the
+//     seeded fixture tree, the import check is off; the repository tests
+//     assert that Scan used the module path go.mod declares.
 func Scan(root string) ([]File, error) {
 	return scanFS(os.DirFS(root))
 }
 
 func scanFS(fsys fs.FS) ([]File, error) {
+	files, _, err := scanTree(fsys)
+	return files, err
+}
+
+// scanTree is scanFS that also returns the module path it used.
+func scanTree(fsys fs.FS) ([]File, string, error) {
 	var files []File
 	var refused []Violation
 	module := ""
 	if b, err := fs.ReadFile(fsys, "go.mod"); err == nil {
-		module = modulePathOf(b)
+		var bad []Violation
+		module, bad = readGoMod(b)
+		refused = append(refused, bad...)
 	}
 	fset := token.NewFileSet()
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
@@ -119,6 +134,10 @@ func scanFS(fsys fs.FS) ([]File, error) {
 			return nil
 		}
 		if d.IsDir() {
+			return nil
+		}
+		if d.Name() == "go.work" {
+			refused = append(refused, Violation{p, 0, "scan", "go.work: a workspace compiles other modules' directories into the binaries, which archtest does not scan"})
 			return nil
 		}
 		if nonGoSources[path.Ext(p)] && !nonGoFiles[p] {
@@ -148,17 +167,67 @@ func scanFS(fsys fs.FS) ([]File, error) {
 	if err == nil && len(refused) > 0 {
 		err = &ScanError{refused}
 	}
-	return files, err
+	return files, module, err
 }
 
-// modulePathOf returns the module path declared in a go.mod file, "" if none.
-func modulePathOf(gomod []byte) string {
-	for _, line := range strings.Split(string(gomod), "\n") {
-		if m, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
-			return strings.Trim(strings.TrimSpace(m), `"`)
+// readGoMod returns the module path declared in go.mod and a violation for
+// each replace directive whose target is a filesystem path, and for a module
+// path that cannot be read. Comments ("//") and quotes are stripped.
+func readGoMod(src []byte) (string, []Violation) {
+	module := ""
+	var bad []Violation
+	block := ""
+	for i, raw := range strings.Split(string(src), "\n") {
+		line, _, _ := strings.Cut(raw, "//")
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		var spec []string
+		switch {
+		case block != "" && fields[0] == ")":
+			block = ""
+			continue
+		case block != "":
+			if block == "replace" {
+				spec = fields
+			}
+		case len(fields) == 2 && fields[1] == "(":
+			block = fields[0]
+			continue
+		case fields[0] == "module" && len(fields) >= 2:
+			module = strings.Trim(fields[1], `"`)
+		case fields[0] == "replace":
+			spec = fields[1:]
+		}
+		if spec == nil {
+			continue
+		}
+		arrow := slices.Index(spec, "=>")
+		target := []string{}
+		if arrow >= 0 {
+			target = spec[arrow+1:]
+		}
+		// A target without a version is always a directory (go.mod
+		// reference); so is one that looks like a path.
+		if len(target) != 2 || localPath(strings.Trim(target[0], `"`)) {
+			bad = append(bad, Violation{"go.mod", i + 1, "scan", "replace with a filesystem target compiles a directory archtest does not scan: " + strings.TrimSpace(line)})
 		}
 	}
-	return ""
+	if module == "" {
+		bad = append(bad, Violation{"go.mod", 0, "scan", "no module path could be read, so imports of skipped paths cannot be checked"})
+	}
+	return module, bad
+}
+
+// localPath reports whether a replace target is a filesystem path: relative
+// (".", ".."), rooted ("/" or "\"), a Windows drive path, or containing a
+// backslash.
+func localPath(t string) bool {
+	if strings.HasPrefix(t, ".") || strings.HasPrefix(t, "/") || strings.Contains(t, `\`) {
+		return true
+	}
+	return len(t) >= 2 && t[1] == ':' && (t[0] >= 'a' && t[0] <= 'z' || t[0] >= 'A' && t[0] <= 'Z')
 }
 
 func parseFile(fset *token.FileSet, rel string, src []byte) (File, error) {

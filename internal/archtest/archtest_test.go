@@ -2,6 +2,7 @@ package archtest
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -31,9 +32,14 @@ func modulePath(t *testing.T) string {
 
 func scanRepo(t *testing.T) []File {
 	t.Helper()
-	files, err := Scan(repoRoot)
+	files, module, err := scanTree(os.DirFS(repoRoot))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The ignored-path import check uses the module path Scan read; if it
+	// read none or a wrong one, that check would be silently off (round 5).
+	if want := modulePath(t); module != want {
+		t.Fatalf("Scan used module path %q, go.mod declares %q", module, want)
 	}
 	if len(files) == 0 {
 		t.Fatal("scanned no files; wrong root?")
@@ -336,21 +342,33 @@ func TestScan_RefusesWhatTheGoToolHides(t *testing.T) {
 		return &fstest.MapFile{Data: []byte("package api\n\nimport _ \"" + imp + "\"\n")}
 	}
 	fsys := fstest.MapFS{
-		"go.mod":                        {Data: []byte("module warden.dev/warden\n\ngo 1.26\n")},
-		"internal/api/_old/l.go":        {Data: []byte("package old\n")},
-		"internal/api/importsold.go":    src("warden.dev/warden/internal/api/_old"),
-		"internal/api/importstd.go":     src("warden.dev/warden/internal/api/testdata/pkg"),
-		"internal/api/importsdot.go":    src("warden.dev/warden/internal/.hidden"),
-		"internal/api/ok.go":            src("warden.dev/warden/internal/model"),
-		"internal/api/thirdparty.go":    src("github.com/example/_examples/x"), // not ours: unaffected
-		"internal/api/asm_amd64.s":      {Data: []byte("TEXT ·f(SB),0,$0\n")},
-		"internal/api/asm_arm64.S":      {},
-		"internal/api/blob.syso":        {},
-		"internal/api/c.c":              {},
-		"internal/api/c.cc":             {},
-		"internal/api/c.cpp":            {},
-		"internal/api/c.h":              {},
-		"internal/api/m.m":              {},
+		"go.mod":                     {Data: []byte("module warden.dev/warden\n\ngo 1.26\n")},
+		"internal/api/_old/l.go":     {Data: []byte("package old\n")},
+		"internal/api/importsold.go": src("warden.dev/warden/internal/api/_old"),
+		"internal/api/importstd.go":  src("warden.dev/warden/internal/api/testdata/pkg"),
+		"internal/api/importsdot.go": src("warden.dev/warden/internal/.hidden"),
+		"internal/api/ok.go":         src("warden.dev/warden/internal/model"),
+		"internal/api/thirdparty.go": src("github.com/example/_examples/x"), // not ours: unaffected
+		"internal/api/asm_amd64.s":   {Data: []byte("TEXT ·f(SB),0,$0\n")},
+		"internal/api/asm_arm64.S":   {},
+		"internal/api/blob.syso":     {},
+		"internal/api/c.c":           {},
+		"internal/api/c.cc":          {},
+		"internal/api/c.cpp":         {},
+		"internal/api/c.h":           {},
+		"internal/api/m.m":           {},
+		// Round 5: the rest of the go tool's non-Go source set.
+		"internal/api/a.sx":             {},
+		"internal/api/c.cxx":            {},
+		"internal/api/c.hh":             {},
+		"internal/api/c.hpp":            {},
+		"internal/api/c.hxx":            {},
+		"internal/api/f.f":              {},
+		"internal/api/f.F":              {},
+		"internal/api/f.for":            {},
+		"internal/api/f.f90":            {},
+		"internal/api/s.swig":           {},
+		"internal/api/s.swigcxx":        {},
 		"internal/api/README.md":        {}, // not a source the toolchain links
 		"internal/api/_ignored/x.c":     {}, // inside an ignored name: never read by the go tool either
 		"internal/api/testdata/pkg/x.c": {},
@@ -370,8 +388,91 @@ func TestScan_RefusesWhatTheGoToolHides(t *testing.T) {
 		"scan internal/api/c.c", "scan internal/api/c.cc", "scan internal/api/c.cpp", "scan internal/api/c.h",
 		"scan internal/api/importsdot.go", "scan internal/api/importsold.go", "scan internal/api/importstd.go",
 		"scan internal/api/m.m",
+		"scan internal/api/a.sx", "scan internal/api/c.cxx", "scan internal/api/c.hh", "scan internal/api/c.hpp",
+		"scan internal/api/c.hxx", "scan internal/api/f.F", "scan internal/api/f.f", "scan internal/api/f.f90",
+		"scan internal/api/f.for", "scan internal/api/s.swig", "scan internal/api/s.swigcxx",
 	}
+	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("refused entries differ\n got:\n  %s\nwant:\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	}
+}
+
+// TestScan_RefusesLocalReplacesAndWorkspaces exists because a go.mod
+// "replace" with a filesystem target, or a go.work file, compiles code from a
+// directory archtest never scans (outside the tree, or a module the scan
+// treats as foreign) into the binaries (round 5). Scan refuses both. It also
+// guards modulePathOf: a module line with a comment or quotes must still
+// yield the path, and a go.mod whose module line cannot be read is refused
+// rather than silently switching the ignored-path import check off. The
+// path targets carry versions so that each localPath branch is tested on its
+// own; g has no version, which alone makes a target a directory.
+func TestScan_RefusesLocalReplacesAndWorkspaces(t *testing.T) {
+	gomod := `module warden.dev/warden // the PoC module
+
+go 1.26
+
+replace example.com/a => ./a v1.0.0
+replace example.com/b => ../b v1.0.0
+replace (
+	example.com/c => /abs/c v1.0.0
+	example.com/d v1.0.0 => C:\d
+	example.com/e => D:/e v1.0.0
+	example.com/f => some\dir v1.0.0
+	example.com/ok => example.com/fork v1.2.3 // a module, not a path
+)
+replace example.com/g => dir/sub
+replace example.com/ok2 v1.0.0 => example.com/fork2 v1.0.1
+`
+	fsys := fstest.MapFS{
+		"go.mod":           {Data: []byte(gomod)},
+		"go.work":          {Data: []byte("go 1.26\n")},
+		"sub/go.work":      {Data: []byte("go 1.26\n")},
+		"_ignored/go.work": {Data: []byte("go 1.26\n")}, // ignored by the go tool too
+		"pkg/a.go":         {Data: []byte("package pkg\n")},
+	}
+	_, module, err := scanTree(fsys)
+	if module != "warden.dev/warden" {
+		t.Errorf("module path from a commented module line = %q, want warden.dev/warden", module)
+	}
+	var se *ScanError
+	if !errors.As(err, &se) {
+		t.Fatalf("scanTree returned %v, want a *ScanError", err)
+	}
+	var got []string
+	for _, v := range se.Violations {
+		got = append(got, fmt.Sprintf("%s %s:%d", v.Rule, v.Rel, v.Line))
+	}
+	sort.Strings(got)
+	want := []string{
+		"scan go.mod:10", "scan go.mod:11", "scan go.mod:14", // e, f, g
+		"scan go.mod:5", "scan go.mod:6", "scan go.mod:8", "scan go.mod:9", // a, b, c, d
+		"scan go.work:0", "scan sub/go.work:0",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("refused entries differ\n got: %v\nwant: %v", got, want)
+	}
+
+	for _, tc := range []struct {
+		name, gomod, module string
+		refused             bool
+	}{
+		{"quoted", "module \"warden.dev/warden\"\n", "warden.dev/warden", false},
+		{"tab and comment", "module\twarden.dev/warden\t// x\n", "warden.dev/warden", false},
+		{"no module line", "go 1.26\n", "", true},
+		{"empty module", "module // nothing\n", "", true},
+	} {
+		_, module, err := scanTree(fstest.MapFS{"go.mod": {Data: []byte(tc.gomod)}})
+		if module != tc.module {
+			t.Errorf("%s: module = %q, want %q", tc.name, module, tc.module)
+		}
+		if refused := errors.As(err, &se); refused != tc.refused {
+			t.Errorf("%s: refused = %v (%v), want %v", tc.name, refused, err, tc.refused)
+		}
+	}
+	// No go.mod at all (the seeded fixture tree): the import check is off and
+	// nothing is refused.
+	if _, module, err := scanTree(fstest.MapFS{"pkg/a.go": {Data: []byte("package pkg\n")}}); module != "" || err != nil {
+		t.Errorf("tree without go.mod: module %q, err %v; want \"\", nil", module, err)
 	}
 }
