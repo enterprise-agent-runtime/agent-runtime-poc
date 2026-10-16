@@ -27,9 +27,9 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **Group A** (platform and guard rails; no Docker):
 
-- [ ] **M2-1** `warden daemon stop` waits for wardend to exit (preflight finding: Windows cleanup hit EBUSY right after stop)
+- [x] **M2-1** `warden daemon stop` waits for wardend to exit (D-029). Commits `1ff879a`, `5f4a238`, `0894d6d`, `89dbdac`, `4812dae`. The review also found that test daemons shared the owner's keychain, so each home now has its own keychain namespace (D-042, C-63) and the integration test cleans up after itself (D-043). Evidence: on Windows the new integration test failed 3/3 before the fix and passed after, leaving no new Credential Manager entry. Two reviews and two re-reviews.
 - [ ] **M2-2** archtest: OS tags for `internal/exec` and `cmd/warden-exec` (C-61), and a file-level forwarder listener exemption
-- [ ] **M2-3** doctor: strip control characters from output; validate Docker Version/Os (CWE-150)
+- [x] **M2-3** CLI output is terminal-safe (CWE-150, D-045). Human output is sanitized, all `--json` output and event payloads are escaped, a Docker engine error keeps only its status code, and Docker Version/Os are validated. Commits `bd2fe0d`, `d92f362`, `35ebc68`, `6d89542`, `5e98358`, `df0724e`. The review found that `--json` passed C1 controls raw. The re-review approved, after fuzzing both functions for 40 s each (about 2M inputs) with no failure.
 
 **WH, Windows hardening** (before L2, in parallel with the executor work):
 

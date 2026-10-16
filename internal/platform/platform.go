@@ -29,16 +29,7 @@ func Home() (string, error) {
 		}
 		return filepath.Clean(h), nil
 	}
-	if runtime.GOOS == "windows" {
-		if la := os.Getenv("LOCALAPPDATA"); la != "" {
-			return filepath.Join(la, "Warden"), nil
-		}
-	}
-	u, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(u, ".warden"), nil
+	return DefaultHome()
 }
 
 // Layout is the directory layout under the home (design core §10).

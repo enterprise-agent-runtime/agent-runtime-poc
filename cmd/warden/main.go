@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"warden.dev/warden/internal/api"
 	"warden.dev/warden/internal/buildinfo"
 	"warden.dev/warden/internal/platform"
+	"warden.dev/warden/internal/termsafe"
 )
 
 // exitError carries a process exit code.
@@ -41,8 +43,12 @@ func main() {
 	}
 }
 
-// describe renders API errors with their reason.
-func describe(err error) string {
+// describe renders API errors with their reason, sanitized for the
+// terminal: an error message can carry a model endpoint's or the Docker
+// engine's text (CWE-150, M2-3).
+func describe(err error) string { return termsafe.SanitizeDetail(describeRaw(err)) }
+
+func describeRaw(err error) string {
 	if code, d, ok := api.DataOf(err); ok {
 		msg := err.Error()
 		if i := strings.Index(msg, "] "); i >= 0 {
@@ -133,15 +139,24 @@ func do(cmd *cobra.Command, method string, params any, out any) error {
 		return err
 	}
 	if asJSON {
-		var v any
-		_ = json.Unmarshal(raw, &v)
-		b, _ := json.MarshalIndent(v, "", "  ")
-		fmt.Println(string(b))
+		printJSON(os.Stdout, raw)
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)
 	}
 	return nil
+}
+
+// printJSON is the --json output of every command. encoding/json escapes C0
+// controls but writes DEL, C1 controls and bidi characters raw, and results
+// carry text the daemon did not write (Docker engine answers, provider
+// errors, tool output), so the bytes pass termsafe.EscapeJSON before they
+// reach the terminal (CWE-150, M2-3 review).
+func printJSON(w io.Writer, raw json.RawMessage) {
+	var v any
+	_ = json.Unmarshal(raw, &v)
+	b, _ := json.MarshalIndent(v, "", "  ")
+	fmt.Fprintln(w, string(termsafe.EscapeJSON(b)))
 }
 
 func versionCmd() *cobra.Command {
@@ -164,17 +179,19 @@ func versionCmd() *cobra.Command {
 	}}
 }
 
+type doctorCheck struct {
+	ID       string  `json:"id"`
+	Status   string  `json:"status"`
+	Title    string  `json:"title"`
+	Detail   string  `json:"detail"`
+	FixHint  *string `json:"fix_hint"`
+	Blocking bool    `json:"blocking"`
+}
+
 type doctorResult struct {
-	Status   string `json:"status"`
-	Blocking bool   `json:"blocking"`
-	Checks   []struct {
-		ID       string  `json:"id"`
-		Status   string  `json:"status"`
-		Title    string  `json:"title"`
-		Detail   string  `json:"detail"`
-		FixHint  *string `json:"fix_hint"`
-		Blocking bool    `json:"blocking"`
-	} `json:"checks"`
+	Status   string        `json:"status"`
+	Blocking bool          `json:"blocking"`
+	Checks   []doctorCheck `json:"checks"`
 }
 
 func doctorCmd() *cobra.Command {
@@ -185,24 +202,73 @@ func doctorCmd() *cobra.Command {
 				return err
 			}
 			if !asJSON {
-				for _, c := range r.Checks {
-					mark := map[string]string{"ok": "ok  ", "warn": "WARN", "fail": "FAIL"}[c.Status]
-					block := ""
-					if c.Blocking && c.Status == "fail" {
-						block = " [blocking]"
-					}
-					fmt.Printf("%s  %-17s %s: %s%s\n", mark, c.ID, c.Title, c.Detail, block)
-					if c.FixHint != nil && c.Status != "ok" {
-						fmt.Printf("      fix: %s\n", *c.FixHint)
-					}
-				}
-				fmt.Printf("\noverall: %s%s\n", r.Status, map[bool]string{true: " (blocking: no task can start)", false: ""}[r.Blocking])
+				renderDoctor(os.Stdout, r)
 			}
 			if r.Blocking {
 				return exitError{1}
 			}
 			return nil
 		}}
+}
+
+// renderDoctor prints the human form of system.doctor. Detail and FixHint
+// carry text the daemon did not write (Docker engine fields, error text from
+// whatever answers on the Docker endpoint), so they are sanitized before
+// reaching the terminal (CWE-150, M2-3).
+func renderDoctor(w io.Writer, r doctorResult) {
+	for _, c := range r.Checks {
+		mark := map[string]string{"ok": "ok  ", "warn": "WARN", "fail": "FAIL"}[c.Status]
+		block := ""
+		if c.Blocking && c.Status == "fail" {
+			block = " [blocking]"
+		}
+		fmt.Fprintf(w, "%s  %-17s %s: %s%s\n", mark, c.ID, c.Title, termsafe.SanitizeDetail(c.Detail), block)
+		if c.FixHint != nil && c.Status != "ok" {
+			fmt.Fprintf(w, "      fix: %s\n", termsafe.SanitizeDetail(*c.FixHint))
+		}
+	}
+	fmt.Fprintf(w, "\noverall: %s%s\n", r.Status, map[bool]string{true: " (blocking: no task can start)", false: ""}[r.Blocking])
+}
+
+// daemonStopTimeout bounds how long "warden daemon stop" waits for wardend
+// to exit after system.shutdown (M2-1). wardend gives its server 5 s to
+// drain, so this leaves room for the store and log to close.
+const daemonStopTimeout = 10 * time.Second
+
+// procWatch is what stop needs from platform.Watch.
+type procWatch interface {
+	PID() int
+	Wait(time.Duration) error
+	Close()
+}
+
+// stopAndWait is the decision of "warden daemon stop" after it has
+// connected (M2-1). It opens the watch first, because wardend removes its
+// pid file while shutting down and on Windows the handle taken now is immune
+// to pid reuse. A watch that cannot be opened is a warning: the daemon is
+// still shut down and stop exits 0 without waiting. A daemon that does not
+// exit within timeout is exit 1, because it may still hold files under home.
+func stopAndWait(open func() (procWatch, error), shutdown func() error, timeout time.Duration, stdout, stderr io.Writer, home string) error {
+	w, err := open()
+	if err != nil {
+		fmt.Fprintf(stderr, "warden: %v; not waiting for wardend to exit\n", err)
+		w = nil
+	} else {
+		defer w.Close()
+	}
+	if err := shutdown(); err != nil {
+		return err
+	}
+	if w == nil {
+		fmt.Fprintln(stdout, "wardend stopping")
+		return nil
+	}
+	if err := w.Wait(timeout); err != nil {
+		fmt.Fprintf(stderr, "warden: wardend (pid %d) did not exit within %s of system.shutdown; it may still hold files under %s\n", w.PID(), timeout, home)
+		return exitError{1}
+	}
+	fmt.Fprintln(stdout, "wardend stopped")
+	return nil
 }
 
 func daemonCmd() *cobra.Command {
@@ -221,7 +287,7 @@ func daemonCmd() *cobra.Command {
 		}
 		return startDaemon(ctx, l)
 	}})
-	d.AddCommand(&cobra.Command{Use: "stop", Short: "Stop wardend (system.shutdown)", RunE: func(cmd *cobra.Command, _ []string) error {
+	d.AddCommand(&cobra.Command{Use: "stop", Short: "Stop wardend (system.shutdown) and wait until it has exited", RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
 		c, err := connect(ctx, false)
@@ -230,11 +296,25 @@ func daemonCmd() *cobra.Command {
 			return nil
 		}
 		defer c.Close()
-		if err := c.Call(ctx, "system.shutdown", map[string]any{"confirm": true}, nil); err != nil {
-			return err
+		l, _ := layout()
+		open := func() (procWatch, error) {
+			pid, err := l.DaemonPID()
+			if err != nil {
+				return nil, fmt.Errorf("cannot read the wardend pid: %w", err)
+			}
+			w, err := platform.WatchProcess(pid)
+			if err != nil {
+				return nil, fmt.Errorf("cannot watch wardend: %w", err)
+			}
+			return w, nil
 		}
-		fmt.Println("wardend stopping")
-		return nil
+		shutdown := func() error {
+			if err := c.Call(ctx, "system.shutdown", map[string]any{"confirm": true}, nil); err != nil {
+				return err
+			}
+			return c.Close() // do not hold a connection open while the server drains
+		}
+		return stopAndWait(open, shutdown, daemonStopTimeout, os.Stdout, os.Stderr, l.Home)
 	}})
 	d.AddCommand(&cobra.Command{Use: "status", Short: "Report whether wardend is running (exit 1 if not)", RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
