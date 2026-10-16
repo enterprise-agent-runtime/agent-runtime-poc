@@ -170,8 +170,6 @@ type spawnPolicy struct {
 	harness  *HarnessSpec
 }
 
-func invalid(detail string) error { return execproto.NewError(execproto.ErrInvalidArgument, detail) }
-
 // validateSpawn is A06 §6 step 1 (argv shape) plus the proc.json ranges
 // the strict decoder does not check.
 func validateSpawn(p execproto.SpawnParams) error {

@@ -1,7 +1,8 @@
 // Package platform confines every operating-system difference of the PoC
 // (CLAUDE.md §3, §6; WRD-02 §3): the Warden home directory, the daemon
 // transport (Unix socket on Linux/macOS, named pipe with an owner-only DACL
-// on Windows), owner-only files, the default sandbox level, detached daemon
+// on Windows), the L1 per-task proxy socket (design A07 §2, tasksock_*.go),
+// owner-only files, the default sandbox level, detached daemon
 // start, process-group termination and terminal input without echo.
 // Nothing above this package (and internal/sandbox, internal/secrets) may
 // branch on runtime.GOOS.

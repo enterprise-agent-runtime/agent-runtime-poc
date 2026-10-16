@@ -8,7 +8,8 @@
 // This file is the transport: a method registry and a serve loop over any
 // io.ReadWriteCloser, so the same code runs over the inherited socketpair
 // of L1 (--rpc-fd 3) and the container stdio of L2 (--rpc-stdio). The
-// methods themselves (fs, proc, git) are registered by later milestones.
+// file methods are registered by RegisterFS (fsserver.go, fs_unix.go);
+// proc and git come in later milestones.
 //
 // What the loop guarantees:
 //

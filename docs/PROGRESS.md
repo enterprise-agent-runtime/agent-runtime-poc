@@ -71,7 +71,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Left for M2-7:** refuse reads of regular files with `st_nlink > 1` (hard links, CWE-59); pass only `Tree.Resolve` output to `OpenCanonical`; temp names that cannot match the deny-list or the 8.3 rule (e.g. `.warden-tmp-<rand>`); reject `Resolved.Root != worktree` for model-originated calls.
   - **Left for L2 (owner sign-off):** a spawned process in Windows L2 can still open `ENV~1` past the `/dev/null` mask; disable 8.3 names on the sessions volume or have doctor refuse.
   - **Low:** `strings.ToLower` does not fold U+017F (matters on case-insensitive APFS).
-- [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
+- [x] **M2-7** fs operations: read, list, search, write, patch, stat (D-066, D-067; the 4096-file patch cap of D-048).
+  - **Pieces:** `internal/exec` `RegisterFS` and the six methods on M2-6's `Tree.Resolve`/`OpenCanonical`; the patch parser; `execproto` limits pinned to the fs schema.
+  - **Commits:** `81383d6`, `c4dfd8d`, `c61eac0`, `4266b30`, `5500a26`.
+  - **Review:** two rounds plus a small fix. No escape, deny-list bypass or content leak was found; round 1 found three bounds failures (a patch result over the frame after the files were written, unbounded search, a quadratic parse) and a search that could read scratch through a swapped link. 62 + 21 mutants (survivors layered or equivalent); FuzzPatch 47M execs; `-race` in WSL2; coverage 91%%.
+  - **Left for M2-10:** `warden-exec` calls `Tree.SweepTemps` at start-up; a concurrency cap on fs calls (N searches cost N x 31 s of CPU).
+  - **Left for M3:** the daemon rejects `Resolved.Root != worktree` for model-originated calls (an absolute link in the worktree resolves read and stat into scratch).
+  - **Low, left:** list and search fail `too_large` instead of truncating when hostile long names push the result over the frame; reads under a directory named `.env` are allowed while writes refuse such prefixes; U+017F and HFS+ ignorable code points (carried from M2-6).
 - [ ] **M2-8** proc operations, rlimits and output cap
 - [ ] **M2-9** git.run
 - [ ] **M2-10** the `cmd/warden-exec` binary and the forwarder
@@ -85,7 +91,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Left for M3:** the PDP behind `Decider`, the 120 s approval hold, the deny cache and per-host rate-limit summaries.
   - **Minor, left:** the burst summary is flushed only at the next accept or at shutdown (delayed, not lost; a 10 s timer would make it timely), and the flush runs in the accept loop (a slow store delays only the task's own accepts).
   - **Accepted residual:** no tunnel inspection after a valid ClientHello, so domain fronting through the inner Host is possible.
-- [ ] **M2-12a** per-task Unix listener for L1
+- [x] **M2-12a** Per-task Unix listener for L1 (D-065, C-74).
+  - **Pieces:** `internal/platform` `ListenTaskSocket`, `TaskSocket`, `SweepTaskSockets` (Linux and macOS; unsupported elsewhere); `internal/sandbox` `OpenProxy`, `ProxyListener`, `SweepProxySockets`.
+  - **Commits:** `2aa3972`, `2cc6c6c`.
+  - **Review:** one round, approved; its one low finding (a swapped directory during bind could make the refusal delete another session's live socket) was fixed before merge. 33 mutants caught; `-race -count=20` in WSL2. Cross-user cases use seams: no second uid is available without sudo.
+  - **Left for M2-15 (wiring):** call `SweepProxySockets(home)` once in wardend after `platform.Listen` succeeds and before any sandbox; `Manager.Create` calls `OpenProxy` before launch, binds `pl.Path()` at `/run/warden/proxy.sock`, and closes it on every failure path; `Destroy` closes it before `sandbox.destroy`.
+  - **Left for session creation:** make `<home>/sessions` and S owner-only (D-052's `Ensure` does not manage `sessions/`); otherwise `OpenProxy` fails closed with `sandbox_unavailable`.
+  - **Low, left:** check ancestors above the home, or do every operation relative to an `os.OpenRoot` of `S/scratch`; a `hook-<n>.sock` (A12 §7.3) needs its own sweep pattern; archtest could list `net.ListenUnix` for consistency (it only accepts unix networks, so not a gap).
 
 **Group D** (L1 sandbox, WSL2):
 
@@ -98,7 +110,15 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Must fix before the L2 backend merges (high, CWE-178):** bind masks are keyed on the on-disk case, so on a case-insensitive host file system (Windows L2 over NTFS through Docker Desktop, macOS L2) `.ENV` reads the masked `.env`; reproduced on WSL drvfs. Make S/worktree case-sensitive before checkout and fail closed if it is not, or mask host-side; add an escape-check row. NTFS 8.3 names (`ENV~1`) bypass the masks the same way for spawned processes (D-055).
   - **Before a real Spec is built (platform layer):** expand host paths to their long form (GetLongPathName) before they reach the Spec; host-path checks skip the 8.3 rule (D-055 amendment), so a short-form host path would otherwise dodge it.
   - **For A14 / the policy engine:** masks hide only the working tree; `git show HEAD:.env` through /git reads a committed secret, and `denylist.Argv` does not match `HEAD:.env`. A deny-listed pathspec rule for git object reads is needed.
-- [ ] **M2-13** bwrap argv
+- [x] **M2-13** bwrap argv (D-068, D-069, C-75, C-76).
+  - **Pieces:** `internal/sandbox/linux_bwrap`: `ParseFeatures`, `Prepare`, the pure builder, the fd plan and `Plan.Command`, `EtcFiles`, the sealed seccomp memfd, `Limits()` for `sandbox.create.limits`, `SeccompKill`; `Spec.ResolveToolchains`; `/sys`, `/var/run` and `/nix/var` reserved.
+  - **Commits:** `d1ceda6`, `64094b2`.
+  - **Review:** two rounds; round 2 approved, with the leak confirmed fixed by the reviewer's own probe. The argv, mounts, masks, read-only root, /proc, capabilities, seccomp and the memfd seals checked clean against the real bwrap 0.9.0; round 1 found the daemon environment readable at `/proc/1/environ` (high), resolved toolchain roots compared with unresolved homes, `/etc/ssl/private` inside a bind, and `/nix/var` unreserved.
+  - **Left for M2-15:** launch through `Plan.Command` (with the `systemd-run --user --scope` prefix), rlimits and cgroups, write `EtcFiles` into `S/sandbox/<id>/etc`, `state.json`/`argv.json` and `profile_digest`, read the info pipe, put `Limits()` in `sandbox.create`, `Manager.RecoverOrphans` (A06 §13.5), register the backend.
+  - **Must hold in M2-15:** `Command` must own the `systemd-run --user --scope` wrapper too. systemd-run needs `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and with `--scope` bwrap inherits its environment, so the `/proc/1/environ` leak returns unless bwrap runs under it through `/usr/bin/env -i`; repeat the integration assertion for the wrapped path. `sandbox.create.env_keys` must list `PWD`, which bwrap sets after `--chdir`.
+  - **Low, left:** a toolchain configured as `/nix/var/nix/profiles/...` (the standard multi-user Nix profile) is refused although it resolves into `/nix/store` (apply the store-only rule to the resolved root); mask `/etc/pki/tls/private` (Fedora) like `/etc/ssl/private`; `Plan.Argv` is exported, so a hand-written launcher could bypass `Command` (the `//sandboxed` gate reviews that); a home that does not exist fails closed when toolchains are configured.
+  - **Left for M2-16:** escape-check rows for `/proc/1/environ` and the masks.
+  - **Later:** `--ro-bind-fd` with O_PATH descriptors on bwrap ≥ 0.9 against the EvalSymlinks-to-bind window (only same-uid host processes can use it); `doctor_linux.go` should use `ParseFeatures` and report missing flags; a doctor line for Arch's `/sbin -> usr/bin` layout, which fails closed today.
 - [x] **M2-14** seccomp in pure Go (D-061, D-062, C-71).
   - **Pieces:** `internal/sandbox/seccomp`: the A06 §11.5 table as data, the cBPF assembler and `Render(arch)`, `DockerProfile()`, `Version = "v1"`.
   - **Commits:** `1d0e81b`, `dd19245`, `961e265`.
