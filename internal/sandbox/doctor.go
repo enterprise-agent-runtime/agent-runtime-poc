@@ -8,6 +8,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -67,6 +68,22 @@ func l2CheckWith(ctx context.Context, o Options, ping func(context.Context) (ver
 		c.FixHint = hint("Start Docker Desktop (Windows, with the WSL2 backend) or Docker Engine (Linux), then run warden doctor again.")
 		return c
 	}
+	// Version and Os are chosen by whatever answers on the Docker endpoint,
+	// a genuine engine or a process squatting on it. Neither is shown or
+	// stored unless it has the shape a Docker engine reports (CWE-150, M2-3).
+	if !engineVersion.MatchString(ver) {
+		c.Status = unusable
+		c.Detail = "Docker engine answered with a malformed version (not shown); the endpoint may not be a Docker engine"
+		c.FixHint = hint("Check that the Docker socket or pipe (and DOCKER_HOST, if set) belongs to a genuine Docker engine, then run warden doctor again.")
+		return c
+	}
+	if os != "linux" && os != "windows" {
+		c.Status = unusable
+		c.Detail = fmt.Sprintf("Docker engine %s reachable, OS type unrecognised (not shown); Linux containers are required", ver)
+		c.Data = map[string]any{"version": ver}
+		c.FixHint = hint("Switch Docker Desktop to Linux containers (WSL2 backend), and check that the Docker endpoint belongs to a genuine Docker engine.")
+		return c
+	}
 	c.Status, c.Detail = "ok", fmt.Sprintf("Docker engine %s reachable (%s containers)", ver, os)
 	c.Data = map[string]any{"version": ver, "os_type": os}
 	if os != "linux" {
@@ -76,6 +93,11 @@ func l2CheckWith(ctx context.Context, o Options, ping func(context.Context) (ver
 	}
 	return c
 }
+
+// engineVersion is the shape of a Docker engine version ("27.0.1",
+// "27.0.1+dfsg-1ubuntu1", "28.0.0-rc.1"): nothing a terminal interprets, and
+// short enough to print on one line.
+var engineVersion = regexp.MustCompile(`^[0-9A-Za-z.+-]{1,64}$`)
 
 // versionAtLeast compares dotted versions.
 func versionAtLeast(v, min string) bool {

@@ -22,6 +22,86 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-016 · 2026-10-16 · M2-2: archtest guards for the executor (INV-H, INV-J, A02 import rules)
+
+- **Asked:** M2 plan task M2-2. Two owner decisions came during review (2026-10-16): the executor follows design A02's package layout, and CLAUDE.md §5's INV-J row may be updated. Delivered under "merge each task when its review passes".
+- **Task:** Let the executor use OS build tags and admit the one in-sandbox forwarder listener, without weakening INV-H (no process creation outside the sandbox packages) or INV-J (no host TCP listener).
+- **How:**
+  - **Exemptions:** OS tags are allowed in `internal/exec` and `cmd/warden-exec` (C-61). The forwarder's listener is exempt at file level (D-030).
+  - **Import rules (A02):** R3 limits what the executor may import, and R4 lets only the executor import `internal/exec`. Nothing may import `cmd/`, and `cmd/warden-exec` may contain only `package main`.
+  - **Fail-closed scanner:** it skips only what the go tool skips, and refuses links, imports of ignored paths, non-Go sources, local `replace` directives, `go.work`, and an unreadable module path.
+  - **INV-J list completed:** `http.Server`, `httptest`, TLS listeners, raw `Listen`/`Bind`, `FileListener`, dot-imports.
+  - **INV-H list completed:** execabs, `net/http/cgi`, `go/build`, `go/importer`, `plugin`, Windows process APIs, raw numbered syscalls, DLL loading (exact-file allowlists, D-044), `//go:linkname`.
+  - **Contract:** CLAUDE.md §5 and §6 were realigned after every round, so they state exactly what the check enforces.
+- **Rules kept:**
+  - INV-H and INV-J were only ever tightened.
+  - Every rule has seeded fixtures that failed before, and a revert check.
+  - `make check` green on every commit.
+  - The real tree needed no changes.
+- **Rules changed or bent:**
+  - **CLAUDE.md §6**, the executor layout: from "internal/exec holds the daemon-side client" to design A02's layout (internal/execproto, internal/tools, internal/exec only inside warden-exec). Why: a CLAUDE.md-vs-design conflict exposed by the security review. Under CLAUDE.md's layout, the import rule that keeps the forwarder out of the daemon could not be enforced. Approved: owner, 2026-10-16.
+  - **CLAUDE.md §5**, the INV-J and INV-H rows now name the precise checks. Approved: owner, 2026-10-16.
+  - **CLAUDE.md §6**, the scanner scope and the R3/R4 import rules are now part of the contract.
+  - **Process:** one test (the in-memory irregular-entry test) was written after its code, because Windows refuses `os.Symlink` without privilege. The real-symlink test skips here and runs on Linux and macOS CI.
+- **Verified:** Six review rounds with probe copies. Each round's bypasses were re-run against the next round's code. The final round approved with nothing blocking under the convergence rule: block only on routes that ordinary code could take, since this check is defence in depth behind the sandbox, review and CI.
+- **Left (follow-ups):**
+  - a per-file allowlist of proc names for `.NewProc`/`.FindProc` in `dllFiles`;
+  - exported `*LazyProc` values called across packages;
+  - `modernc.org/libc` `Xbind`/`Xlisten`;
+  - `apps/desktop/node_modules` at M6;
+  - `internal/exec/denylist` must move to a shared leaf before `internal/policy` or `internal/sandbox` can use it (task M2-4b).
+
+## W-015 · 2026-10-16 · M2-3: terminal-safe CLI output (CWE-150)
+
+- **Asked:** M2 plan task M2-3, carried over from the security review of FX-2. Delivered under "merge each task when its review passes".
+- **Task:** Text the CLI prints but did not write itself (Docker engine answers, model endpoint errors, imported audit files) must not be able to control the terminal.
+- **How:** A new package `internal/termsafe` (D-045):
+  - **`SanitizeDetail`:** applied to every human renderer that prints remote or daemon-supplied text (doctor, audit verify, provider, models, error text).
+  - **`EscapeJSON`:** applied to all `--json` output and to event payloads.
+  - **Docker:** engine errors keep only the numeric status; Version and Os are validated.
+  - **Commits:** `bd2fe0d`, `d92f362`, `35ebc68`, `6d89542`, `5e98358`, `df0724e`.
+  - **Merge:** a merge conflict with M2-1 in `cmd/warden/main.go` (two independent new functions at the same spot) was resolved by keeping both. `make check` was green on the merged tree.
+- **Rules kept:**
+  - Test first: every new test failed on the old code.
+  - A revert check per fix.
+  - `cmd/*` stays wiring plus renderers (CLAUDE.md §6).
+  - No new dependency.
+  - The FX-2 test passes unedited.
+- **Rules changed or bent:** none. The first version assumed "JSON output is already safe" (encoding/json escapes only C0). The review found this false, and it was corrected before merge.
+- **Verified:**
+  - `make check` green, and CI on the PR.
+  - The re-review approved after 40 s fuzz runs of both functions (about 2M inputs) with no failure, plus a sweep of every print in `cmd/warden`.
+- **Left (follow-ups):**
+  - `provider list` now caps the model list at 1 KiB, so long lists are shortened. Accepted as intended.
+  - The event TS and Type in `warden events` print unsanitized. Only the daemon writes those, so it is outside the attacker model.
+  - Protection assumes a UTF-8 terminal; Latin-1 8-bit C1 terminals are not defended.
+
+## W-014 · 2026-10-16 · M2-1: `warden daemon stop` waits for wardend to exit
+
+- **Asked:** M2 plan task M2-1, from a preflight finding: on Windows, cleanup right after `warden daemon stop` failed with "Device or resource busy". Delivered under the owner's "merge each task when its review passes".
+- **Task:** Make stop wait until wardend has really exited, so its files are released.
+- **How:**
+  - **The wait:** stop reads the pid and opens a watch before `system.shutdown`, then waits up to 10 s (D-029). On Windows the watch is a SYNCHRONIZE handle; on Unix a `kill(pid,0)` poll with child reaping, where EPERM means a stale pid file. The decision lives in the pure loop `platform.WaitExit` and in `stopAndWait`.
+  - **Review fixes:**
+    - each home gets its own keychain namespace (D-042);
+    - the integration test cleans up its own keychain items (D-043);
+    - a golden test pins the home suffix.
+  - Commits `1ff879a`, `5f4a238`, `0894d6d`, `89dbdac`, `4812dae`.
+- **Rules kept:**
+  - Test first. The Windows integration test failed 3/3 before the fix; the unit tests failed against a stub.
+  - Revert and mutation checks for every fix.
+  - OS code stays in `internal/platform` and `cmd/warden` stays wiring (CLAUDE.md §6).
+  - No new process starter (INV-H): the test uses the existing SpawnDaemon path.
+  - No new dependency.
+  - A temp `WARDEN_HOME` for every daemon run.
+- **Rules changed or bent:**
+  - **Broken by mistake (CLAUDE.md §8.4):** before the review, the new integration test's daemon used the owner's real Credential Manager service `warden`. It read the real checkpoint seed and wrote and deleted `doctor/probe`, over about 8 runs. Nothing was overwritten. Every M1 `warden doctor` run with a temp home did the same, which is how the real checkpoint key got there. Now prevented by D-042 (per-home keychain namespace) and D-043 (the test cleans its namespace and refuses plain `warden`). A leftover test entry `warden-68ad2efe:keys/checkpoint/ed25519` is the owner's to remove.
+  - **Design deviation:** design A15 §2 and the design core §10 name a single service `warden`. CLAUDE.md §8.4 wins (C-63). The design text is unchanged.
+  - **Product behaviour change:** a non-default `WARDEN_HOME` now has its own secrets (D-042 upgrade note).
+  - **Process notes:** one fix commit (`0894d6d`) bundles three small findings. Fix 2 moved logic that already worked, so mutations stand in for "fails before".
+- **Verified:** `make check` green on every commit. CI on the PR. Windows integration run: pass, and Credential Manager unchanged before and after.
+- **Left:** CI doesn't run `make integration` yet (M2-23). Unix `platform.Alive` treats EPERM as dead and a zombie as alive (noticed, not fixed).
+
 ## W-013 · 2026-10-16 · M2 preflight, plan and owner decisions
 
 - **Asked:** Owner: "Keep working at the next step" (the next step was `/preflight M2`, then `/plan M2`).

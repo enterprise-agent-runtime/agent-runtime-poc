@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+
+	"warden.dev/warden/internal/termsafe"
 )
 
 func auditCmd() *cobra.Command {
@@ -53,40 +58,12 @@ func auditCmd() *cobra.Command {
 			default:
 				return errors.New("give --session <id> or --file <export.jsonl>")
 			}
-			var r struct {
-				OK               bool            `json:"ok"`
-				ChainOK          bool            `json:"chain_ok"`
-				StrictOK         *bool           `json:"strict_ok"`
-				CheckpointOK     bool            `json:"checkpoint_ok"`
-				Events           int             `json:"events"`
-				ToolCallsChecked int             `json:"tool_calls_checked"`
-				Anchored         bool            `json:"anchored"`
-				Violations       json.RawMessage `json:"violations"`
-			}
+			var r auditVerifyResult
 			if err := do(cmd, "audit.verify", params, &r); err != nil {
 				return err
 			}
 			if !asJSON {
-				fmt.Printf("events %d, chain %s, checkpoints %s", r.Events, okWord(r.ChainOK), okWord(r.CheckpointOK))
-				if r.StrictOK != nil {
-					fmt.Printf(", strict %s (%d tool calls)", okWord(*r.StrictOK), r.ToolCallsChecked)
-				}
-				fmt.Printf(", anchored %v\n", r.Anchored)
-				var vs []struct {
-					Seq      *int64 `json:"seq"`
-					Kind     string `json:"kind"`
-					Severity string `json:"severity"`
-					Detail   string `json:"detail"`
-				}
-				_ = json.Unmarshal(r.Violations, &vs)
-				for _, v := range vs {
-					seq := "-"
-					if v.Seq != nil {
-						seq = fmt.Sprint(*v.Seq)
-					}
-					fmt.Printf("  %-7s seq %-6s %-30s %s\n", v.Severity, seq, v.Kind, v.Detail)
-				}
-				fmt.Println(map[bool]string{true: "VERIFIED", false: "NOT VERIFIED"}[r.OK])
+				renderAuditVerify(os.Stdout, r)
 			}
 			if !r.OK {
 				return exitError{1}
@@ -113,21 +90,7 @@ func eventsCmd() *cobra.Command {
 			return err
 		}
 		if !asJSON {
-			for _, e := range r.Events {
-				var h struct {
-					Seq     int64           `json:"seq"`
-					TS      string          `json:"ts"`
-					Type    string          `json:"type"`
-					Chain   string          `json:"chain"`
-					Payload json.RawMessage `json:"payload"`
-				}
-				_ = json.Unmarshal(e, &h)
-				p := string(h.Payload)
-				if len(p) > 160 {
-					p = p[:160] + "…"
-				}
-				fmt.Printf("%6d %s %-20s %s\n", h.Seq, h.TS, h.Type, p)
-			}
+			renderEvents(os.Stdout, r.Events)
 		}
 		return nil
 	}}
@@ -135,4 +98,68 @@ func eventsCmd() *cobra.Command {
 	c.Flags().IntVar(&after, "after", 0, "only events with seq greater than this")
 	c.Flags().IntVar(&limit, "limit", 200, "maximum events (1..1000)")
 	return c
+}
+
+// renderEvents prints one line per event with the payload as compact JSON.
+// The payload is JSON the daemon encoded, which can hold raw C1 controls and
+// bidi characters from tool output or engine text (CWE-150, M2-3 review), so
+// it passes termsafe.EscapeJSON before it reaches the terminal.
+func renderEvents(w io.Writer, events []json.RawMessage) {
+	for _, e := range events {
+		var h struct {
+			Seq     int64           `json:"seq"`
+			TS      string          `json:"ts"`
+			Type    string          `json:"type"`
+			Chain   string          `json:"chain"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		_ = json.Unmarshal(e, &h)
+		p := string(termsafe.EscapeJSON(h.Payload))
+		if len(p) > 160 {
+			cut := 160 // on a UTF-8 boundary, so no broken character reaches the terminal
+			for cut > 0 && !utf8.RuneStart(p[cut]) {
+				cut--
+			}
+			p = p[:cut] + "…"
+		}
+		fmt.Fprintf(w, "%6d %s %-20s %s\n", h.Seq, h.TS, h.Type, p)
+	}
+}
+
+type auditVerifyResult struct {
+	OK               bool            `json:"ok"`
+	ChainOK          bool            `json:"chain_ok"`
+	StrictOK         *bool           `json:"strict_ok"`
+	CheckpointOK     bool            `json:"checkpoint_ok"`
+	Events           int             `json:"events"`
+	ToolCallsChecked int             `json:"tool_calls_checked"`
+	Anchored         bool            `json:"anchored"`
+	Violations       json.RawMessage `json:"violations"`
+}
+
+// renderAuditVerify prints the human form of audit.verify. A violation's
+// Detail quotes fields of the chain under test (event type, key_id,
+// unsigned_reason, call_id), and --file accepts another machine's export,
+// so the Detail is sanitized before it reaches the terminal (CWE-150, M2-3).
+func renderAuditVerify(w io.Writer, r auditVerifyResult) {
+	fmt.Fprintf(w, "events %d, chain %s, checkpoints %s", r.Events, okWord(r.ChainOK), okWord(r.CheckpointOK))
+	if r.StrictOK != nil {
+		fmt.Fprintf(w, ", strict %s (%d tool calls)", okWord(*r.StrictOK), r.ToolCallsChecked)
+	}
+	fmt.Fprintf(w, ", anchored %v\n", r.Anchored)
+	var vs []struct {
+		Seq      *int64 `json:"seq"`
+		Kind     string `json:"kind"`
+		Severity string `json:"severity"`
+		Detail   string `json:"detail"`
+	}
+	_ = json.Unmarshal(r.Violations, &vs)
+	for _, v := range vs {
+		seq := "-"
+		if v.Seq != nil {
+			seq = fmt.Sprint(*v.Seq)
+		}
+		fmt.Fprintf(w, "  %-7s seq %-6s %-30s %s\n", v.Severity, seq, v.Kind, termsafe.SanitizeDetail(v.Detail))
+	}
+	fmt.Fprintln(w, map[bool]string{true: "VERIFIED", false: "NOT VERIFIED"}[r.OK])
 }
