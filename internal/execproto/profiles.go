@@ -154,6 +154,12 @@ func validateCommands(cmds [][]string) error {
 			return fmt.Errorf("entry %d has %d tokens, want 1..%d", i, len(cmd), maxEntryTokens)
 		}
 		for j, tok := range cmd {
+			if !utf8.ValidString(tok) {
+				// A set built in Go can hold bytes JSON cannot carry; the
+				// encoder would write U+FFFD and the file would no longer
+				// say what the daemon matched against.
+				return fmt.Errorf("entry %d token %d is not valid UTF-8", i, j)
+			}
 			if n := utf8.RuneCountInString(tok); n == 0 || n > maxTokenChars {
 				return fmt.Errorf("entry %d token %d has %d characters, want 1..%d", i, j, n, maxTokenChars)
 			}

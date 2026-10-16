@@ -108,15 +108,45 @@ func (e SecretEnv) reveal() map[string]string {
 	return e.vals()
 }
 
-// UnmarshalJSON reads an object of strings; null is empty. Duplicate and
-// case-variant keys are refused earlier, by Decode's key check.
+// UnmarshalJSON reads an object of strings; null is empty. Exact duplicate
+// keys are refused earlier, by Decode's key check (which gives maps the
+// duplicate check only). Keys that differ only in case ("TOKEN", "token")
+// are distinct to encoding/json, so they are refused here: environment
+// variable names are case-insensitive on Windows, and which value would win
+// is up to the platform.
 func (e *SecretEnv) UnmarshalJSON(data []byte) error {
 	var m map[string]string
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		for _, prev := range keys {
+			if strings.EqualFold(k, prev) {
+				return fmt.Errorf("secret_env keys %q and %q differ only in case", prev, k)
+			}
+		}
+		keys = append(keys, k)
+	}
 	*e = NewSecretEnv(m)
 	return nil
+}
+
+// Equal reports whether e and o hold the same variables with the same
+// values. reflect.DeepEqual cannot see through the func that hides them;
+// go-cmp uses this method.
+func (e SecretEnv) Equal(o SecretEnv) bool {
+	if e.Len() != o.Len() {
+		return false
+	}
+	for _, k := range e.Keys() {
+		a, _ := e.Value(k)
+		b, ok := o.Value(k)
+		if !ok || a != b {
+			return false
+		}
+	}
+	return true
 }
 
 // spawnPlain is SpawnParams without its methods, for encoding.

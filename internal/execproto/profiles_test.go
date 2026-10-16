@@ -274,6 +274,7 @@ func TestEncodeProfiles_RejectsInvalid(t *testing.T) {
 		"no commands":     {Version: 1, Profiles: []Profile{{Name: "a"}}},
 		"<args> not last": {Version: 1, Profiles: []Profile{{Name: "a", Commands: [][]string{{"npm", "<args>", "x"}}}}},
 		"empty token":     {Version: 1, Profiles: []Profile{{Name: "a", Commands: [][]string{{"npm", ""}}}}},
+		"invalid UTF-8":   {Version: 1, Profiles: []Profile{{Name: "a", Commands: [][]string{{"npm", "\xff"}}}}},
 	}
 	for name, set := range cases {
 		if _, _, err := EncodeProfiles(set); err == nil {

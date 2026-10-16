@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -245,4 +247,124 @@ func enumHasNull(vals []any) bool {
 		}
 	}
 	return false
+}
+
+// TestDecodeDeepNestingBounded: the key check of Decode must cost no more
+// than the decode it guards. The first version built a path string per
+// level and kept every one alive, so memory grew with depth²: the re-review
+// measured 9.7 GiB for a 2 MiB spawn frame of nested objects with long keys
+// under argv. A frame of about 1 MiB must now be refused within a small,
+// fixed allocation budget, both when the nesting sits under a field of the
+// wrong kind (argv is an array of strings) and when it goes into `any`.
+func TestDecodeDeepNestingBounded(t *testing.T) {
+	key := strings.Repeat("a", 2000)
+	const depth = 500 // ~1 MiB with these keys
+	nested := strings.Repeat(`{"`+key+`":`, depth) + "1" + strings.Repeat("}", depth)
+	frames := map[string]struct {
+		raw string
+		v   func() any
+	}{
+		"under argv":       {`{"call_id":"call_1","argv":` + nested + `,"timeout_ms":1000,"authz":{"decision_id":"dec_1","profile":"","approved":false,"kind":"tool"}}`, func() any { return new(SpawnParams) }},
+		"into any":         {nested, func() any { return new(any) }},
+		"under secret_env": {`{"call_id":"call_1","argv":["go"],"timeout_ms":1000,"secret_env":` + nested + `,"authz":{"decision_id":"dec_1","profile":"","approved":true,"kind":"harness"}}`, func() any { return new(SpawnParams) }},
+	}
+	const budget = 64 << 20
+	for name, f := range frames {
+		if len(f.raw) < 900<<10 {
+			t.Fatalf("%s: frame is %d bytes, want about 1 MiB", name, len(f.raw))
+		}
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		err := Decode([]byte(f.raw), f.v())
+		runtime.ReadMemStats(&after)
+		if err == nil {
+			t.Errorf("%s: Decode accepted a %d-deep frame", name, depth)
+		}
+		t.Logf("%s: %d bytes in, %d KiB allocated", name, len(f.raw), (after.TotalAlloc-before.TotalAlloc)>>10)
+		if got := after.TotalAlloc - before.TotalAlloc; got > budget {
+			t.Errorf("%s: Decode allocated %d MiB, budget %d MiB", name, got>>20, budget>>20)
+		}
+	}
+}
+
+// TestDecodeDepthCap: no A06 message nests deeper than about 6 levels;
+// anything past 64 is refused with an error, never silently passed.
+func TestDecodeDepthCap(t *testing.T) {
+	for depth, ok := range map[int]bool{1: true, 64: true, 65: false, 10000: false} {
+		raw := strings.Repeat("[", depth) + strings.Repeat("]", depth)
+		err := Decode([]byte(raw), new(any))
+		if (err == nil) != ok {
+			t.Errorf("depth %d: Decode error = %v, want ok=%v", depth, err, ok)
+		}
+	}
+}
+
+// TestDecodeRejectsSecretEnvCaseVariants: environment variable names are
+// case-insensitive on Windows, so {"K":..,"k":..} would set one variable
+// with whichever value the platform picks.
+func TestDecodeRejectsSecretEnvCaseVariants(t *testing.T) {
+	raw := `{"call_id":"call_1","argv":["go"],"timeout_ms":1000,"secret_env":{"TOKEN":"a","token":"b"},"authz":{"decision_id":"dec_1","profile":"","approved":true,"kind":"harness"}}`
+	if err := Decode([]byte(raw), new(SpawnParams)); err == nil {
+		t.Errorf("Decode accepted case-variant secret_env keys")
+	}
+}
+
+// TestSecretEnvEqual: SecretEnv hides its values behind a func, which
+// reflect.DeepEqual and go-cmp cannot compare; Equal compares contents.
+func TestSecretEnvEqual(t *testing.T) {
+	a := NewSecretEnv(map[string]string{"K": "v"})
+	cases := []struct {
+		name string
+		x, y SecretEnv
+		want bool
+	}{
+		{"same contents", a, NewSecretEnv(map[string]string{"K": "v"}), true},
+		{"both empty", SecretEnv{}, NewSecretEnv(nil), true},
+		{"other value", a, NewSecretEnv(map[string]string{"K": "w"}), false},
+		{"other key", a, NewSecretEnv(map[string]string{"L": "v"}), false},
+		{"empty vs set", SecretEnv{}, a, false},
+		{"extra key", a, NewSecretEnv(map[string]string{"K": "v", "L": "v"}), false},
+	}
+	for _, tc := range cases {
+		if got := tc.x.Equal(tc.y); got != tc.want {
+			t.Errorf("%s: Equal = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestWireTypesHaveNoEmbeddedFields: the key check (objectShape) maps each
+// exported field to its JSON name and does not implement encoding/json's
+// promotion of embedded fields or the `json:"-,"` spelling of a field named
+// "-". A wire type that gained either would make the check refuse valid
+// keys or accept invalid ones; this pins the assumption.
+func TestWireTypesHaveNoEmbeddedFields(t *testing.T) {
+	seen := map[reflect.Type]bool{}
+	var walk func(reflect.Type, string)
+	walk = func(typ reflect.Type, at string) {
+		for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Map {
+			typ = typ.Elem()
+		}
+		if typ.Kind() != reflect.Struct || seen[typ] || opaqueTypes[typ] {
+			return
+		}
+		seen[typ] = true
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			if f.Anonymous {
+				t.Errorf("%s.%s is an embedded field", at, f.Name)
+			}
+			if strings.HasPrefix(f.Tag.Get("json"), "-,") {
+				t.Errorf("%s.%s uses the json:\"-,\" spelling", at, f.Name)
+			}
+			walk(f.Type, at+"."+f.Name)
+		}
+	}
+	for _, tc := range goldenCases {
+		v := tc.newT()
+		walk(reflect.TypeOf(v), reflect.TypeOf(v).Elem().Name())
+	}
+	if len(seen) < 20 {
+		t.Fatalf("walked only %d types", len(seen))
+	}
 }
