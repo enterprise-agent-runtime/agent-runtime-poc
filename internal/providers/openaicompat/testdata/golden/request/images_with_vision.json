@@ -1,0 +1,28 @@
+{
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "look",
+          "type": "text"
+        },
+        {
+          "image_url": {
+            "url": "data:image/png;base64,iVBO"
+          },
+          "type": "image_url"
+        },
+        {
+          "text": "[document: README]\nnotes",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "llava",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  }
+}

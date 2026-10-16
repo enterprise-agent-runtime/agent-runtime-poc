@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/artifacts/repo-map.json",
+  "title": "repo-map v1 (task T6)",
+  "type": "object",
+  "required": [
+    "languages",
+    "entry_points",
+    "build_commands",
+    "test_commands",
+    "notes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "languages": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "files"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "share": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "entry_points": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/relPath"
+      },
+      "maxItems": 50
+    },
+    "build_commands": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "maxItems": 20
+    },
+    "test_commands": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "maxItems": 20
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 4000
+    }
+  }
+}

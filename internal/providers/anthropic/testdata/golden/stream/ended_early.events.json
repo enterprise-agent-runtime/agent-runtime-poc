@@ -1,0 +1,27 @@
+[
+  {
+    "index": 0,
+    "model": "claude-sonnet-x",
+    "provider": "anthropic",
+    "request_id": "req_test",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "text": "cut",
+    "type": "text_delta"
+  },
+  {
+    "error": {
+      "code": "provider_unavailable",
+      "details": {
+        "note": "stream ended early",
+        "request_id": "req_test"
+      },
+      "message": "stream ended early",
+      "retryable": true
+    },
+    "index": 0,
+    "type": "error"
+  }
+]

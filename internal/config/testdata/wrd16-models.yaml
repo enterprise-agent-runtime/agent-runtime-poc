@@ -1,0 +1,76 @@
+# WRD-16 §6.1 catalog, with placeholder hosts replaced by valid ones.
+providers:
+  - id: anthropic
+    protocol: anthropic-messages
+    base_url: https://api.anthropic.com
+    auth: { mode: api_key, secret: "secret://providers/anthropic/api_key" }
+    tier: T3
+  - id: ollama
+    protocol: openai-compatible
+    base_url: http://127.0.0.1:11434/v1
+    auth: { mode: none }
+    tier: T0
+  - id: lmstudio
+    protocol: openai-compatible
+    base_url: http://127.0.0.1:1234/v1
+    auth: { mode: none }
+    tier: T0
+  - id: company-vllm
+    protocol: openai-compatible
+    base_url: https://llm.your-vps.example/v1
+    auth: { mode: gateway, kind: bearer, secret: "secret://providers/company-vllm/token" }
+    tier: T1
+  - id: azure-openai
+    protocol: openai-compatible
+    base_url: https://resource.openai.azure.com/openai/v1
+    auth: { mode: api_key, header: api-key, secret: "secret://providers/azure-openai/api_key" }
+    tier: T2
+  - id: openai
+    protocol: openai-compatible
+    base_url: https://api.openai.com/v1
+    auth: { mode: api_key, secret: "secret://providers/openai/api_key" }
+    tier: T3
+harnesses:
+  - id: copilot
+    kind: copilot-sdk
+    billing: subscription
+    vendor_terms: permitted
+    tier: T4
+    enabled: true
+  - id: codex
+    kind: codex-app-server
+    billing: chatgpt_login
+    vendor_terms: tolerated
+    tier: T4
+    enabled: false
+  - id: claude-code
+    kind: claude-code-cli
+    billing: subscription_personal
+    vendor_terms: personal_use_only
+    tier: T4
+    enabled: false
+models:
+  - id: anthropic/claude-sonnet
+    provider: anthropic
+    model: claude-sonnet-x
+    capabilities: { tool_calling: native, structured_output: true, streaming: true, max_context: 200000, max_output: 64000 }
+    pricing: { input_per_mtok: 3.00, output_per_mtok: 15.00, currency: USD }
+    quality_prior: { plan: 0.9, implement: 0.9, verify: 0.9, summarize: 0.9 }
+  - id: local/qwen-coder-32b
+    provider: ollama
+    model: qwen2.5-coder:32b
+    capabilities: { tool_calling: native, structured_output: true, streaming: true, max_context: 32768, max_output: 8192 }
+    pricing: null
+    quality_prior: { plan: 0.6, implement: 0.55, verify: 0.7, summarize: 0.8 }
+  - id: company/qwen-coder-32b
+    provider: company-vllm
+    model: Qwen/Qwen2.5-Coder-32B-Instruct
+    capabilities: { tool_calling: native, structured_output: true, streaming: true, max_context: 32768, max_output: 8192 }
+    pricing: null
+    quality_prior: { plan: 0.6, implement: 0.55, verify: 0.7, summarize: 0.8 }
+  - id: local/qwen-coder-7b
+    provider: ollama
+    model: qwen2.5-coder:7b
+    capabilities: { tool_calling: emulated, structured_output: false, streaming: true, max_context: 32768, max_output: 4096 }
+    pricing: null
+    quality_prior: { plan: 0.3, implement: 0.25, verify: 0.5, summarize: 0.7 }

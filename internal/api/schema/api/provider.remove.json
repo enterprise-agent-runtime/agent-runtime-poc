@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/provider.remove.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "provider_id",
+        "confirm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "confirm": {
+          "$ref": "types.json#/$defs/confirmTrue"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "removed_models": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/modelId"
+          },
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

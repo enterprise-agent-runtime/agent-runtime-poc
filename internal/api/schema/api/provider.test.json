@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/provider.test.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "provider_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        }
+      }
+    },
+    "result": {
+      "$ref": "types.json#/$defs/providerTest"
+    }
+  }
+}

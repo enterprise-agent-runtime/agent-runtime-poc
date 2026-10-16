@@ -1,0 +1,10 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  in [label="Action request\n{actor: agent@ver, task, tool, operation, resource, args,\ndata classification, taint, environment, prior approvals}", fillcolor="#DCE6F2", width=6.4];
+  cap [label="1. Capability check\nIs (tool, operation, resource) inside the task's granted capabilities?\n(manifest ∩ workspace grants ∩ session grants)"];
+  plat [label="2. Platform invariants (non-overridable)\nsecret paths, host escape, git hooks/config, destructive ops outside worktree"];
+  rules [label="3. Rule sets, most specific first\nplatform defaults → org bundle → user policy → workspace policy (restrict-only) → session grants"];
+  merge [label="4. Combine\nany DENY → deny; else any APPROVAL_REQUIRED → approval; else ALLOW if an explicit rule or capability allows\nobligations = union (sandbox_only, redact, quota, restrict_model, timeout)"];
+  out [label="Decision {effect, reason, matched_rules[], obligations[], approver, ttl} → event + explanation to UI", fillcolor="#FFF8E7", width=6.4];
+  in -> cap; cap -> plat [label="in grants"]; cap -> out [label="not granted → deny"]; plat -> rules [label="pass"]; plat -> out [label="violated → deny"]; rules -> merge -> out;
+}

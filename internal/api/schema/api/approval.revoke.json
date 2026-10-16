@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/approval.revoke.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "approval_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "approval_id",
+        "revoked_at"
+      ],
+      "properties": {
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId"
+        },
+        "revoked_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        }
+      }
+    }
+  }
+}

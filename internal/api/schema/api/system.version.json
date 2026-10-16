@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/system.version.json",
+  "$defs": {
+    "params": {
+      "$ref": "types.json#/$defs/empty"
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "version",
+        "commit",
+        "go_version"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "go_version": {
+          "type": "string"
+        },
+        "protocol": {
+          "const": "warden.poc/1"
+        },
+        "os": {
+          "enum": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        "arch": {
+          "type": "string"
+        },
+        "build_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "NEW; contains \"shared\" for shared builds (CF-21)"
+        }
+      }
+    }
+  }
+}

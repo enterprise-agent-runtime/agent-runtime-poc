@@ -1,0 +1,7 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  cp [label="Control plane services (Go, Postgres, object storage)", fillcolor="#DCE6F2", width=6];
+  i [label="Identity & RBAC\nOIDC/SAML · roles: admin, security,\nplatform, developer, auditor"]; r [label="Registries\nagents (OCI) · models/providers\n· policies (signed bundles)"]; f [label="Fleet & jobs\nworker enrollment (mTLS)\njob queue · scheduling"]; a [label="Audit & analytics\nevent ingestion · retention\n· dashboards · exports"];
+  ex [label="Execution plane: wardend instances (desktop, CI, workers) — pull bundles, push events", fillcolor="#FFF8E7", width=6];
+  cp -> i; cp -> r; cp -> f; cp -> a; i -> ex; r -> ex; f -> ex; ex -> a;
+}

@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/audit.verify.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^(/|[A-Za-z]:[/\\\\])",
+          "maxLength": 4096
+        },
+        "strict": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "session_id"
+          ]
+        },
+        {
+          "required": [
+            "file"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "ok",
+        "chain_ok",
+        "strict_ok",
+        "checkpoint_ok",
+        "events",
+        "violations"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "chain_ok": {
+          "type": "boolean"
+        },
+        "strict_ok": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "null when strict was false"
+        },
+        "checkpoint_ok": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "$ref": "types.json#/$defs/violation"
+          }
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId",
+          "description": "NEW"
+        },
+        "anchored": {
+          "type": "boolean",
+          "description": "NEW: a sys-chain anchor covers the chain head (closed sessions)"
+        },
+        "tool_calls_checked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "NEW: tool.exec.start events checked in strict mode"
+        },
+        "keys": {
+          "type": "array",
+          "description": "NEW",
+          "items": {
+            "type": "object",
+            "required": [
+              "key_id",
+              "source",
+              "known"
+            ],
+            "properties": {
+              "key_id": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "local",
+                  "export"
+                ]
+              },
+              "known": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "verified_at": {
+          "$ref": "../common.json#/$defs/timestamp",
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

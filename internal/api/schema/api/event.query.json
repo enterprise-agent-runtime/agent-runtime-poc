@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/event.query.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "after_seq"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/sessionId"
+            },
+            {
+              "enum": [
+                "sys",
+                "*"
+              ]
+            }
+          ],
+          "description": "a session chain, the system chain (NEW value \"sys\"), or all"
+        },
+        "after_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 200
+        },
+        "types": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]+(\\.[a-z]+){0,3}(\\.\\*)?$"
+          }
+        },
+        "resolve_blobs": {
+          "type": "boolean",
+          "default": false,
+          "description": "NEW: add payload_resolved for spilled payloads"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "events",
+        "next_seq"
+      ],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "A04 envelope; with resolve_blobs, spilled events carry an extra sibling member payload_resolved (not part of the hashed envelope)"
+          }
+        },
+        "next_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "seq of the last returned event, or after_seq if none"
+        },
+        "head_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "NEW"
+        },
+        "has_more": {
+          "type": "boolean",
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

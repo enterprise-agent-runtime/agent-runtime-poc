@@ -1,0 +1,22 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8]; node [shape=box];
+  start [label="Task started\n(worktree + sandbox ready)", shape=ellipse, fillcolor="#DCE6F2"];
+  ctx [label="Build context\nmanifest instructions + task input\n+ input artifacts + workspace summary\n+ tagged tool results"];
+  budget [label="Budget check\nsteps ≤ max_steps · tokens ≤ max_tokens\nwall-clock ≤ timeout", shape=diamond, fillcolor="#FFF8E7"];
+  route [label="Model Router selects provider/model\n(classification tier, capabilities, fallback)"];
+  call [label="Canonical Model API call\n(host-side, streaming, tools = granted only)"];
+  kind [label="Response kind?", shape=diamond, fillcolor="#FFF8E7"];
+  final [label="Validate output against output schema\n→ produce artifacts → task succeeded", fillcolor="#EAF7EA"];
+  pdp [label="Policy Decision Point\nevaluate(action, capability grants, rules, taint)"];
+  dec [label="Decision", shape=diamond, fillcolor="#FFF8E7"];
+  appr [label="Approval request\n(UI/CLI; scope once/task/session/workspace)\ntask → waiting_for_approval"];
+  exe [label="Execute tool in sandbox (warden-exec)\nobligations applied (timeouts, redaction)"];
+  obs [label="Observe result\ntag as untrusted content · secret-scan/redact\n· update taint · emit events"];
+  deny [label="Denied → structured reason\nreturned to model as tool error"];
+  compact [label="Context compaction\n(summarize older turns, keep artifacts refs)"];
+  fail [label="Budget exhausted →\ntask failed (budget) or checkpoint + escalate", fillcolor="#FDE9D9"];
+  start -> ctx -> budget; budget -> route [label="ok"]; budget -> fail [label="exceeded"]; route -> call -> kind;
+  kind -> final [label="final answer"]; kind -> pdp [label="tool proposal(s)"]; kind -> compact [label="context_too_long"]; compact -> ctx;
+  pdp -> dec; dec -> exe [label="allow (+obligations)"]; dec -> appr [label="approval_required"]; dec -> deny [label="deny"];
+  appr -> exe [label="approved"]; appr -> deny [label="rejected"]; exe -> obs; deny -> obs; obs -> ctx;
+}

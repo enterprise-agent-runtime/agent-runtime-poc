@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/provider.enable.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "provider_id",
+        "enabled"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "acknowledge_terms": {
+          "type": "boolean"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "vendor_terms"
+      ],
+      "properties": {
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId",
+          "description": "NEW"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "vendor_terms": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/vendorTerms"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "description": "NEW: providerView/harnessView status after the change"
+        }
+      }
+    }
+  }
+}

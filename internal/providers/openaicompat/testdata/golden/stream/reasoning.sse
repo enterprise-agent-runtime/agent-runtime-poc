@@ -1,0 +1,10 @@
+data: {"id":"c5","model":"m","choices":[{"index":0,"delta":{"reasoning_content":"think "},"finish_reason":null}]}
+
+data: {"id":"c5","model":"m","choices":[{"index":0,"delta":{"reasoning":"more"},"finish_reason":null}]}
+
+data: {"id":"c5","model":"m","choices":[{"index":0,"delta":{"content":"Answer"},"finish_reason":"stop"}]}
+
+data: {"id":"c5","model":"m","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":7,"completion_tokens_details":{"reasoning_tokens":4}}}
+
+data: [DONE]
+

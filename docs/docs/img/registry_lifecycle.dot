@@ -1,0 +1,5 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  dev [label="Develop\n(manifest + prompts\n+ schemas + evals)"]; run [label="Run locally\n(sandboxed)"]; ev [label="Evaluate\n(suite, thresholds)"]; sec [label="Security & policy\nreview"]; sign [label="Sign & publish\n(OCI artifact + signature)"]; asg [label="Assign\n(teams, workspaces)"]; dep [label="Deploy / pin\n(version, digest)"]; mon [label="Monitor\n(success, cost,\nviolations)"]; rb [label="Update or\nrollback"];
+  dev -> run -> ev -> sec -> sign -> asg -> dep -> mon -> rb; rb -> dev [label="new version"];
+}

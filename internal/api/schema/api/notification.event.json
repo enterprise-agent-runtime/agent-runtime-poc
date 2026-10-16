@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/notification.event.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "description": "All members other than subscription_id form one A04 envelope; validate them against ../events/envelope.json after removing subscription_id.",
+      "required": [
+        "subscription_id",
+        "v",
+        "seq",
+        "id",
+        "ts",
+        "type",
+        "chain",
+        "payload",
+        "prev_hash",
+        "hash"
+      ],
+      "properties": {
+        "subscription_id": {
+          "$ref": "../common.json#/$defs/subscriptionId"
+        }
+      }
+    }
+  }
+}

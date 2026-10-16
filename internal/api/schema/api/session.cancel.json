@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/session.cancel.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "task_id": {
+          "$ref": "../common.json#/$defs/taskId"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "cancelled_task_ids",
+        "run_status"
+      ],
+      "properties": {
+        "cancelled_task_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/taskId"
+          }
+        },
+        "run_status": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/runStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/runId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW"
+        },
+        "partial_artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/artifactId"
+          },
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

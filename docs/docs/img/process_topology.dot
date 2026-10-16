@@ -1,0 +1,12 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  subgraph cluster_host { label="Developer workstation (host)"; style="rounded,filled"; fillcolor="#F9FAFC"; color="#9DB0C4";
+    ui [label="Desktop shell\n(Tauri 2 webview,\nReact UI)"]; cli [label="warden CLI"];
+    d [label="wardend\n(runtime daemon, Go)\nsession · orchestrator · PDP\nrouter · executors · proxy", fillcolor="#FFF8E7", color="#D9A62E"];
+    kc [label="OS keychain\n(macOS Keychain /\nWindows Credential Mgr /\nlibsecret)"]; db [label="~/.warden/\nSQLite + artifacts\n+ worktrees"];
+    subgraph cluster_sb { label="Sandbox L1/L2 (per task)"; style="rounded,filled"; fillcolor="#EAF7EA"; color="#5FA65F";
+      ex [label="warden-exec\n(tool executor,\nJSON-RPC over pipe)"]; p [label="child processes\n(npm test, go build,\nsemgrep, MCP servers)"]; } }
+  m [label="Model endpoints\n(API key / IAM / local)", fillcolor="#F0F0F0"]; g [label="Allowlisted hosts\n(git remote, npm, PyPI)", fillcolor="#F0F0F0"];
+  ui -> d [label="JSON-RPC\n(unix socket / named pipe,\nper-session token)"]; cli -> d [label="JSON-RPC"]; d -> kc [label="read secret refs"]; d -> db;
+  d -> ex [label="tool commands"]; ex -> p; p -> d [label="egress proxy\n(CONNECT/SOCKS5)", style=dashed]; d -> m [label="TLS, credentials\ninjected host-side"]; d -> g [label="proxied, allowlisted,\ncredential injection"];
+}

@@ -1,0 +1,12 @@
+: PROCESSING
+
+data:{"id":"c3","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"function":{"name":"fs__read","arguments":{"path":"a"}}}]},"finish_reason":null}]}
+
+data: {"id":"c3","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"function":{"name":"fs__read"}}]},"finish_reason":null}]}
+
+data: {"id":"c3","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"fs__search","arguments":"{\"q\":1}"}}]},"finish_reason":null}]}
+
+data: {"id":"c3","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"function_call"}]}
+
+data: [DONE]
+

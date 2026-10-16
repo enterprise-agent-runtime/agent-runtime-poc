@@ -1,0 +1,5 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8]; node [fontsize=9];
+  intent -> context -> classify -> plan -> decompose -> delegate -> execute -> observe -> verify; verify -> repair [label="fail"]; repair -> execute; verify -> approve [label="pass"]; approve -> deliver -> audit;
+  repair [style="rounded,filled,dashed"];
+}

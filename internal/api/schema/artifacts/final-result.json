@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/artifacts/final-result.json",
+  "title": "final-result v1 (WRD-16 §7.4, WRD-09 §6)",
+  "type": "object",
+  "required": [
+    "summary",
+    "changed_files",
+    "verification",
+    "cost",
+    "chain_checkpoint"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/relPath"
+      },
+      "maxItems": 500
+    },
+    "verification": {
+      "enum": [
+        "pass",
+        "fail",
+        "not_run"
+      ]
+    },
+    "run_status": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "cost": {
+      "type": "object",
+      "required": [
+        "usd",
+        "input_tokens",
+        "output_tokens",
+        "quota",
+        "note"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quota": {
+          "type": "array",
+          "items": {
+            "$ref": "../events/payloads.json#/$defs/quota"
+          }
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        }
+      }
+    },
+    "chain_checkpoint": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "chain",
+        "last_seq",
+        "last_hash",
+        "key_id",
+        "signed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "$ref": "../common.json#/$defs/eventId"
+        },
+        "chain": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "last_seq": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "last_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "signed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "plan": {
+          "$ref": "../common.json#/$defs/artifactId"
+        },
+        "code_diff": {
+          "$ref": "../common.json#/$defs/artifactId"
+        },
+        "test_report": {
+          "$ref": "../common.json#/$defs/artifactId"
+        },
+        "repo_map": {
+          "$ref": "../common.json#/$defs/artifactId"
+        }
+      }
+    }
+  }
+}

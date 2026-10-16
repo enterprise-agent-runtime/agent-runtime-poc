@@ -1,0 +1,17 @@
+{
+  "messages": [
+    {
+      "content": "Respond with one JSON object matching this JSON Schema: {\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"integer\"}}}",
+      "role": "developer"
+    },
+    {
+      "content": "u",
+      "role": "user"
+    }
+  ],
+  "model": "qwen2.5-coder:32b",
+  "response_format": {
+    "type": "json_object"
+  },
+  "stream": true
+}

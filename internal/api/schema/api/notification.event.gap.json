@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/notification.event.gap.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "subscription_id",
+        "last_seq",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "subscription_id": {
+          "$ref": "../common.json#/$defs/subscriptionId"
+        },
+        "last_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "seq of the last event delivered on this subscription (or its after_seq if none)"
+        },
+        "reason": {
+          "enum": [
+            "overflow"
+          ]
+        }
+      }
+    }
+  }
+}

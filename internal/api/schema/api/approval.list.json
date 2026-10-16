@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/approval.list.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "granted",
+            "all"
+          ],
+          "default": "pending"
+        },
+        "include_workspace_grants": {
+          "type": "boolean",
+          "default": true,
+          "description": "NEW: with status granted/all, include workspace grants from other sessions of the same workspace"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "approvals"
+      ],
+      "properties": {
+        "approvals": {
+          "type": "array",
+          "items": {
+            "$ref": "types.json#/$defs/approval"
+          }
+        }
+      }
+    }
+  }
+}

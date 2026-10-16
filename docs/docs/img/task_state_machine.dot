@@ -1,0 +1,12 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8]; node [shape=box, style="rounded,filled"];
+  created -> queued [label="deps satisfied"]; queued -> running [label="scheduled\n(attempt n)"];
+  running -> waiting_for_approval [label="approval_required"]; waiting_for_approval -> running [label="approved"]; waiting_for_approval -> failed [label="rejected /\nexpired"];
+  running -> waiting_for_input [label="needs user input"]; waiting_for_input -> running [label="input provided"];
+  running -> succeeded [label="output validated"]; running -> failed [label="non-retryable error\nor attempts exhausted"];
+  running -> queued [label="retryable error\n& attempts < max\n(backoff)"];
+  running -> timed_out [label="timeout"]; timed_out -> queued [label="retry if allowed"];
+  running -> cancelled [label="cancel"]; queued -> cancelled [label="cancel"]; waiting_for_approval -> cancelled [label="cancel"];
+  created -> skipped [label="upstream failed &\non_failure=skip"]; created -> blocked [label="upstream failed &\non_failure=fail"];
+  succeeded [fillcolor="#EAF7EA"]; failed [fillcolor="#FDE9D9"]; cancelled [fillcolor="#F0F0F0"]; timed_out [fillcolor="#FDE9D9"]; skipped [fillcolor="#F0F0F0"]; blocked [fillcolor="#F0F0F0"];
+}

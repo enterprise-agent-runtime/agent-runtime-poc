@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/metrics.get.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "since": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        }
+      }
+    },
+    "nullableInt": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "nullableRate": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "medianP90": {
+      "type": "object",
+      "required": [
+        "median",
+        "p90"
+      ],
+      "properties": {
+        "median": {
+          "$ref": "#/$defs/nullableInt"
+        },
+        "p90": {
+          "$ref": "#/$defs/nullableInt"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "since",
+        "runs",
+        "prompts_per_task",
+        "time_to_first_approval_ms",
+        "plan_edit_rate",
+        "cancel_rate",
+        "time_to_verified_ms",
+        "delivery_prompts",
+        "approval_latency_ms",
+        "gate_review_ms",
+        "per_run"
+      ],
+      "properties": {
+        "since": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "origin runs in scope"
+        },
+        "prompts_per_task": {
+          "type": "object",
+          "required": [
+            "mean",
+            "median",
+            "max",
+            "per_run"
+          ],
+          "properties": {
+            "mean": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "median": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "max": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "per_run": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "run_id",
+                  "agent",
+                  "delivery",
+                  "by_task"
+                ],
+                "properties": {
+                  "run_id": {
+                    "$ref": "../common.json#/$defs/runId"
+                  },
+                  "agent": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "delivery": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "by_task": {
+                    "type": "object",
+                    "propertyNames": {
+                      "$ref": "../common.json#/$defs/taskKey"
+                    },
+                    "additionalProperties": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "time_to_first_approval_ms": {
+          "type": "object",
+          "required": [
+            "median",
+            "p90",
+            "per_run"
+          ],
+          "properties": {
+            "median": {
+              "$ref": "#/$defs/nullableInt"
+            },
+            "p90": {
+              "$ref": "#/$defs/nullableInt"
+            },
+            "per_run": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "run_id",
+                  "requested_after_ms",
+                  "decided_in_ms"
+                ],
+                "properties": {
+                  "run_id": {
+                    "$ref": "../common.json#/$defs/runId"
+                  },
+                  "requested_after_ms": {
+                    "$ref": "#/$defs/nullableInt"
+                  },
+                  "decided_in_ms": {
+                    "$ref": "#/$defs/nullableInt"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "plan_edit_rate": {
+          "type": "object",
+          "required": [
+            "value",
+            "edited",
+            "rejected",
+            "resolved"
+          ],
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/nullableRate"
+            },
+            "edited": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rejected": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "resolved": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "cancel_rate": {
+          "type": "object",
+          "required": [
+            "value",
+            "cancelled",
+            "started",
+            "resumed"
+          ],
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/nullableRate"
+            },
+            "cancelled": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "started": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "resumed": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "time_to_verified_ms": {
+          "type": "object",
+          "required": [
+            "median",
+            "p90",
+            "per_run"
+          ],
+          "properties": {
+            "median": {
+              "$ref": "#/$defs/nullableInt"
+            },
+            "p90": {
+              "$ref": "#/$defs/nullableInt"
+            },
+            "per_run": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "run_id",
+                  "value"
+                ],
+                "properties": {
+                  "run_id": {
+                    "$ref": "../common.json#/$defs/runId"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/nullableInt"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "delivery_prompts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "approval_latency_ms": {
+          "$ref": "#/$defs/medianP90"
+        },
+        "gate_review_ms": {
+          "type": "object",
+          "required": [
+            "gate-plan",
+            "gate-final"
+          ],
+          "properties": {
+            "gate-plan": {
+              "$ref": "#/$defs/nullableInt"
+            },
+            "gate-final": {
+              "$ref": "#/$defs/nullableInt"
+            }
+          }
+        },
+        "per_run": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "run_id",
+              "human_wait_ms",
+              "time_to_delivered_ms",
+              "denials",
+              "repair_rounds",
+              "h6"
+            ],
+            "properties": {
+              "run_id": {
+                "$ref": "../common.json#/$defs/runId"
+              },
+              "human_wait_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "time_to_delivered_ms": {
+                "$ref": "#/$defs/nullableInt"
+              },
+              "denials": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "top_denial_rules": {
+                "type": "array",
+                "items": {
+                  "$ref": "../common.json#/$defs/ruleId"
+                },
+                "maxItems": 5
+              },
+              "repair_rounds": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "h6": {
+                "type": "object",
+                "required": [
+                  "prompts",
+                  "delivery_prompts",
+                  "pass_prompts"
+                ],
+                "properties": {
+                  "prompts": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "delivery_prompts": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "pass_prompts": {
+                    "type": "boolean",
+                    "description": "prompts <= 3 (H6); the time criterion is judged on the screen capture"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,433 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/common.json",
+  "title": "Warden PoC shared identifiers and enumerations",
+  "$defs": {
+    "ulid": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "workspaceId": {
+      "type": "string",
+      "pattern": "^wsp_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "sessionId": {
+      "type": "string",
+      "pattern": "^ses_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^wfr_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^tsk_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "executionId": {
+      "type": "string",
+      "pattern": "^exe_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "artifactId": {
+      "type": "string",
+      "pattern": "^art_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "approvalId": {
+      "type": "string",
+      "pattern": "^apr_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "decisionId": {
+      "type": "string",
+      "pattern": "^dec_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "callId": {
+      "type": "string",
+      "pattern": "^call_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "modelCallId": {
+      "type": "string",
+      "pattern": "^mc_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "routingId": {
+      "type": "string",
+      "pattern": "^rt_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "sandboxId": {
+      "type": "string",
+      "pattern": "^sb_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "subscriptionId": {
+      "type": "string",
+      "pattern": "^sub_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "chain": {
+      "anyOf": [
+        {
+          "const": "sys"
+        },
+        {
+          "$ref": "#/$defs/sessionId"
+        }
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "gitCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "catalogId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "modelId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}(/[A-Za-z0-9._:-]{1,128})?$"
+    },
+    "relPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^/]",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)"
+      }
+    },
+    "hostPort": {
+      "type": "string",
+      "pattern": "^([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\]):[0-9]{1,5}$"
+    },
+    "secretRef": {
+      "type": "string",
+      "pattern": "^secret://(providers/[a-z0-9][a-z0-9._-]{0,63}/(api_key|token|client_key|client_cert)|keys/checkpoint/ed25519)$"
+    },
+    "localUser": {
+      "type": "string",
+      "pattern": "^local:[^\\s]+$"
+    },
+    "usd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "classification": {
+      "enum": [
+        "public",
+        "internal",
+        "confidential"
+      ]
+    },
+    "tier": {
+      "enum": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4"
+      ]
+    },
+    "sandboxLevel": {
+      "enum": [
+        "L1",
+        "L2"
+      ]
+    },
+    "sandboxBackend": {
+      "enum": [
+        "seatbelt",
+        "bwrap",
+        "docker"
+      ]
+    },
+    "riskClass": {
+      "enum": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6"
+      ]
+    },
+    "effect": {
+      "enum": [
+        "allow",
+        "deny",
+        "approval_required"
+      ]
+    },
+    "approvalScope": {
+      "enum": [
+        "once",
+        "task",
+        "session",
+        "workspace"
+      ]
+    },
+    "approvalDecision": {
+      "enum": [
+        "approve",
+        "reject",
+        "expire",
+        "cancel"
+      ]
+    },
+    "taskState": {
+      "enum": [
+        "created",
+        "queued",
+        "running",
+        "waiting_for_approval",
+        "waiting_for_input",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "skipped",
+        "blocked"
+      ]
+    },
+    "taskReason": {
+      "enum": [
+        "deps_met",
+        "scheduled",
+        "approval_pending",
+        "approved",
+        "input_needed",
+        "input_provided",
+        "output_valid",
+        "retry",
+        "budget",
+        "policy_denied",
+        "schema",
+        "verification",
+        "interrupted",
+        "provider",
+        "tool",
+        "resource",
+        "timeout",
+        "cancelled",
+        "rejected",
+        "approval_expired",
+        "no_admissible_model",
+        "upstream_failed"
+      ]
+    },
+    "runStatus": {
+      "enum": [
+        "running",
+        "waiting",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "gateDecision": {
+      "enum": [
+        "approve",
+        "reject"
+      ]
+    },
+    "gateKey": {
+      "enum": [
+        "gate-plan",
+        "gate-final"
+      ]
+    },
+    "taskKey": {
+      "enum": [
+        "plan",
+        "gate-plan",
+        "implement",
+        "verify",
+        "repair-1",
+        "verify-2",
+        "gate-final",
+        "summarize"
+      ]
+    },
+    "deliveryAction": {
+      "enum": [
+        "apply_branch",
+        "commit",
+        "push",
+        "export_patch"
+      ]
+    },
+    "taskClass": {
+      "enum": [
+        "plan",
+        "implement",
+        "verify",
+        "summarize"
+      ]
+    },
+    "coderMode": {
+      "enum": [
+        "plan",
+        "implement",
+        "repair",
+        "summarize"
+      ]
+    },
+    "strategy": {
+      "enum": [
+        "prefer-internal",
+        "quality-first",
+        "cost-first",
+        "latency-first"
+      ]
+    },
+    "protocol": {
+      "enum": [
+        "anthropic-messages",
+        "openai-compatible"
+      ]
+    },
+    "authMode": {
+      "enum": [
+        "none",
+        "api_key",
+        "gateway"
+      ]
+    },
+    "gatewayKind": {
+      "enum": [
+        "bearer",
+        "mtls"
+      ]
+    },
+    "harnessKind": {
+      "enum": [
+        "copilot-sdk",
+        "codex-app-server",
+        "claude-code-cli"
+      ]
+    },
+    "harnessRunMode": {
+      "enum": [
+        "split",
+        "colocated"
+      ]
+    },
+    "billingMode": {
+      "enum": [
+        "api_key",
+        "none",
+        "gateway",
+        "harness_subscription"
+      ]
+    },
+    "vendorTerms": {
+      "enum": [
+        "permitted",
+        "tolerated",
+        "personal_use_only",
+        "prohibited"
+      ]
+    },
+    "modelErrorCode": {
+      "enum": [
+        "rate_limited",
+        "auth_failed",
+        "context_too_long",
+        "provider_unavailable",
+        "content_filtered",
+        "invalid_request",
+        "tool_format_unsupported",
+        "model_not_found",
+        "timeout",
+        "cancelled"
+      ]
+    },
+    "stopReason": {
+      "enum": [
+        "end_turn",
+        "tool_use",
+        "max_tokens",
+        "stop_sequence",
+        "content_filter"
+      ]
+    },
+    "artifactType": {
+      "enum": [
+        "plan",
+        "code-diff",
+        "test-report",
+        "repo-map",
+        "final-result",
+        "checkpoint"
+      ]
+    },
+    "candidateStatus": {
+      "enum": [
+        "chosen",
+        "admitted",
+        "rejected",
+        "unhealthy"
+      ]
+    },
+    "rejectionCode": {
+      "enum": [
+        "tier_not_admitted",
+        "capability_missing",
+        "context_too_small",
+        "denied_by_policy",
+        "over_budget",
+        "circuit_open",
+        "harness_not_pinned",
+        "harness_disabled",
+        "harness_locked_shared_mode",
+        "provider_unconfigured",
+        "credential_missing"
+      ]
+    },
+    "actorKind": {
+      "enum": [
+        "user",
+        "agent",
+        "runtime",
+        "harness"
+      ]
+    },
+    "policyTool": {
+      "enum": [
+        "fs",
+        "proc",
+        "git",
+        "proxy",
+        "harness",
+        "approval"
+      ]
+    },
+    "ruleId": {
+      "type": "string",
+      "pattern": "^(invariant\\.INV-[1-9]|capability\\.(not_granted|granted)|platform\\.[a-z0-9-]+|user\\.[a-z0-9-]+|grant\\.apr_[0-9A-HJKMNP-TV-Z]{26})$"
+    },
+    "approvalKind": {
+      "enum": [
+        "action",
+        "gate",
+        "question"
+      ]
+    },
+    "toolId": {
+      "type": "string",
+      "pattern": "^(fs|proc|git|approval|harness)\\.[a-z0-9_.-]{1,64}$",
+      "description": "Known values: fs.read fs.list fs.search fs.write fs.patch proc.exec git.status git.diff git.commit git.push approval.request git.apply_branch git.export_patch; harness.<name> for unmapped colocated-harness tools (A12)."
+    }
+  }
+}

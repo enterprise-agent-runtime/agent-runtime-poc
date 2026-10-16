@@ -1,0 +1,8 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  l0 [label="L0 — none\n(never used for agent-requested\nprocesses; host tools only\nfor explicit host-scoped ops)", fillcolor="#FDE9D9"];
+  l1 [label="L1 — OS-native process sandbox\nLinux: bubblewrap + seccomp + user/pid/net ns\nmacOS: Seatbelt (sandbox-exec profile)\n+ egress proxy · MVP default on macOS/Linux", fillcolor="#FFF8E7"];
+  l2 [label="L2 — rootless OCI container\nDocker/Podman, read-only image,\nworktree bind mount, no-new-privileges,\ncap-drop ALL, netns → proxy · MVP default on Windows,\noptional everywhere", fillcolor="#EAF7EA"];
+  l3 [label="L3 — microVM / hardened\ngVisor · Firecracker · Apple containers\nfor CI/remote workers and untrusted repos\n(Phase 3+)", fillcolor="#DCE6F2"];
+  l0 -> l1 -> l2 -> l3 [label="stronger isolation →"];
+}

@@ -1,0 +1,19 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  subgraph cluster_exp { label="Experience layer (clients — no agent logic)"; style="rounded,filled"; fillcolor="#EEF3F9"; color="#9DB0C4";
+    ui [label="Desktop UI\n(Tauri 2 + React/TS)"]; cli [label="CLI\n(warden)"]; ci [label="CI / headless\n(warden run --non-interactive)"]; api [label="Remote API\n(later: workers, control plane)"]; }
+  rt_api [label="Runtime API (JSON-RPC 2.0 over local socket / named pipe)", fillcolor="#DCE6F2", width=6.4];
+  subgraph cluster_kernel { label="Agent Runtime kernel (wardend) — the trust boundary"; style="rounded,filled"; fillcolor="#FFF8E7"; color="#D9A62E";
+    sess [label="Session &\nworkflow state"]; orch [label="Orchestrator\n(planner, DAG scheduler,\njoins, retries, repair)"]; loop [label="Agent loop\n(context, model call,\nproposal handling)"];
+    pdp [label="Policy Decision Point\n(capabilities, rules,\napprovals, obligations)", fillcolor="#FDE9D9", color="#C0504D"]; router [label="Model Router\n(classification tiers,\ncapabilities, fallback)"]; ctx [label="Context manager\n(selection, provenance,\ncompaction, redaction)"];
+    audit [label="Event & artifact store\n(SQLite, hash chain)"]; secrets [label="Secrets broker\n(OS keychain, refs only)"]; }
+  subgraph cluster_ports { label="Ports (adapters behind stable interfaces)"; style="rounded,filled"; fillcolor="#EEF3F9"; color="#9DB0C4";
+    prov [label="Model provider adapters\nanthropic · openai · gemini\nbedrock · vertex · foundry\nopenai-compatible · ollama"]; harn [label="External harness adapters\nCopilot SDK · Codex SDK\nClaude Code (headless)"];
+    exec [label="Tool executors\n(run inside sandbox via\nwarden-exec)"]; proxy [label="Egress proxy\n(allowlist + credential\ninjection)"]; }
+  subgraph cluster_sb { label="Sandbox (per task) — no secrets, no direct network"; style="rounded,filled"; fillcolor="#EAF7EA"; color="#5FA65F";
+    wt [label="Git worktree\n(rw)"]; tc [label="Toolchain\n(ro)"]; procs [label="Agent-requested processes\n(build, test, lint, MCP stdio)"]; }
+  ext [label="Model endpoints / vendor agents / allowlisted hosts (git remote, package registries)", fillcolor="#F0F0F0", width=6.4];
+  ui -> rt_api; cli -> rt_api; ci -> rt_api; api -> rt_api;
+  rt_api -> sess; sess -> orch; orch -> loop; loop -> pdp; loop -> router; loop -> ctx; pdp -> audit; loop -> audit; router -> prov; router -> harn; pdp -> exec; secrets -> prov; secrets -> proxy;
+  exec -> wt; exec -> procs; procs -> proxy [label="only via proxy"]; prov -> ext; harn -> procs; proxy -> ext; tc -> procs [style=dashed, arrowhead=none];
+}

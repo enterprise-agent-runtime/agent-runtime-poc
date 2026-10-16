@@ -1,0 +1,6 @@
+data: {"id":"c4","model":"m","choices":[],"prompt_filter_results":[{"prompt_index":0}]}
+
+data: {"id":"c4","model":"gpt-4o-deploy","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}data: {"id":"c4","model":"gpt-4o-deploy","choices":[{"index":0,"delta":{"content":" there"},"finish_reason":"length"}]}
+
+data: [DONE]
+

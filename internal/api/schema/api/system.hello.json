@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/system.hello.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "token",
+        "client",
+        "protocol"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "client": {
+          "type": "object",
+          "required": [
+            "name",
+            "version"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z0-9-]{1,32}$"
+            },
+            "version": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        },
+        "protocol": {
+          "type": "string",
+          "pattern": "^warden\\.poc/[0-9]+$"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "daemon_version",
+        "protocol",
+        "mode",
+        "features"
+      ],
+      "properties": {
+        "daemon_version": {
+          "type": "string"
+        },
+        "protocol": {
+          "const": "warden.poc/1"
+        },
+        "mode": {
+          "enum": [
+            "personal",
+            "shared"
+          ]
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "connection_id": {
+          "type": "string",
+          "description": "NEW, for log correlation"
+        },
+        "user": {
+          "$ref": "../common.json#/$defs/localUser",
+          "description": "NEW"
+        },
+        "server_time": {
+          "$ref": "../common.json#/$defs/timestamp",
+          "description": "NEW"
+        },
+        "limits": {
+          "type": "object",
+          "description": "NEW, values of §2.5",
+          "properties": {
+            "max_message_bytes": {
+              "type": "integer"
+            },
+            "max_inflight_requests": {
+              "type": "integer"
+            },
+            "max_subscriptions": {
+              "type": "integer"
+            },
+            "max_query_limit": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/policy.list.json",
+  "$defs": {
+    "params": {
+      "$ref": "types.json#/$defs/empty"
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "layers"
+      ],
+      "properties": {
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "layer",
+              "files",
+              "rules"
+            ],
+            "properties": {
+              "layer": {
+                "enum": [
+                  "invariant",
+                  "platform",
+                  "user"
+                ]
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "digest"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "digest": {
+                      "$ref": "../common.json#/$defs/sha256"
+                    }
+                  }
+                }
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "effect",
+                    "when",
+                    "reason"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "../common.json#/$defs/ruleId"
+                    },
+                    "effect": {
+                      "$ref": "../common.json#/$defs/effect"
+                    },
+                    "when": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "approval": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "scope_max": {
+                              "$ref": "../common.json#/$defs/approvalScope"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "obligations": {
+                      "$ref": "../events/payloads.json#/$defs/obligations"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "defaults": {
+          "type": "object",
+          "description": "NEW: spec.defaults of the user layer",
+          "properties": {
+            "sandbox_level": {
+              "$ref": "../common.json#/$defs/sandboxLevel"
+            },
+            "approval_scope_max": {
+              "$ref": "../common.json#/$defs/approvalScope"
+            }
+          }
+        },
+        "routing": {
+          "type": "object",
+          "description": "NEW: effective routing policy (WRD-16 §6.3)"
+        },
+        "budgets": {
+          "type": "object",
+          "description": "NEW",
+          "properties": {
+            "session_usd": {
+              "type": "number"
+            },
+            "daily_usd": {
+              "type": "number"
+            },
+            "session_usd_max": {
+              "type": "number"
+            }
+          }
+        },
+        "deny_list": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "NEW: platform secret deny-list globs (WRD-16 §10.5)"
+        }
+      }
+    }
+  }
+}

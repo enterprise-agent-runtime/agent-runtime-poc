@@ -1,0 +1,33 @@
+[
+  {
+    "index": 0,
+    "model": "gpt-4o-deploy",
+    "provider": "ollama",
+    "request_id": "c4",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "text": "Hi",
+    "type": "text_delta"
+  },
+  {
+    "index": 0,
+    "text": " there",
+    "type": "text_delta"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "estimated": true,
+      "input_tokens": 40,
+      "output_tokens": 3
+    }
+  },
+  {
+    "index": 0,
+    "stop_reason": "max_tokens",
+    "type": "message_end"
+  }
+]

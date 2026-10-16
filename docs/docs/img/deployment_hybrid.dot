@@ -1,0 +1,10 @@
+
+digraph G { rankdir=TB; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  subgraph cluster_cp { label="Enterprise control plane (Phase 3+), private cloud / on-prem"; style="rounded,filled"; fillcolor="#EEF3F9"; color="#9DB0C4";
+    idp [label="IdP (OIDC/SAML)"]; reg [label="Agent registry\n(OCI artifacts, signed)"]; mreg [label="Model & provider registry\n(catalog, tiers, credential refs)"]; pol [label="Policy service\n(signed bundles, TTL)"]; aud [label="Audit ingestion\n(events, artifacts index)"]; ana [label="Usage & cost analytics"]; fleet [label="Worker fleet manager\n(job queue)"]; }
+  subgraph cluster_ex { label="Execution plane"; style="rounded,filled"; fillcolor="#FFF8E7"; color="#D9A62E";
+    dev [label="Developer workstations\n(wardend + desktop)"]; ci [label="CI runners\n(wardend headless)"]; wk [label="Remote workers\n(wardend server mode, L2/L3 sandboxes)"]; }
+  gw [label="Enterprise LLM gateway /\nprivate model serving", fillcolor="#F0F0F0"]; vend [label="Vendor APIs (if allowed by tier)", fillcolor="#F0F0F0"];
+  idp -> dev; idp -> wk; reg -> dev; reg -> ci; reg -> wk; pol -> dev; pol -> ci; pol -> wk; dev -> aud; ci -> aud; wk -> aud; aud -> ana; fleet -> wk; dev -> fleet [label="offload task"];
+  dev -> gw; wk -> gw; ci -> gw; gw -> vend; mreg -> dev; mreg -> wk;
+}

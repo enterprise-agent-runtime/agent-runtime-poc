@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/session.setPin.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "pin_model"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "pin_model": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "null clears the pin"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "pin_model",
+        "rerouted_task_ids"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "pin_model": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "previous_pin": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW"
+        },
+        "rerouted_task_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/taskId"
+          }
+        }
+      }
+    }
+  }
+}

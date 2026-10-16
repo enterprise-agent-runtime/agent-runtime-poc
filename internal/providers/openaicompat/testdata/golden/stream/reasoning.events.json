@@ -1,0 +1,40 @@
+[
+  {
+    "index": 0,
+    "model": "m",
+    "provider": "ollama",
+    "request_id": "c5",
+    "type": "message_start"
+  },
+  {
+    "index": 0,
+    "opaque": "think ",
+    "provider": "ollama",
+    "type": "reasoning_delta"
+  },
+  {
+    "index": 0,
+    "opaque": "more",
+    "provider": "ollama",
+    "type": "reasoning_delta"
+  },
+  {
+    "index": 1,
+    "text": "Answer",
+    "type": "text_delta"
+  },
+  {
+    "index": 0,
+    "type": "usage",
+    "usage": {
+      "input_tokens": 5,
+      "output_tokens": 7,
+      "reasoning_tokens": 4
+    }
+  },
+  {
+    "index": 0,
+    "stop_reason": "end_turn",
+    "type": "message_end"
+  }
+]

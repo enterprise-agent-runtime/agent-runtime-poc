@@ -1,0 +1,12 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8]; node [shape=record, style="filled"];
+  ws [label="{Workspace|id\lroot path\lclassification\lpolicy refs\l}"];
+  s [label="{Session|id\lworkspace_id\luser\lcreated_at\lstatus\l}"];
+  w [label="{WorkflowRun|id\lsession_id\lspec (DAG)\lstatus\l}"];
+  t [label="{Task|id\lworkflow_id\lagent@version\lstate\lattempts\linputs[]\l}"];
+  e [label="{Execution (attempt)|id\ltask_id\lsandbox id\lworktree\lmodel/provider\lstarted/ended\l}"];
+  ev [label="{Event|seq\lts\ltype\lactor\lpayload (json)\lprev_hash\lhash\l}"];
+  ar [label="{Artifact|id\ltype\lschema\lcontent_hash\luri\lprovenance (json)\l}"];
+  ap [label="{Approval|id\laction\ldecision\lscope\lapprover\lexpires\l}"];
+  ws -> s; s -> w; w -> t; t -> e; e -> ev [label="emits"]; e -> ar [label="produces"]; ar -> ar [label="derived_from"]; e -> ap [label="requests"]; ap -> ev;
+}

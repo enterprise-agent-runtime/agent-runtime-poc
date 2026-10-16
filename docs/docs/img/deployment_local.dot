@@ -1,0 +1,7 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  subgraph cluster_ws { label="MVP: single workstation, local-first"; style="rounded,filled"; fillcolor="#F9FAFC"; color="#9DB0C4";
+    ui [label="Desktop app / CLI"]; d [label="wardend", fillcolor="#FFF8E7"]; sb [label="Sandbox L1/L2", fillcolor="#EAF7EA"]; st [label="~/.warden\nconfig · policy · agents · SQLite · artifacts"]; }
+  cloud [label="Model providers\n(API key / IAM)", fillcolor="#F0F0F0"]; local [label="Local models\n(Ollama / vLLM on LAN)", fillcolor="#F0F0F0"]; git [label="Git host", fillcolor="#F0F0F0"];
+  ui -> d; d -> sb; d -> st; d -> cloud; d -> local; d -> git [label="proxied"];
+}

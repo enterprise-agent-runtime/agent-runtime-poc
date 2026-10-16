@@ -1,0 +1,2608 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/events/payloads.json",
+  "title": "Warden PoC event payloads v1",
+  "$defs": {
+    "blobRef": {
+      "type": "object",
+      "required": [
+        "$blob",
+        "size"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "$blob": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 65537
+        }
+      }
+    },
+    "nullableString": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "modelTier": {
+      "type": "object",
+      "required": [
+        "model_id",
+        "tier"
+      ],
+      "properties": {
+        "model_id": {
+          "$ref": "../common.json#/$defs/modelId"
+        },
+        "tier": {
+          "$ref": "../common.json#/$defs/tier"
+        }
+      }
+    },
+    "chosen": {
+      "type": "object",
+      "required": [
+        "model_id",
+        "provider_id",
+        "tier"
+      ],
+      "properties": {
+        "model_id": {
+          "$ref": "../common.json#/$defs/modelId"
+        },
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "tier": {
+          "$ref": "../common.json#/$defs/tier"
+        }
+      }
+    },
+    "quota": {
+      "type": "object",
+      "required": [
+        "kind",
+        "units"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "premium_requests (Copilot), turns (Codex, Claude Code), or harness-reported unit"
+        },
+        "units": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "capabilitiesSummary": {
+      "type": "object",
+      "required": [
+        "text",
+        "can",
+        "needs_approval"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "can": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "needs_approval": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 120
+          }
+        }
+      }
+    },
+    "boundedArgs": {
+      "type": "object",
+      "description": "Redacted and bounded per §6.4."
+    },
+    "obligations": {
+      "type": "object",
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "egress_allow": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/hostPort"
+          }
+        },
+        "sandbox_level": {
+          "$ref": "../common.json#/$defs/sandboxLevel"
+        },
+        "redact_output": {
+          "type": "boolean"
+        }
+      }
+    },
+    "approvalPattern": {
+      "$ref": "../approval.json#/$defs/pattern"
+    },
+    "runtime.start": {
+      "type": "object",
+      "required": [
+        "version",
+        "pid",
+        "mode",
+        "checkpoint_key_id"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "enum": [
+            "personal",
+            "shared"
+          ]
+        },
+        "checkpoint_key_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{16}$"
+        }
+      }
+    },
+    "runtime.stop": {
+      "type": "object",
+      "required": [
+        "version",
+        "pid",
+        "mode",
+        "reason"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            "personal",
+            "shared"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "shutdown_request",
+            "signal",
+            "fatal_error"
+          ]
+        }
+      }
+    },
+    "policy.reload": {
+      "type": "object",
+      "required": [
+        "files",
+        "rules_count",
+        "errors"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "layer",
+              "digest"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "layer": {
+                "enum": [
+                  "platform",
+                  "user"
+                ]
+              },
+              "digest": {
+                "$ref": "../common.json#/$defs/sha256"
+              }
+            }
+          }
+        },
+        "rules_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "message"
+            ],
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "rule_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "NEW: false when errors kept the previous policy active"
+        }
+      }
+    },
+    "provider.configured": {
+      "type": "object",
+      "required": [
+        "provider_id",
+        "action",
+        "tier",
+        "protocol",
+        "kind",
+        "auth_mode",
+        "secret_ref",
+        "result"
+      ],
+      "properties": {
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "action": {
+          "enum": [
+            "add",
+            "remove",
+            "enable",
+            "disable",
+            "test"
+          ]
+        },
+        "tier": {
+          "$ref": "../common.json#/$defs/tier"
+        },
+        "protocol": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/protocol"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/harnessKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "auth_mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "none",
+            "api_key",
+            "gateway",
+            "harness_subscription",
+            null
+          ]
+        },
+        "secret_ref": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/secretRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "type": "object",
+          "required": [
+            "ok"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "error_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "latency_ms": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "models": {
+              "type": "array",
+              "description": "NEW: capability probe results for action=test",
+              "items": {
+                "type": "object",
+                "required": [
+                  "model_id",
+                  "tool_calling",
+                  "structured_output",
+                  "streaming",
+                  "max_context"
+                ],
+                "properties": {
+                  "model_id": {
+                    "$ref": "../common.json#/$defs/modelId"
+                  },
+                  "tool_calling": {
+                    "enum": [
+                      "native",
+                      "emulated",
+                      "none"
+                    ]
+                  },
+                  "structured_output": {
+                    "type": "boolean"
+                  },
+                  "streaming": {
+                    "type": "boolean"
+                  },
+                  "max_context": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "workspace.classification": {
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "from",
+        "to",
+        "by"
+      ],
+      "properties": {
+        "workspace_id": {
+          "$ref": "../common.json#/$defs/workspaceId"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/classification"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "to": {
+          "$ref": "../common.json#/$defs/classification"
+        },
+        "by": {
+          "$ref": "../common.json#/$defs/localUser"
+        }
+      }
+    },
+    "session.open": {
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "workspace_root",
+        "classification",
+        "sandbox_level",
+        "branch",
+        "base_commit",
+        "capabilities_summary"
+      ],
+      "properties": {
+        "workspace_id": {
+          "$ref": "../common.json#/$defs/workspaceId"
+        },
+        "workspace_root": {
+          "type": "string"
+        },
+        "classification": {
+          "$ref": "../common.json#/$defs/classification"
+        },
+        "sandbox_level": {
+          "$ref": "../common.json#/$defs/sandboxLevel"
+        },
+        "branch": {
+          "type": "string",
+          "pattern": "^warden/[0-9a-hjkmnp-tv-z]{26}$"
+        },
+        "base_commit": {
+          "$ref": "../common.json#/$defs/gitCommit"
+        },
+        "capabilities_summary": {
+          "$ref": "#/$defs/capabilitiesSummary"
+        }
+      }
+    },
+    "session.resume": {
+      "$ref": "#/$defs/session.open"
+    },
+    "session.request": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "kind",
+        "text",
+        "text_hash",
+        "pin_model"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "kind": {
+          "enum": [
+            "change",
+            "readonly"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "text_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "pin_model": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interactive": {
+          "type": "boolean",
+          "description": "NEW: false for --non-interactive (INV-8)"
+        }
+      }
+    },
+    "session.close": {
+      "type": "object",
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "enum": [
+            "user",
+            "retention"
+          ]
+        }
+      }
+    },
+    "session.purged": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "last_hash",
+        "event_count"
+      ],
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "last_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_seq": {
+          "type": "integer",
+          "description": "NEW"
+        }
+      }
+    },
+    "budget.changed": {
+      "type": "object",
+      "required": [
+        "scope",
+        "from_usd",
+        "to_usd",
+        "by"
+      ],
+      "properties": {
+        "scope": {
+          "const": "session"
+        },
+        "from_usd": {
+          "$ref": "../common.json#/$defs/usd"
+        },
+        "to_usd": {
+          "$ref": "../common.json#/$defs/usd"
+        },
+        "by": {
+          "$ref": "../common.json#/$defs/localUser"
+        }
+      }
+    },
+    "workflow.start": {
+      "type": "object",
+      "required": [
+        "template",
+        "template_version",
+        "inputs_hash",
+        "resumed_from"
+      ],
+      "properties": {
+        "template": {
+          "enum": [
+            "poc-coding",
+            "poc-readonly"
+          ]
+        },
+        "template_version": {
+          "type": "string"
+        },
+        "inputs_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "resumed_from": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "run_id",
+                "gate_key"
+              ],
+              "properties": {
+                "run_id": {
+                  "$ref": "../common.json#/$defs/runId"
+                },
+                "gate_key": {
+                  "$ref": "../common.json#/$defs/gateKey"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "workflow.end": {
+      "type": "object",
+      "required": [
+        "status",
+        "reason",
+        "final_result"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "final_result": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "workflow.gate.presented": {
+      "type": "object",
+      "required": [
+        "gate_id",
+        "gate_key",
+        "artifacts"
+      ],
+      "properties": {
+        "gate_id": {
+          "$ref": "../common.json#/$defs/taskId"
+        },
+        "gate_key": {
+          "$ref": "../common.json#/$defs/gateKey"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/artifactId"
+          },
+          "minItems": 1
+        },
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId",
+          "description": "NEW: the gate's approval record"
+        },
+        "expires_at": {
+          "$ref": "../common.json#/$defs/timestamp",
+          "description": "NEW"
+        }
+      }
+    },
+    "workflow.delivered": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "action",
+        "commit",
+        "branch",
+        "remote",
+        "patch_path",
+        "approval_id"
+      ],
+      "description": "NEW (ID-02): a post-run delivery action completed successfully",
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "action": {
+          "$ref": "../common.json#/$defs/deliveryAction"
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/gitCommit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remote": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "remote name; URL sanitized in tool events"
+        },
+        "patch_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approval_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/approvalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "call_id": {
+          "$ref": "../common.json#/$defs/callId",
+          "description": "NEW: host tool call of this delivery"
+        }
+      }
+    },
+    "workflow.gate.resolved": {
+      "type": "object",
+      "required": [
+        "gate_id",
+        "gate_key",
+        "decision",
+        "approver",
+        "edited_artifact",
+        "comment"
+      ],
+      "properties": {
+        "gate_id": {
+          "$ref": "../common.json#/$defs/taskId"
+        },
+        "gate_key": {
+          "$ref": "../common.json#/$defs/gateKey"
+        },
+        "decision": {
+          "$ref": "../common.json#/$defs/gateDecision"
+        },
+        "approver": {
+          "$ref": "../common.json#/$defs/localUser"
+        },
+        "edited_artifact": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        }
+      }
+    },
+    "task.state": {
+      "type": "object",
+      "required": [
+        "task_key",
+        "from",
+        "to",
+        "reason",
+        "attempt",
+        "detail"
+      ],
+      "properties": {
+        "task_key": {
+          "$ref": "../common.json#/$defs/taskKey"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "to": {
+          "$ref": "../common.json#/$defs/taskState"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        }
+      }
+    },
+    "routing.decision": {
+      "type": "object",
+      "required": [
+        "routing_id",
+        "task_class",
+        "classification",
+        "strategy",
+        "pin",
+        "candidates",
+        "chosen",
+        "explanation",
+        "budget_remaining_usd"
+      ],
+      "properties": {
+        "routing_id": {
+          "$ref": "../common.json#/$defs/routingId"
+        },
+        "task_class": {
+          "$ref": "../common.json#/$defs/taskClass"
+        },
+        "classification": {
+          "$ref": "../common.json#/$defs/classification"
+        },
+        "strategy": {
+          "$ref": "../common.json#/$defs/strategy"
+        },
+        "pin": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "model_id",
+              "provider_id",
+              "tier",
+              "status",
+              "reason_code",
+              "reason",
+              "quality_prior",
+              "est_cost_usd"
+            ],
+            "properties": {
+              "model_id": {
+                "$ref": "../common.json#/$defs/modelId"
+              },
+              "provider_id": {
+                "$ref": "../common.json#/$defs/catalogId"
+              },
+              "tier": {
+                "$ref": "../common.json#/$defs/tier"
+              },
+              "status": {
+                "$ref": "../common.json#/$defs/candidateStatus"
+              },
+              "reason_code": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/rejectionCode"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "quality_prior": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              },
+              "est_cost_usd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "chosen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/chosen"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "explanation": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "budget_remaining_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "routing.fallback": {
+      "type": "object",
+      "required": [
+        "routing_id",
+        "from",
+        "to",
+        "cause",
+        "fallback_count"
+      ],
+      "properties": {
+        "routing_id": {
+          "$ref": "../common.json#/$defs/routingId"
+        },
+        "from": {
+          "$ref": "#/$defs/modelTier"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/modelTier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cause": {
+          "$ref": "../common.json#/$defs/modelErrorCode"
+        },
+        "fallback_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        }
+      }
+    },
+    "model.call.start": {
+      "type": "object",
+      "required": [
+        "model_call_id",
+        "routing_id",
+        "model_id",
+        "provider_id",
+        "tier",
+        "step",
+        "request_hash",
+        "est_input_tokens"
+      ],
+      "properties": {
+        "purpose": {
+          "enum": [
+            "step",
+            "compaction"
+          ],
+          "description": "NEW (A10); absent means step"
+        },
+        "model_call_id": {
+          "$ref": "../common.json#/$defs/modelCallId"
+        },
+        "routing_id": {
+          "$ref": "../common.json#/$defs/routingId"
+        },
+        "model_id": {
+          "$ref": "../common.json#/$defs/modelId"
+        },
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "tier": {
+          "$ref": "../common.json#/$defs/tier"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "est_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "model.call.end": {
+      "type": "object",
+      "required": [
+        "model_call_id",
+        "stop_reason",
+        "usage",
+        "latency_ms",
+        "ttft_ms",
+        "provider_request_id",
+        "error"
+      ],
+      "properties": {
+        "model_call_id": {
+          "$ref": "../common.json#/$defs/modelCallId"
+        },
+        "stop_reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/stopReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "required": [
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens",
+            "reasoning_tokens",
+            "billing_mode",
+            "quota",
+            "estimated_cost"
+          ],
+          "properties": {
+            "input_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cached_input_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reasoning_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "billing_mode": {
+              "$ref": "../common.json#/$defs/billingMode"
+            },
+            "estimated": {
+              "type": "boolean",
+              "description": "NEW (A11): token counts estimated because the provider sent no usage"
+            },
+            "quota": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/quota"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "estimated_cost": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "amount",
+                    "currency",
+                    "basis"
+                  ],
+                  "properties": {
+                    "amount": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "currency": {
+                      "const": "USD"
+                    },
+                    "basis": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "latency_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ttft_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "provider_request_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "retryable"
+              ],
+              "properties": {
+                "code": {
+                  "$ref": "../common.json#/$defs/modelErrorCode"
+                },
+                "retryable": {
+                  "type": "boolean"
+                },
+                "details": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 8192,
+                  "description": "NEW (A11): redacted raw provider error; never in model context"
+                }
+              }
+            }
+          ]
+        },
+        "proposals": {
+          "type": "array",
+          "description": "NEW (A10 §5.6): every tool proposal of the response",
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "provider_call_id",
+              "name",
+              "status"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "provider_call_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "status": {
+                "enum": [
+                  "evaluated",
+                  "skipped",
+                  "unknown_tool",
+                  "invalid_arguments",
+                  "submit",
+                  "submit_alone"
+                ]
+              },
+              "call_id": {
+                "$ref": "../common.json#/$defs/callId"
+              }
+            }
+          }
+        }
+      }
+    },
+    "context.assembled": {
+      "type": "object",
+      "required": [
+        "step",
+        "sources",
+        "total_tokens",
+        "budget_tokens"
+      ],
+      "properties": {
+        "step": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "ref",
+              "trust",
+              "tokens"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "preamble",
+                  "instructions",
+                  "mode_contract",
+                  "tool_protocol",
+                  "tool_definitions",
+                  "request",
+                  "task_input",
+                  "artifact",
+                  "workspace_map",
+                  "compaction_summary",
+                  "transcript",
+                  "observation",
+                  "runtime_note",
+                  "user_guidance"
+                ]
+              },
+              "ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "trust": {
+                "enum": [
+                  "platform",
+                  "agent",
+                  "user",
+                  "user_approved",
+                  "model",
+                  "untrusted"
+                ]
+              },
+              "tokens": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budget_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "marker_hash": {
+          "$ref": "../common.json#/$defs/sha256",
+          "description": "NEW (A10): hash of the per-step untrusted-data marker; the marker itself is never persisted"
+        }
+      }
+    },
+    "context.compacted": {
+      "type": "object",
+      "required": [
+        "before_tokens",
+        "after_tokens",
+        "turns_summarized"
+      ],
+      "properties": {
+        "before_tokens": {
+          "type": "integer"
+        },
+        "after_tokens": {
+          "type": "integer"
+        },
+        "turns_summarized": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "policy.decision": {
+      "type": "object",
+      "required": [
+        "decision_id",
+        "call_id",
+        "action",
+        "effect",
+        "reason",
+        "matched_rules",
+        "obligations",
+        "approval",
+        "resolved_by_approval",
+        "cache_hit"
+      ],
+      "properties": {
+        "decision_id": {
+          "$ref": "../common.json#/$defs/decisionId"
+        },
+        "call_id": {
+          "$ref": "../common.json#/$defs/callId"
+        },
+        "action": {
+          "type": "object",
+          "required": [
+            "tool",
+            "operation",
+            "resource",
+            "risk_class",
+            "args_redacted"
+          ],
+          "properties": {
+            "tool": {
+              "$ref": "../common.json#/$defs/policyTool"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "resource": {
+              "type": "object"
+            },
+            "risk_class": {
+              "$ref": "../common.json#/$defs/riskClass"
+            },
+            "args_redacted": {
+              "$ref": "#/$defs/boundedArgs"
+            }
+          }
+        },
+        "effect": {
+          "$ref": "../common.json#/$defs/effect"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "matched_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/ruleId"
+          }
+        },
+        "obligations": {
+          "$ref": "#/$defs/obligations"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "approval_id",
+                "scope_max",
+                "scopes_allowed"
+              ],
+              "properties": {
+                "approval_id": {
+                  "$ref": "../common.json#/$defs/approvalId"
+                },
+                "scope_max": {
+                  "$ref": "../common.json#/$defs/approvalScope"
+                },
+                "scopes_allowed": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "../common.json#/$defs/approvalScope"
+                  },
+                  "minItems": 1
+                }
+              }
+            }
+          ]
+        },
+        "resolved_by_approval": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/approvalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_hit": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "effect": {
+                "const": "approval_required"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "approval": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "effect": {
+                "enum": [
+                  "allow",
+                  "deny"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "approval": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "resolved_by_approval": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "effect": {
+                "const": "allow"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "approval.requested": {
+      "type": "object",
+      "required": [
+        "approval_id",
+        "decision_id",
+        "call_id",
+        "pattern",
+        "risk_class",
+        "scope_max",
+        "scopes_allowed",
+        "reason",
+        "rule_ids",
+        "display",
+        "expires_at"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "../common.json#/$defs/approvalKind",
+          "description": "NEW (ID-05); absent means action"
+        },
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId"
+        },
+        "decision_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/decisionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/callId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pattern": {
+          "$ref": "#/$defs/approvalPattern"
+        },
+        "risk_class": {
+          "$ref": "../common.json#/$defs/riskClass"
+        },
+        "scope_max": {
+          "$ref": "../common.json#/$defs/approvalScope"
+        },
+        "scopes_allowed": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/approvalScope"
+          },
+          "minItems": 1
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "rule_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/ruleId"
+          }
+        },
+        "display": {
+          "type": "object",
+          "required": [
+            "what",
+            "who",
+            "why"
+          ],
+          "properties": {
+            "what": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "who": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "why": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "taint_sources": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "maxItems": 20,
+              "description": "NEW: untrusted sources that influenced the action (e.g. README.md), WRD-11 §2.3"
+            },
+            "question": {
+              "type": "string",
+              "maxLength": 4000,
+              "description": "NEW: redacted question text for kind question"
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "maxItems": 10,
+              "description": "NEW: suggested answers for kind question"
+            }
+          }
+        },
+        "expires_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        }
+      }
+    },
+    "approval.resolved": {
+      "type": "object",
+      "required": [
+        "approval_id",
+        "decision",
+        "scope",
+        "approver",
+        "grant_expires_at"
+      ],
+      "properties": {
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId"
+        },
+        "decision": {
+          "$ref": "../common.json#/$defs/approvalDecision"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/approvalScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approver": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/localUser"
+            },
+            {
+              "const": "runtime"
+            }
+          ]
+        },
+        "grant_expires_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "answer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4000,
+          "description": "NEW (ID-05): redacted answer to a question; scope is null then"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "not": {
+                  "const": "approve"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "type": "null"
+              },
+              "answer": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "answer"
+            ],
+            "properties": {
+              "answer": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "scope": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "approval.revoked": {
+      "type": "object",
+      "required": [
+        "approval_id",
+        "by"
+      ],
+      "properties": {
+        "approval_id": {
+          "$ref": "../common.json#/$defs/approvalId"
+        },
+        "by": {
+          "$ref": "../common.json#/$defs/localUser"
+        }
+      }
+    },
+    "tool.exec.start": {
+      "type": "object",
+      "required": [
+        "call_id",
+        "decision_id",
+        "tool",
+        "executor",
+        "sandbox_id",
+        "args_redacted"
+      ],
+      "properties": {
+        "call_id": {
+          "$ref": "../common.json#/$defs/callId"
+        },
+        "decision_id": {
+          "$ref": "../common.json#/$defs/decisionId"
+        },
+        "tool": {
+          "$ref": "../common.json#/$defs/toolId"
+        },
+        "executor": {
+          "enum": [
+            "sandbox",
+            "host",
+            "harness"
+          ]
+        },
+        "sandbox_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/sandboxId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "args_redacted": {
+          "$ref": "#/$defs/boundedArgs"
+        }
+      }
+    },
+    "tool.exec.end": {
+      "type": "object",
+      "required": [
+        "call_id",
+        "ok",
+        "exit_code",
+        "bytes_out",
+        "truncated",
+        "duration_ms",
+        "error",
+        "output_ref"
+      ],
+      "properties": {
+        "call_id": {
+          "$ref": "../common.json#/$defs/callId"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bytes_out": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string",
+                  "maxLength": 1000
+                }
+              }
+            }
+          ]
+        },
+        "output_ref": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "sandbox.create": {
+      "type": "object",
+      "required": [
+        "sandbox_id",
+        "level",
+        "backend",
+        "purpose",
+        "mounts",
+        "limits",
+        "env_keys",
+        "proxy"
+      ],
+      "properties": {
+        "sandbox_id": {
+          "$ref": "../common.json#/$defs/sandboxId"
+        },
+        "level": {
+          "$ref": "../common.json#/$defs/sandboxLevel"
+        },
+        "backend": {
+          "$ref": "../common.json#/$defs/sandboxBackend"
+        },
+        "purpose": {
+          "enum": [
+            "task",
+            "harness"
+          ]
+        },
+        "mounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "host_path_hash",
+              "sandbox_path",
+              "mode",
+              "kind"
+            ],
+            "properties": {
+              "host_path_hash": {
+                "$ref": "../common.json#/$defs/sha256"
+              },
+              "sandbox_path": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "ro",
+                  "rw"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "worktree",
+                  "scratch",
+                  "cache",
+                  "git",
+                  "git_objects",
+                  "toolchain",
+                  "system",
+                  "executor",
+                  "generated",
+                  "mask",
+                  "proxy",
+                  "login"
+                ]
+              }
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "description": "A06 §13.2 defines the members (memory_mb, pids, cpus, fsize_mb, tmp_mb, cgroup, seccomp)"
+        },
+        "env_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "proxy": {
+          "type": "object",
+          "required": [
+            "socket",
+            "port"
+          ],
+          "properties": {
+            "socket": {
+              "type": "string",
+              "description": "sha256 of the host socket path"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "profile_digest": {
+          "$ref": "../common.json#/$defs/sha256",
+          "description": "NEW (A06): sha256 of the Seatbelt profile or the bwrap argv JSON"
+        }
+      }
+    },
+    "sandbox.destroy": {
+      "type": "object",
+      "required": [
+        "sandbox_id",
+        "reason",
+        "killed_pids",
+        "duration_ms"
+      ],
+      "properties": {
+        "sandbox_id": {
+          "$ref": "../common.json#/$defs/sandboxId"
+        },
+        "reason": {
+          "enum": [
+            "task_end",
+            "cancel",
+            "timeout",
+            "resource",
+            "executor_exit",
+            "hello_mismatch",
+            "daemon_stop",
+            "orphan",
+            "store_unavailable"
+          ]
+        },
+        "killed_pids": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "sandbox.violation": {
+      "type": "object",
+      "required": [
+        "sandbox_id",
+        "kind",
+        "detail"
+      ],
+      "properties": {
+        "sandbox_id": {
+          "$ref": "../common.json#/$defs/sandboxId"
+        },
+        "kind": {
+          "enum": [
+            "path_escape",
+            "deny_list",
+            "root_check",
+            "seatbelt_deny",
+            "seccomp",
+            "hook_bypass"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "NEW (A06): summary after 50 violation events"
+        }
+      }
+    },
+    "proxy.connect": {
+      "type": "object",
+      "required": [
+        "sandbox_id",
+        "host",
+        "port",
+        "method",
+        "rule",
+        "decision_id",
+        "bytes_up",
+        "bytes_down"
+      ],
+      "description": "Emitted when the tunnel or request closes (A07 §3)",
+      "properties": {
+        "sandbox_id": {
+          "$ref": "../common.json#/$defs/sandboxId"
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "method": {
+          "type": "string",
+          "pattern": "^[A-Z]+$"
+        },
+        "rule": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/decisionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/callId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW (A07)"
+        },
+        "ip": {
+          "type": "string",
+          "description": "NEW (A07): address actually dialed"
+        },
+        "bytes_up": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_down": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "NEW (A07)"
+        },
+        "error": {
+          "enum": [
+            "dial_failed",
+            "idle_timeout",
+            "upstream_reset",
+            null
+          ],
+          "description": "NEW (A07)"
+        }
+      }
+    },
+    "proxy.denied": {
+      "type": "object",
+      "required": [
+        "sandbox_id",
+        "host",
+        "port",
+        "method",
+        "rule",
+        "decision_id",
+        "reason",
+        "held_ms"
+      ],
+      "properties": {
+        "sandbox_id": {
+          "$ref": "../common.json#/$defs/sandboxId"
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "method": {
+          "type": "string"
+        },
+        "rule": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/decisionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/callId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "NEW (A07)"
+        },
+        "reason": {
+          "enum": [
+            "policy_denied",
+            "approval_rejected",
+            "approval_timeout",
+            "client_closed",
+            "sandbox_destroyed",
+            "invalid_target",
+            "unsupported_method",
+            "private_address",
+            "dns_failed",
+            "sni_mismatch",
+            "not_tls",
+            "too_many_connections",
+            "too_many_pending",
+            "rate_limited"
+          ],
+          "description": "A07 enumeration"
+        },
+        "held_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "NEW (A07): >1 only on rate-limit summaries"
+        }
+      }
+    },
+    "secret.access": {
+      "type": "object",
+      "required": [
+        "ref",
+        "consumer",
+        "purpose"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "../common.json#/$defs/secretRef"
+        },
+        "consumer": {
+          "type": "string",
+          "pattern": "^(adapter:[a-z0-9._-]+|proxy|checkpoint|delivery)$"
+        },
+        "purpose": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "A15 values: model_call, provider_test, checkpoint_sign, provider_add_verify"
+        },
+        "cache": {
+          "enum": [
+            "hit",
+            "miss"
+          ],
+          "description": "NEW (A15)"
+        },
+        "result": {
+          "enum": [
+            "ok",
+            "not_found",
+            "locked",
+            "unavailable",
+            "timeout"
+          ],
+          "description": "NEW (A15)"
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "required": [
+        "source",
+        "count",
+        "types"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "tool_output",
+            "artifact",
+            "context",
+            "request_text",
+            "log"
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "NEW: call_id or artifact_id the redaction applied to"
+        }
+      }
+    },
+    "artifact.created": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "type",
+        "content_hash",
+        "size",
+        "partial",
+        "summary",
+        "supersedes"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "../common.json#/$defs/artifactId"
+        },
+        "type": {
+          "$ref": "../common.json#/$defs/artifactType"
+        },
+        "content_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "record_hash": {
+          "$ref": "../common.json#/$defs/sha256",
+          "description": "NEW: sha256 of JCS(artifact record), binds provenance to the chain"
+        }
+      }
+    },
+    "artifact.edited": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifact.created"
+        },
+        {
+          "type": "object",
+          "required": [
+            "edited_by"
+          ],
+          "properties": {
+            "edited_by": {
+              "$ref": "../common.json#/$defs/localUser"
+            }
+          }
+        }
+      ]
+    },
+    "uncommitted": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "description": "A14 §3 step 7: changes left untouched in the user's working tree",
+      "properties": {
+        "state": {
+          "enum": [
+            "clean",
+            "dirty",
+            "unknown"
+          ]
+        },
+        "modified": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "untracked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sample": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20
+        }
+      }
+    },
+    "worktree.create": {
+      "type": "object",
+      "required": [
+        "path_hash",
+        "branch",
+        "base_commit"
+      ],
+      "properties": {
+        "path_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "base_commit": {
+          "$ref": "../common.json#/$defs/gitCommit"
+        },
+        "object_format": {
+          "enum": [
+            "sha1",
+            "sha256"
+          ],
+          "description": "NEW (A14)"
+        },
+        "object_mode": {
+          "type": "string",
+          "description": "NEW (A14)"
+        },
+        "uncommitted": {
+          "$ref": "#/$defs/uncommitted",
+          "description": "NEW (A14, ID-13)"
+        }
+      }
+    },
+    "worktree.checkpoint": {
+      "type": "object",
+      "required": [
+        "path_hash",
+        "branch",
+        "base_commit",
+        "commit",
+        "label"
+      ],
+      "properties": {
+        "path_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "base_commit": {
+          "$ref": "../common.json#/$defs/gitCommit"
+        },
+        "commit": {
+          "$ref": "../common.json#/$defs/gitCommit"
+        },
+        "label": {
+          "enum": [
+            "base",
+            "gate-plan",
+            "implement",
+            "repair-1",
+            "partial",
+            "final"
+          ],
+          "description": "A14 §7.1; final = delivery commit (squash)"
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "NEW (A14): e.g. refs/warden/partial/<task_key>/<attempt> for label partial"
+        },
+        "config_restored": {
+          "type": "boolean",
+          "description": "NEW (A14)"
+        }
+      }
+    },
+    "worktree.remove": {
+      "type": "object",
+      "required": [
+        "path_hash",
+        "branch",
+        "base_commit",
+        "reason"
+      ],
+      "properties": {
+        "path_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "base_commit": {
+          "$ref": "../common.json#/$defs/gitCommit"
+        },
+        "reason": {
+          "enum": [
+            "retention",
+            "purge"
+          ]
+        }
+      }
+    },
+    "harness.session.start": {
+      "type": "object",
+      "required": [
+        "harness_id",
+        "kind",
+        "run_mode",
+        "billing_mode",
+        "vendor_terms",
+        "egress_allow"
+      ],
+      "properties": {
+        "harness_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "kind": {
+          "$ref": "../common.json#/$defs/harnessKind"
+        },
+        "run_mode": {
+          "$ref": "../common.json#/$defs/harnessRunMode"
+        },
+        "billing_mode": {
+          "$ref": "../common.json#/$defs/billingMode"
+        },
+        "vendor_terms": {
+          "$ref": "../common.json#/$defs/vendorTerms"
+        },
+        "egress_allow": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/hostPort"
+          }
+        }
+      }
+    },
+    "harness.hook": {
+      "type": "object",
+      "required": [
+        "hook",
+        "harness_tool",
+        "call_id"
+      ],
+      "properties": {
+        "hook": {
+          "enum": [
+            "pre_tool_use",
+            "post_tool_use",
+            "permission"
+          ]
+        },
+        "harness_tool": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "call_id": {
+          "$ref": "../common.json#/$defs/callId"
+        }
+      }
+    },
+    "harness.session.end": {
+      "type": "object",
+      "required": [
+        "quota",
+        "reason"
+      ],
+      "properties": {
+        "harness_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "quota": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/quota"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "enum": [
+            "completed",
+            "cancelled",
+            "error",
+            "timeout",
+            "interrupted"
+          ]
+        }
+      }
+    },
+    "chain.checkpoint": {
+      "type": "object",
+      "required": [
+        "chain",
+        "last_seq",
+        "last_hash",
+        "event_count",
+        "key_id",
+        "signature"
+      ],
+      "properties": {
+        "chain": {
+          "$ref": "../common.json#/$defs/chain"
+        },
+        "last_seq": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "last_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "trigger": {
+          "enum": [
+            "periodic",
+            "workflow_end",
+            "session_close",
+            "export",
+            "post_close",
+            "anchor",
+            "late_sign"
+          ],
+          "description": "NEW; ID-14 triggers plus the mechanics of §11.1"
+        },
+        "signature": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        },
+        "unsigned_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "keychain_locked",
+            "key_missing",
+            null
+          ],
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

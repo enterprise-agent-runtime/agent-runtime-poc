@@ -1,0 +1,1968 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/types.json",
+  "title": "Warden runtime API shared types (protocol warden.poc/1)",
+  "$defs": {
+    "empty": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "errorData": {
+      "type": "object",
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "parse_error",
+            "invalid_request",
+            "method_not_found",
+            "invalid_params",
+            "internal_error",
+            "request_cancelled",
+            "unauthorized",
+            "not_found",
+            "invalid_state",
+            "policy_denied",
+            "confirmation_required",
+            "sandbox_unavailable",
+            "no_admissible_model",
+            "budget_exhausted",
+            "store_unavailable",
+            "unsupported_in_poc",
+            "protocol_mismatch",
+            "vendor_terms"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z_]+$"
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "instance_path",
+              "message"
+            ],
+            "properties": {
+              "instance_path": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "incident_id": {
+          "type": "string"
+        }
+      }
+    },
+    "capabilitiesSummary": {
+      "$ref": "../events/payloads.json#/$defs/capabilitiesSummary"
+    },
+    "approval": {
+      "$ref": "../approval.json"
+    },
+    "artifactRecord": {
+      "$ref": "../artifacts/record.json"
+    },
+    "event": {
+      "$ref": "../events/envelope.json"
+    },
+    "quota": {
+      "$ref": "../events/payloads.json#/$defs/quota"
+    },
+    "nullableTimestamp": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "confirmTrue": {
+      "const": true
+    },
+    "artifactSummary": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "type",
+        "version",
+        "partial",
+        "summary",
+        "size_bytes",
+        "media_type",
+        "task_id",
+        "task_key",
+        "supersedes",
+        "superseded_by",
+        "created_at",
+        "created_by"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "../common.json#/$defs/artifactId"
+        },
+        "type": {
+          "$ref": "../common.json#/$defs/artifactType"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_type": {
+          "enum": [
+            "application/json",
+            "text/x-diff"
+          ]
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_key": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "created_by": {
+          "enum": [
+            "agent",
+            "runtime",
+            "user"
+          ]
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "execution_id",
+        "attempt",
+        "status",
+        "model_id",
+        "provider_id",
+        "tier",
+        "routing_id",
+        "harness_id",
+        "sandbox_id",
+        "sandbox_level",
+        "started_at",
+        "ended_at",
+        "steps",
+        "tool_calls"
+      ],
+      "properties": {
+        "execution_id": {
+          "$ref": "../common.json#/$defs/executionId"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "running",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "timed_out"
+          ]
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/catalogId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/tier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "routing_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/routingId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "harness_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/catalogId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/sandboxId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox_level": {
+          "$ref": "../common.json#/$defs/sandboxLevel"
+        },
+        "started_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tool_calls": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": [
+        "usd",
+        "usd_note",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "quota",
+        "model_calls"
+      ],
+      "properties": {
+        "usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "usd_note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "e.g. 'infrastructure cost not tracked' when T0/T1 calls contributed 0.00"
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quota": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/quota"
+          }
+        },
+        "model_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_task": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "task_key",
+              "usd",
+              "input_tokens",
+              "output_tokens",
+              "quota"
+            ],
+            "properties": {
+              "task_key": {
+                "$ref": "../common.json#/$defs/taskKey"
+              },
+              "usd": {
+                "type": "number"
+              },
+              "input_tokens": {
+                "type": "integer"
+              },
+              "output_tokens": {
+                "type": "integer"
+              },
+              "quota": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/quota"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": [
+        "session_usd",
+        "session_spent_usd",
+        "daily_usd",
+        "daily_spent_usd"
+      ],
+      "description": "ID-13 fields first; remaining_usd, session_usd_max and exhausted are NEW additions",
+      "properties": {
+        "session_usd": {
+          "type": "number"
+        },
+        "session_spent_usd": {
+          "type": "number"
+        },
+        "remaining_usd": {
+          "type": "number"
+        },
+        "session_usd_max": {
+          "type": "number"
+        },
+        "daily_usd": {
+          "type": "number"
+        },
+        "daily_spent_usd": {
+          "type": "number"
+        },
+        "exhausted": {
+          "enum": [
+            null,
+            "session",
+            "daily"
+          ]
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "task_key",
+        "kind",
+        "agent",
+        "mode",
+        "task_class",
+        "state",
+        "reason",
+        "attempts",
+        "max_attempts",
+        "created_at",
+        "updated_at",
+        "wall_clock_used_ms",
+        "limits",
+        "execution",
+        "pending_approvals"
+      ],
+      "properties": {
+        "task_id": {
+          "$ref": "../common.json#/$defs/taskId"
+        },
+        "task_key": {
+          "$ref": "../common.json#/$defs/taskKey"
+        },
+        "kind": {
+          "enum": [
+            "agent",
+            "approval_gate"
+          ]
+        },
+        "agent": {
+          "enum": [
+            "coder",
+            "verifier",
+            null
+          ]
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/coderMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_class": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskClass"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/taskState"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "updated_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "wall_clock_used_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/limits"
+            }
+          ],
+          "description": "ID-13: effective limits (manifest, lowered by policy; INV-9); null for gates"
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/execution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending_approvals": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/approvalId"
+          }
+        },
+        "cost": {
+          "$ref": "#/$defs/cost"
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": [
+        "gate_id",
+        "gate_key",
+        "approval_id",
+        "state",
+        "artifacts",
+        "presented_at",
+        "expires_at",
+        "resolved_at",
+        "decision",
+        "approver",
+        "edited_artifact",
+        "comment"
+      ],
+      "properties": {
+        "gate_id": {
+          "$ref": "../common.json#/$defs/taskId"
+        },
+        "gate_key": {
+          "$ref": "../common.json#/$defs/gateKey"
+        },
+        "approval_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/approvalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "not_reached",
+            "pending",
+            "approved",
+            "rejected",
+            "expired",
+            "cancelled"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/artifactId"
+          }
+        },
+        "presented_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "resolved_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/gateDecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approver": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/localUser"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "edited_artifact": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "max_steps",
+        "max_tokens",
+        "timeout_seconds",
+        "max_cost_usd"
+      ],
+      "properties": {
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_tool_calls": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "required": [
+        "root",
+        "remotes"
+      ],
+      "properties": {
+        "root": {
+          "type": "string"
+        },
+        "current_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remotes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "url",
+              "push_allowed"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string",
+                "description": "userinfo removed (A14 §8.3)"
+              },
+              "push_allowed": {
+                "type": "boolean",
+                "description": "https or ssh remote (A14 §8.3)"
+              }
+            }
+          }
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "required": [
+        "action",
+        "status",
+        "approval_id",
+        "call_id",
+        "branch",
+        "remote",
+        "commit",
+        "patch_path",
+        "error",
+        "created_at",
+        "finished_at"
+      ],
+      "properties": {
+        "action": {
+          "$ref": "../common.json#/$defs/deliveryAction"
+        },
+        "status": {
+          "enum": [
+            "approval_pending",
+            "running",
+            "done",
+            "failed",
+            "rejected"
+          ]
+        },
+        "approval_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/approvalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "call_id": {
+          "$ref": "../common.json#/$defs/callId"
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/gitCommit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "patch_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        }
+      }
+    },
+    "resumedFrom": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "run_id",
+            "gate_key"
+          ],
+          "properties": {
+            "run_id": {
+              "$ref": "../common.json#/$defs/runId"
+            },
+            "gate_key": {
+              "$ref": "../common.json#/$defs/gateKey"
+            }
+          }
+        }
+      ]
+    },
+    "runSummary": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "kind",
+        "status",
+        "reason",
+        "request_excerpt",
+        "created_at",
+        "ended_at"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "kind": {
+          "enum": [
+            "change",
+            "readonly"
+          ]
+        },
+        "status": {
+          "$ref": "../common.json#/$defs/runStatus"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_excerpt": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "session_id",
+        "template",
+        "template_version",
+        "kind",
+        "status",
+        "reason",
+        "request_excerpt",
+        "pin_model",
+        "interactive",
+        "created_at",
+        "ended_at",
+        "resumed_from",
+        "final_result",
+        "tasks",
+        "gates",
+        "artifacts",
+        "deliveries",
+        "cost",
+        "budget",
+        "repository",
+        "last_seq"
+      ],
+      "properties": {
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "template": {
+          "enum": [
+            "poc-coding",
+            "poc-readonly"
+          ]
+        },
+        "template_version": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "change",
+            "readonly"
+          ]
+        },
+        "status": {
+          "$ref": "../common.json#/$defs/runStatus"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/taskReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_excerpt": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "pin_model": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/modelId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interactive": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/timestamp"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "resumed_from": {
+          "$ref": "#/$defs/resumedFrom"
+        },
+        "final_result": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/artifactId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task"
+          }
+        },
+        "gates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gate"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactSummary"
+          }
+        },
+        "deliveries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/delivery"
+          }
+        },
+        "cost": {
+          "$ref": "#/$defs/cost"
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "repository": {
+          "$ref": "#/$defs/repository",
+          "description": "ID-13: repository.remotes[] feeds the Push target selector"
+        },
+        "last_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "highest seq reflected in this projection"
+        }
+      }
+    },
+    "modelCapabilities": {
+      "type": "object",
+      "required": [
+        "tool_calling",
+        "structured_output",
+        "streaming",
+        "max_context"
+      ],
+      "properties": {
+        "tool_calling": {
+          "enum": [
+            "native",
+            "emulated",
+            "none"
+          ]
+        },
+        "structured_output": {
+          "type": "boolean"
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "max_context": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "pricing": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "input_per_mtok",
+            "output_per_mtok",
+            "currency"
+          ],
+          "properties": {
+            "input_per_mtok": {
+              "type": "number",
+              "minimum": 0
+            },
+            "output_per_mtok": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cached_input_per_mtok": {
+              "type": "number",
+              "minimum": 0
+            },
+            "currency": {
+              "const": "USD"
+            }
+          }
+        }
+      ]
+    },
+    "qualityPrior": {
+      "type": "object",
+      "required": [
+        "plan",
+        "implement",
+        "verify",
+        "summarize"
+      ],
+      "properties": {
+        "plan": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "implement": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "verify": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "summarize": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "modelEntry": {
+      "type": "object",
+      "required": [
+        "id",
+        "provider",
+        "model",
+        "capabilities",
+        "pricing",
+        "quality_prior"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/modelId"
+        },
+        "provider": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "capabilities": {
+          "$ref": "#/$defs/modelCapabilities"
+        },
+        "pricing": {
+          "$ref": "#/$defs/pricing"
+        },
+        "quality_prior": {
+          "$ref": "#/$defs/qualityPrior"
+        }
+      }
+    },
+    "providerSpec": {
+      "type": "object",
+      "required": [
+        "id",
+        "protocol",
+        "base_url",
+        "auth",
+        "tier"
+      ],
+      "additionalProperties": false,
+      "description": "models.yaml providers[] entry (WRD-16 §6.1)",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "protocol": {
+          "$ref": "../common.json#/$defs/protocol"
+        },
+        "base_url": {
+          "type": "string",
+          "pattern": "^https?://[^\\s]+$",
+          "maxLength": 2048
+        },
+        "auth": {
+          "type": "object",
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "none",
+                "api_key",
+                "gateway",
+                "cloud_iam"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "bearer",
+                "mtls"
+              ]
+            },
+            "header": {
+              "const": "api-key"
+            },
+            "secret": {
+              "$ref": "../common.json#/$defs/secretRef"
+            },
+            "cert": {
+              "$ref": "../common.json#/$defs/secretRef"
+            }
+          }
+        },
+        "tier": {
+          "enum": [
+            "T0",
+            "T1",
+            "T2",
+            "T3"
+          ]
+        },
+        "data_agreement": {
+          "type": "object",
+          "description": "parsed and stored, ignored by admission (CF-04)"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/modelEntry"
+          },
+          "maxItems": 50
+        }
+      }
+    },
+    "harnessSpec": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "billing",
+        "vendor_terms",
+        "tier"
+      ],
+      "additionalProperties": false,
+      "description": "models.yaml harnesses[] entry (WRD-16 §6.1)",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "kind": {
+          "$ref": "../common.json#/$defs/harnessKind"
+        },
+        "billing": {
+          "enum": [
+            "subscription",
+            "chatgpt_login",
+            "api_key",
+            "subscription_personal"
+          ]
+        },
+        "vendor_terms": {
+          "$ref": "../common.json#/$defs/vendorTerms"
+        },
+        "tier": {
+          "const": "T4"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "lastTest": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "at",
+            "ok",
+            "latency_ms",
+            "error_code"
+          ],
+          "properties": {
+            "at": {
+              "$ref": "../common.json#/$defs/timestamp"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "latency_ms": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "error_code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "providerView": {
+      "type": "object",
+      "required": [
+        "provider_id",
+        "protocol",
+        "base_url",
+        "tier",
+        "auth_mode",
+        "auth_kind",
+        "auth_header",
+        "secret_ref",
+        "secret_present",
+        "enabled",
+        "status",
+        "models",
+        "last_test"
+      ],
+      "properties": {
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "protocol": {
+          "$ref": "../common.json#/$defs/protocol"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "../common.json#/$defs/tier"
+        },
+        "auth_mode": {
+          "$ref": "../common.json#/$defs/authMode"
+        },
+        "auth_kind": {
+          "enum": [
+            "bearer",
+            "mtls",
+            null
+          ]
+        },
+        "auth_header": {
+          "enum": [
+            "api-key",
+            null
+          ]
+        },
+        "secret_ref": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/secretRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "secret_present": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "untested",
+            "failing",
+            "disabled",
+            "credential_missing"
+          ]
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/modelId"
+          }
+        },
+        "last_test": {
+          "$ref": "#/$defs/lastTest"
+        }
+      }
+    },
+    "harnessView": {
+      "type": "object",
+      "required": [
+        "harness_id",
+        "kind",
+        "tier",
+        "billing",
+        "billing_mode",
+        "vendor_terms",
+        "enabled",
+        "run_mode",
+        "status",
+        "locked_reason",
+        "last_test"
+      ],
+      "properties": {
+        "harness_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "kind": {
+          "$ref": "../common.json#/$defs/harnessKind"
+        },
+        "tier": {
+          "const": "T4"
+        },
+        "billing": {
+          "type": "string"
+        },
+        "billing_mode": {
+          "$ref": "../common.json#/$defs/billingMode"
+        },
+        "vendor_terms": {
+          "$ref": "../common.json#/$defs/vendorTerms"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "run_mode": {
+          "$ref": "../common.json#/$defs/harnessRunMode"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "untested",
+            "failing",
+            "disabled",
+            "not_installed",
+            "not_logged_in",
+            "locked"
+          ]
+        },
+        "locked_reason": {
+          "enum": [
+            "harness_locked_shared_mode",
+            "prohibited",
+            null
+          ]
+        },
+        "last_test": {
+          "$ref": "#/$defs/lastTest"
+        }
+      }
+    },
+    "providerTest": {
+      "type": "object",
+      "required": [
+        "ok",
+        "latency_ms",
+        "models",
+        "error"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "latency_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "model_id",
+              "tool_calling",
+              "structured_output",
+              "streaming",
+              "max_context"
+            ],
+            "properties": {
+              "model_id": {
+                "$ref": "../common.json#/$defs/modelId"
+              },
+              "tool_calling": {
+                "enum": [
+                  "native",
+                  "emulated",
+                  "none"
+                ]
+              },
+              "structured_output": {
+                "type": "boolean"
+              },
+              "streaming": {
+                "type": "boolean"
+              },
+              "max_context": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "$ref": "../common.json#/$defs/modelErrorCode"
+                },
+                "message": {
+                  "type": "string",
+                  "maxLength": 500
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "modelView": {
+      "type": "object",
+      "required": [
+        "model_id",
+        "provider_id",
+        "kind",
+        "tier",
+        "admissible",
+        "reason_code",
+        "reason",
+        "capabilities",
+        "pricing",
+        "quality_prior",
+        "pinned"
+      ],
+      "properties": {
+        "model_id": {
+          "$ref": "../common.json#/$defs/modelId"
+        },
+        "provider_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        },
+        "kind": {
+          "enum": [
+            "model",
+            "harness"
+          ]
+        },
+        "tier": {
+          "$ref": "../common.json#/$defs/tier"
+        },
+        "admissible": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "null when no classification context was given"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/rejectionCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300
+        },
+        "capabilities": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/modelCapabilities"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pricing": {
+          "$ref": "#/$defs/pricing"
+        },
+        "quality_prior": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/qualityPrior"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pinned": {
+          "type": "boolean"
+        }
+      }
+    },
+    "doctorCheck": {
+      "type": "object",
+      "required": [
+        "id",
+        "group",
+        "status",
+        "title",
+        "detail",
+        "fix_hint",
+        "blocking"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(\\.[a-z0-9_-]+)*$"
+        },
+        "group": {
+          "enum": [
+            "sandbox",
+            "keychain",
+            "store",
+            "disk",
+            "providers",
+            "policy",
+            "git",
+            "toolchain"
+          ]
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "warn",
+            "fail"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "fix_hint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "blocking": {
+          "type": "boolean"
+        },
+        "data": {
+          "type": "object"
+        }
+      }
+    },
+    "violation": {
+      "type": "object",
+      "required": [
+        "seq",
+        "kind",
+        "severity",
+        "detail"
+      ],
+      "properties": {
+        "seq": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "hash_mismatch",
+            "prev_hash_mismatch",
+            "seq_not_increasing",
+            "chain_mismatch",
+            "unknown_event_type",
+            "payload_invalid",
+            "projection_mismatch",
+            "blob_missing",
+            "blob_mismatch",
+            "artifact_record_mismatch",
+            "checkpoint_mismatch",
+            "checkpoint_signature_invalid",
+            "checkpoint_unsigned",
+            "unknown_key",
+            "anchor_missing",
+            "anchor_mismatch",
+            "missing_decision",
+            "decision_not_allow",
+            "missing_approval",
+            "approval_scope_mismatch",
+            "orphan_exec_end",
+            "external_grant"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "actionResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "rel_path": {
+          "$ref": "../common.json#/$defs/relPath"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "host": {
+          "type": "string",
+          "maxLength": 253
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "branch": {
+          "type": "string",
+          "maxLength": 255
+        },
+        "remote": {
+          "type": "string",
+          "maxLength": 255
+        },
+        "harness_id": {
+          "$ref": "../common.json#/$defs/catalogId"
+        }
+      }
+    },
+    "decisionPreview": {
+      "type": "object",
+      "required": [
+        "effect",
+        "reason",
+        "risk_class",
+        "matched_rules",
+        "obligations",
+        "approval",
+        "grant",
+        "layers",
+        "normalized",
+        "context"
+      ],
+      "properties": {
+        "effect": {
+          "$ref": "../common.json#/$defs/effect"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "risk_class": {
+          "$ref": "../common.json#/$defs/riskClass"
+        },
+        "matched_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/ruleId"
+          }
+        },
+        "obligations": {
+          "$ref": "../events/payloads.json#/$defs/obligations"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "scope_max",
+                "scopes_allowed"
+              ],
+              "properties": {
+                "scope_max": {
+                  "$ref": "../common.json#/$defs/approvalScope"
+                },
+                "scopes_allowed": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "../common.json#/$defs/approvalScope"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "grant": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/approvalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "layer",
+              "rule_id",
+              "effect",
+              "matched",
+              "reason"
+            ],
+            "properties": {
+              "layer": {
+                "enum": [
+                  "invariant",
+                  "capability",
+                  "platform",
+                  "user",
+                  "grant"
+                ]
+              },
+              "rule_id": {
+                "$ref": "../common.json#/$defs/ruleId"
+              },
+              "effect": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/effect"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "matched": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "normalized": {
+          "type": "object",
+          "required": [
+            "tool",
+            "operation",
+            "resource"
+          ],
+          "properties": {
+            "tool": {
+              "$ref": "../common.json#/$defs/policyTool"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "resource": {
+              "type": "object"
+            }
+          }
+        },
+        "context": {
+          "type": "object",
+          "required": [
+            "session_id",
+            "classification",
+            "environment",
+            "task_key"
+          ],
+          "properties": {
+            "session_id": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/sessionId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "classification": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/classification"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "environment": {
+              "enum": [
+                "interactive",
+                "non_interactive"
+              ]
+            },
+            "task_key": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/taskKey"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "checkpointRef": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "chain",
+        "last_seq",
+        "last_hash",
+        "event_count",
+        "key_id",
+        "signature"
+      ],
+      "properties": {
+        "event_id": {
+          "$ref": "../common.json#/$defs/eventId"
+        },
+        "chain": {
+          "$ref": "../common.json#/$defs/chain"
+        },
+        "last_seq": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "last_hash": {
+          "$ref": "../common.json#/$defs/sha256"
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "signature": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

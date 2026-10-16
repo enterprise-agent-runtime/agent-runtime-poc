@@ -1,0 +1,5 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  suite [label="Eval suite (YAML)\ncases: repo fixture (git bundle)\n+ prompt + graders + budget"]; run [label="warden eval run\nfresh sandbox per case\nagent@version × model set"]; grade [label="Graders\nbuild · tests · files-changed scope\nforbidden-path not accessed\nexpected denials · LLM judge (optional)"]; rep [label="Report\nsuccess rate · cost/success\nlatency · violations · regressions vs baseline"]; gate [label="Gate\nthresholds for publish / promote", shape=hexagon, fillcolor="#FDE9D9"];
+  suite -> run -> grade -> rep -> gate;
+}

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/artifacts/checkpoint.json",
+  "title": "checkpoint v1 (budget exhaustion, cancel, interruption; WRD-09 §6, WRD-03 §3.6)",
+  "type": "object",
+  "required": [
+    "reason",
+    "task_key",
+    "task_id",
+    "execution_id",
+    "steps_used",
+    "tokens_used",
+    "cost_usd",
+    "wall_clock_ms",
+    "worktree_commit",
+    "partial_ref",
+    "state_summary",
+    "next_steps"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "enum": [
+        "budget",
+        "cancel",
+        "interrupted",
+        "timeout"
+      ]
+    },
+    "budget_kind": {
+      "enum": [
+        "steps",
+        "tokens",
+        "wall_clock",
+        "task_cost",
+        "session_cost",
+        "daily_cost"
+      ]
+    },
+    "task_key": {
+      "$ref": "../common.json#/$defs/taskKey"
+    },
+    "task_id": {
+      "$ref": "../common.json#/$defs/taskId"
+    },
+    "execution_id": {
+      "$ref": "../common.json#/$defs/executionId"
+    },
+    "steps_used": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tokens_used": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cost_usd": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "wall_clock_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "worktree_commit": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/gitCommit"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "partial_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^refs/warden/partial/[a-z0-9-]+(/[0-9]+)?$",
+      "description": "A14: refs/warden/partial/<task_key>/<attempt>"
+    },
+    "state_summary": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "next_steps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "maxItems": 10
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/artifact.list.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "run_id": {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        "type": {
+          "$ref": "../common.json#/$defs/artifactType"
+        },
+        "include_superseded": {
+          "type": "boolean",
+          "default": false,
+          "description": "NEW"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "session_id"
+          ]
+        },
+        {
+          "required": [
+            "run_id"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "artifacts"
+      ],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "types.json#/$defs/artifactSummary"
+          }
+        }
+      }
+    }
+  }
+}

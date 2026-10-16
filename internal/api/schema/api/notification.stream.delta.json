@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/notification.stream.delta.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "subscription_id",
+        "session_id",
+        "task_id",
+        "kind",
+        "seq_hint",
+        "data"
+      ],
+      "properties": {
+        "subscription_id": {
+          "$ref": "../common.json#/$defs/subscriptionId"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "task_id": {
+          "$ref": "../common.json#/$defs/taskId"
+        },
+        "execution_id": {
+          "$ref": "../common.json#/$defs/executionId"
+        },
+        "kind": {
+          "enum": [
+            "model_text",
+            "model_tool_args",
+            "tool_output"
+          ]
+        },
+        "seq_hint": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "NEW: deltas of this (task, kind) dropped since the previous delivered delta"
+        },
+        "data": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "model_call_id",
+                "text"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "model_call_id": {
+                  "$ref": "../common.json#/$defs/modelCallId"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "model_call_id",
+                "index",
+                "tool",
+                "partial_json"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "model_call_id": {
+                  "$ref": "../common.json#/$defs/modelCallId"
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tool": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9_-]{1,64}$"
+                },
+                "partial_json": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "call_id",
+                "stream",
+                "text",
+                "offset"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "call_id": {
+                  "$ref": "../common.json#/$defs/callId"
+                },
+                "stream": {
+                  "enum": [
+                    "stdout",
+                    "stderr"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "model_text"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "required": [
+                  "model_call_id",
+                  "text"
+                ],
+                "not": {
+                  "required": [
+                    "index"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "model_tool_args"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "required": [
+                  "model_call_id",
+                  "index",
+                  "tool",
+                  "partial_json"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tool_output"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "required": [
+                  "call_id",
+                  "stream",
+                  "text",
+                  "offset"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

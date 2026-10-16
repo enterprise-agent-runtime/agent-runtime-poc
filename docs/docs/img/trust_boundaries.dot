@@ -1,0 +1,11 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  subgraph cluster_t0 { label="Untrusted inputs"; style="rounded,filled"; fillcolor="#FDE9D9"; color="#C0504D";
+    repo [label="Repository content\n(files, hooks, configs)"]; model [label="Model output\n(proposals, text)"]; tools [label="Tool results,\nMCP servers, web"]; pkg [label="Agent packages\n(3rd-party)"]; uiu [label="UI / CLI requests"]; }
+  subgraph cluster_t1 { label="Trusted computing base"; style="rounded,filled"; fillcolor="#FFF8E7"; color="#D9A62E";
+    rt [label="wardend runtime\n(PDP, executors, proxy,\nsecrets broker, audit)"]; pol [label="Policy bundles\n(user / org, signed)"]; }
+  subgraph cluster_t2 { label="Confined execution"; style="rounded,filled"; fillcolor="#EAF7EA"; color="#5FA65F"; sb [label="Sandbox\n(worktree rw, no secrets,\nproxy-only network)"]; }
+  ext [label="External services\n(models, git hosts, registries)", fillcolor="#F0F0F0"];
+  repo -> sb [label="mounted"]; model -> rt [label="proposal only"]; tools -> rt [label="tagged untrusted"]; pkg -> rt [label="verified, manifest-scoped"]; uiu -> rt [label="authenticated API"];
+  pol -> rt; rt -> sb [label="grants capabilities,\nspawns executor"]; sb -> ext [label="only via proxy,\nallowlist"]; rt -> ext [label="model calls,\ncredentials"];
+}

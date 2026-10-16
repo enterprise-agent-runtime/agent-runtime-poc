@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/api/session.setBudget.json",
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "session_usd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        "session_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10000
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "session_usd",
+        "max_allowed_usd"
+      ],
+      "properties": {
+        "session_usd": {
+          "type": "number"
+        },
+        "max_allowed_usd": {
+          "type": "number"
+        },
+        "session_spent_usd": {
+          "type": "number",
+          "description": "NEW"
+        },
+        "resumed_task_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/taskId"
+          },
+          "description": "NEW"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+
+digraph G { rankdir=LR; graph [fontname="Helvetica", fontsize=11, dpi=160, pad=0.2, nodesep=0.35, ranksep=0.45, bgcolor="white"]; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#F4F7FB", color="#5B7089", penwidth=1.2]; edge [fontname="Helvetica", fontsize=9, color="#3D4F63", arrowsize=0.8];
+  d [label="wardend\n(orchestrator, PDP, audit)", fillcolor="#FFF8E7"];
+  subgraph cluster_sb { label="Sandbox (per task)"; style="rounded,filled"; fillcolor="#EAF7EA"; color="#5FA65F";
+    h [label="Vendor harness process\ne.g. Copilot CLI (server mode)\nCodex app-server · claude -p"]; ex [label="warden-exec\n(tool executor)"]; wt [label="worktree (rw)"]; }
+  v [label="Vendor endpoint\n(harness' own auth:\nsubscription / BYOK)", fillcolor="#F0F0F0"];
+  d -> h [label="JSON-RPC session:\nprompt, custom tools,\nhooks (pre/post tool use,\npermission requests)"];
+  h -> d [label="tool call / permission\nrequest → PDP decision", style=dashed];
+  d -> ex [label="approved tool call"]; ex -> wt; h -> v [label="only allowlisted\nvendor domains via proxy"];
+}

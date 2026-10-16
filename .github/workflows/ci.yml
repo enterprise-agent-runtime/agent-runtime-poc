@@ -1,0 +1,54 @@
+# CI per CLAUDE.md §3 and §8.1: `make check` (L0 static checks, L1 unit,
+# L2 golden/contract, L5 component tests) on Linux, Windows and macOS for
+# every push and pull request. Sandbox integration (`make escape-check`),
+# e2e and smoke runs are separate and land with their milestones.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: make check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: make check
+        if: runner.os != 'Windows'
+        run: make check
+      # Windows exercises the same wrapper the owner uses (make.ps1 → Git Bash → scripts/make.sh).
+      - name: make.ps1 check
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\make.ps1 check
+
+  race:
+    # The race detector needs cgo; release binaries stay cgo-free (CONFLICTS C-38).
+    name: go test -race (linux)
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race -count=1 ./...

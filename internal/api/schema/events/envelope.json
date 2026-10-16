@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.warden.dev/poc/events/envelope.json",
+  "title": "Warden event envelope v1",
+  "type": "object",
+  "required": [
+    "v",
+    "seq",
+    "id",
+    "ts",
+    "type",
+    "chain",
+    "session_id",
+    "workflow_run_id",
+    "task_id",
+    "execution_id",
+    "actor",
+    "user",
+    "workspace_id",
+    "classification",
+    "payload",
+    "redactions",
+    "prev_hash",
+    "hash"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "seq": {
+      "$ref": "../common.json#/$defs/seq"
+    },
+    "id": {
+      "$ref": "../common.json#/$defs/eventId"
+    },
+    "ts": {
+      "$ref": "../common.json#/$defs/timestamp"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z]+(\\.[a-z]+){0,3}$"
+    },
+    "chain": {
+      "$ref": "../common.json#/$defs/chain"
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/sessionId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "workflow_run_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/runId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/taskId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "execution_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/executionId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "actor": {
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "version",
+        "digest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "../common.json#/$defs/actorKind"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "user": {
+      "$ref": "../common.json#/$defs/localUser"
+    },
+    "workspace_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/workspaceId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "classification": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/classification"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "redactions": {
+      "type": "object",
+      "required": [
+        "count",
+        "types"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "prev_hash": {
+      "$ref": "../common.json#/$defs/sha256"
+    },
+    "hash": {
+      "$ref": "../common.json#/$defs/sha256"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "chain": {
+            "const": "sys"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "session_id": {
+            "type": "null"
+          },
+          "workflow_run_id": {
+            "type": "null"
+          },
+          "task_id": {
+            "type": "null"
+          },
+          "execution_id": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

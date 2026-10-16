@@ -1,0 +1,6 @@
+data: {"id":"c10","model":"m","choices":[{"index":0,"delta":{"content":"I can"},"finish_reason":"content_filter"}]}
+
+data: {"id":"c10","model":"m","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2}}
+
+data: [DONE]
+
