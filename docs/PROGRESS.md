@@ -42,10 +42,14 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **Group B** (executor; no Docker):
 
-- [ ] **M2-4** wire types, error codes and profiles
+- [x] **M2-4** Executor wire types in `internal/execproto` (design A02 layout, D-046).
+  - **Scope:** error codes, command profiles and matching (A08 limits), and shell-string detection stricter than A06 (C-64, D-047).
+  - **Commits:** `38efd07`, `eb427b2`, `0b7ef4e`, `5d1c6de`, `223b804`, `0fee0cc`, `3ddbd15`, `8272194`, `8e49d97`.
+  - **Review:** four rounds. They found secret leaks, a parser differential, two quadratic slow inputs (measured at 9.7 GiB and 84 s), a panic and over-blocking. The final review fuzzed it for 70 s per target with no failure, and package coverage is 96%.
+- [ ] **M2-4b** Move the deny-list from `internal/exec/denylist` to a stdlib-only leaf under `internal/execproto` (design A06 §3.1, §17). R4 forbids `internal/policy` and `internal/sandbox` from importing `internal/exec`. Also add an archtest rule that `internal/execproto` imports only the standard library (A02 R6).
 - [ ] **M2-5** ordered transport
 - [ ] **M2-6** Resolve and race-free open
-- [ ] **M2-7** fs operations
+- [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
 - [ ] **M2-8** proc operations, rlimits and output cap
 - [ ] **M2-9** git.run
 - [ ] **M2-10** the `cmd/warden-exec` binary and the forwarder

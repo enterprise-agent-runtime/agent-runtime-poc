@@ -22,6 +22,33 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-017 · 2026-10-16 · M2-4: executor wire types, command profiles, shell-string detection
+
+- **Asked:** M2 plan task M2-4. During review the owner made three decisions (2026-10-16): the package follows design A02's layout; shell-string detection denies more than A06; interpreter strings stay at approval. Delivered under "merge each task when its review passes".
+- **Task:** The executor protocol's wire types and error codes, the command-profile matcher (which decides what runs without approval), and shell-string detection (which forms are denied outright).
+- **How:** New package `internal/execproto` (D-046), across nine commits from `38efd07` to `8e49d97`. Strict decoding with measured bounds; opaque `SecretEnv`; stricter shell rules (C-64); `IsShellStringResolved` for the realpath re-check that M2-8 wires in; A08's absorption limits in `Match`; a committed fuzz target.
+- **Rules kept:**
+  - Test first throughout, with mutation checks for every fix (60+ in total).
+  - A stdlib-only leaf that imports nothing from the daemon or `internal/exec`; it passes M2-2's import rules on the merged tree.
+  - INV-C: no secret value leaks through fmt, slog, json, gob or reflection (probed).
+  - No new dependency.
+- **Rules changed or bent:**
+  - **Package path:** `internal/execproto` instead of `internal/exec/proto` (CLAUDE.md §6 as amended by M2-2; C-31 superseded). Why: design A02's layout makes the R4 import rule enforceable. Approved: owner, 2026-10-16.
+  - **Stricter than design A06** (C-64): shell detection goes beyond A06's list, with accepted false positives `timeout 600 go test -run sh -count=1 ./...` and `watch -n 5 kubectl get pods`. `Match` follows A08's limits rather than A06's. Approved: owner, 2026-10-16 ("deny more than A06").
+  - **Applied by me under that decision:** the extension to `script -c`, `flock -c` and `watch`, recorded in C-64.
+  - **Not from the design:** interpreter strings stay R3 (D-047, owner). A patch over 4096 files will be refused before applying (D-048, decided by me, C-65).
+  - **Process:** two fix rounds introduced new defects (an O(depth²) key walker, an O(n²) secret_env check, an argv-end panic, wrapper false positives and then misses). Each was caught by the next review, before merge.
+- **Verified:**
+  - `make check` green on every commit and on the tree merged with M2-1, M2-2 and M2-3.
+  - Final review: fuzzing about 8M and 3.2M execs, with no failure. Every slow input in the review's table is bounded: 100k secret_env keys went from 84 s to 0.1 s. Everyday commands are not refused, apart from the documented price, and every listed evasion is caught.
+- **Left:**
+  - M2-4b: the deny-list moves to a stdlib leaf, and an R6 archtest rule is added.
+  - M2-5: the transport must build params with `MarshalWire`.
+  - M2-7: per-params `Validate`, and the patch file-count refusal.
+  - M2-8: wire in `IsShellStringResolved`; spawn validation of `secret_env`.
+  - More shells and wrappers for the record: ksh93, zsh5, elvish, nu, xonsh, find -exec, strace, unshare, chroot, setpriv, su -c, parallel.
+  - The executor and policy-engine (PDP) detection rules differ, and need aligning in M3.
+
 ## W-016 · 2026-10-16 · M2-2: archtest guards for the executor (INV-H, INV-J, A02 import rules)
 
 - **Asked:** M2 plan task M2-2. Two owner decisions came during review (2026-10-16): the executor follows design A02's package layout, and CLAUDE.md §5's INV-J row may be updated. Delivered under "merge each task when its review passes".

@@ -1,0 +1,2 @@
+{"call_id":"call_h1","argv":["copilot","--headless"],"timeout_ms":3600000,"secret_env":{"COPILOT_TOKEN":"value-set-by-test-not-a-credential"},
+ "authz":{"decision_id":"dec_h1","profile":"","approved":true,"kind":"harness"}}

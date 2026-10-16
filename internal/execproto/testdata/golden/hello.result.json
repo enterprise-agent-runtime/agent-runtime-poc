@@ -1,0 +1,5 @@
+{"protocol":"warden.exec/1","executor_version":"0.2.0","os":"linux","arch":"amd64","mode":"tool",
+ "roots":[{"name":"worktree","path":"/work","mode":"rw"},{"name":"scratch","path":"/scratch","mode":"rw"},{"name":"cache","path":"/cache","mode":"rw"},{"name":"git","path":"/git","mode":"rw"}],
+ "profiles_digest":"sha256:3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8550",
+ "features":{"openat2":true,"o_nofollow_any":false,"pid_namespace":true,"cgroup":false},
+ "pid":1,"uid":1000,"proxy_listen":"127.0.0.1:3128"}

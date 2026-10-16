@@ -1,0 +1,2 @@
+{"call_id":"call_01JAXR9","argv":["npm","test","--","--reporter=json","--outputFile=/scratch/vitest.json"],"timeout_ms":600000,"max_output_bytes":262144,
+ "authz":{"decision_id":"dec_01JAXR9","profile":"node-test","approved":false,"kind":"verifier"}}
