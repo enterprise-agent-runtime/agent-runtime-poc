@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # lint-imports.sh enforces the import rules of CLAUDE.md §6 and keeps OS
-# selection inside internal/platform, internal/sandbox and internal/secrets.
+# selection inside internal/platform, internal/sandbox, internal/secrets and
+# the executor (internal/exec, cmd/warden-exec; C-61).
 # The checks are Go AST tests in internal/archtest so they behave the same on
 # Linux, macOS and Windows; TestRules_CatchKnownViolations proves they fire.
 set -euo pipefail

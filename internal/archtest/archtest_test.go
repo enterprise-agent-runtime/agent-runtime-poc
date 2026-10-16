@@ -51,14 +51,16 @@ func report(t *testing.T, vs []Violation) {
 func TestExecutorOnlyViaSandbox(t *testing.T) { report(t, ExecRule(scanRepo(t))) }
 
 // TestNoListenTCP is INV-J (CLAUDE.md §5): the daemon never listens on a host
-// TCP port; only cmd/warden-proxy (inside the task's internal network) may.
+// TCP port; only cmd/warden-proxy (inside the task's internal network) and
+// the forwarder file internal/exec/forward/listen.go (inside the sandbox's
+// network namespace, C-46) may.
 func TestNoListenTCP(t *testing.T) { report(t, ListenRule(scanRepo(t))) }
 
 // TestImportRules enforces the import rules of CLAUDE.md §6.
 func TestImportRules(t *testing.T) { report(t, ImportRules(modulePath(t), scanRepo(t))) }
 
 // TestOSSelectionConfined keeps OS differences inside internal/platform,
-// internal/sandbox and internal/secrets (CLAUDE.md §3).
+// internal/sandbox, internal/secrets and the executor (CLAUDE.md §3, §6, C-61).
 func TestOSSelectionConfined(t *testing.T) { report(t, OSRule(scanRepo(t))) }
 
 // TestRules_CatchKnownViolations runs every rule over testdata/repo, a tree
@@ -80,11 +82,15 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"INV-H internal/sandbox/nocomment/x.go",  // os/exec without justification
-		"INV-H internal/store/spawn.go",          // aliased os.StartProcess outside sandbox packages
-		"INV-H internal/store/x_test.go",         // tests are not exempt from INV-H
-		"INV-J internal/api/listen.go",           // net.Listen("tcp", ...)
-		"INV-J internal/api/listen.go",           // http.ListenAndServe
+		"INV-H internal/sandbox/nocomment/x.go", // os/exec without justification
+		"INV-H internal/store/spawn.go",         // aliased os.StartProcess outside sandbox packages
+		"INV-H internal/store/x_test.go",        // tests are not exempt from INV-H
+		"INV-J internal/api/listen.go",          // net.Listen("tcp", ...)
+		"INV-J internal/api/listen.go",          // http.ListenAndServe
+		// internal/exec/forward/listen.go (the C-46 forwarder) listens on TCP and
+		// is allowed; the exemption is that one file, not its package or parent.
+		"INV-J internal/exec/forward/other.go",   // net.ListenTCP beside the forwarder file
+		"INV-J internal/exec/other.go",           // net.Listen("tcp", ...) elsewhere in the executor
 		"imports apps/desktop/x.go",              // Go under apps/
 		"imports internal/exec/bad.go",           // exec importing the daemon
 		"imports internal/policy/bad.go",         // policy importing a provider
@@ -93,6 +99,10 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		"os-selection internal/api/os.go",        // //go:build linux
 		"os-selection internal/api/os.go",        // runtime.GOOS
 		"os-selection internal/api/x_windows.go", // file-name suffix
+		// internal/exec/sys_linux.go and cmd/warden-exec/main_darwin.go select by
+		// OS and are allowed (C-61); these two are still rejected.
+		"os-selection internal/executor/x_linux.go", // a name prefix of internal/exec is not internal/exec
+		"os-selection internal/store/x_darwin.go",   // OS suffix outside the allowed dirs
 	}
 	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {

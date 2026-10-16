@@ -1,9 +1,10 @@
 // Package archtest holds the repository's static architecture checks: the
 // import rules of CLAUDE.md §6, INV-H (no process creation outside the
 // sandbox packages, CLAUDE.md §5 and §9 rule 1), INV-J (no host TCP/UDP
-// listener outside cmd/warden-proxy) and the confinement of OS selection to
-// internal/platform, internal/sandbox and internal/secrets. Design A02
-// ("internal/archtest").
+// listener outside cmd/warden-proxy and the in-sandbox forwarder file, C-46)
+// and the confinement of OS selection to internal/platform, internal/sandbox,
+// internal/secrets and the executor (internal/exec, cmd/warden-exec; C-61).
+// Design A02 ("internal/archtest").
 //
 // The checks parse source files with go/parser instead of grepping, so they
 // behave identically on the Linux, macOS and Windows CI runners, and they

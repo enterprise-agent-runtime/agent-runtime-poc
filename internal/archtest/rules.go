@@ -21,8 +21,20 @@ var spawnFiles = regexp.MustCompile(`^internal/platform/spawn(_[a-z]+)?\.go$`)
 // sidecar, which listens only inside the task's internal Docker network.
 var listenDirs = []string{"cmd/warden-proxy"}
 
-// osDirs may select behaviour by operating system (CLAUDE.md §3, §6).
-var osDirs = []string{"internal/platform", "internal/sandbox", "internal/secrets"}
+// listenFiles may open a TCP or UDP listener although they lie outside
+// listenDirs. Each entry is one exact file, never a package or a directory, so
+// a listener added anywhere else, including beside the entry, still fails
+// INV-J. The only entry is the L1 in-sandbox proxy forwarder (CLAUDE.md §4
+// "Network"; docs/CONFLICTS.md C-46): "warden-exec proxy" listens on
+// 127.0.0.1:3128 inside the sandbox's network namespace, which is not a host
+// port, and never runs on the host outside a sandbox. INV-J's subject is the
+// daemon on the host, so this file does not breach it.
+var listenFiles = map[string]bool{"internal/exec/forward/listen.go": true}
+
+// osDirs may select behaviour by operating system (CLAUDE.md §3, §6). The
+// executor is included because its semantics are per OS (openat2, process
+// groups) and it must still compile on Windows (docs/CONFLICTS.md C-61).
+var osDirs = []string{"internal/platform", "internal/sandbox", "internal/secrets", "internal/exec", "cmd/warden-exec"}
 
 // processStarters are the calls that create a process without os/exec.
 var processStarters = map[string]map[string]bool{
@@ -65,13 +77,13 @@ func ExecRule(files []File) []Violation {
 }
 
 // ListenRule implements INV-J statically: no TCP or UDP listener outside
-// listenDirs. net.Listen and net.ListenPacket are allowed only with a literal
-// "unix", "unixpacket" or "unixgram" network. Test files are exempt (httptest
-// servers bind 127.0.0.1 inside the test process).
+// listenDirs and listenFiles. net.Listen and net.ListenPacket are allowed only
+// with a literal "unix", "unixpacket" or "unixgram" network. Test files are
+// exempt (httptest servers bind 127.0.0.1 inside the test process).
 func ListenRule(files []File) []Violation {
 	var out []Violation
 	for _, f := range files {
-		if f.Test || underAny(f.Dir, listenDirs) {
+		if f.Test || underAny(f.Dir, listenDirs) || listenFiles[f.Rel] {
 			continue
 		}
 		for _, u := range f.Uses {
@@ -87,7 +99,7 @@ func ListenRule(files []File) []Violation {
 				bad = "http." + u.Name
 			}
 			if bad != "" {
-				out = append(out, Violation{f.Rel, u.Line, "INV-J", bad + " outside " + strings.Join(listenDirs, ", ")})
+				out = append(out, Violation{f.Rel, u.Line, "INV-J", bad + " outside " + strings.Join(listenDirs, ", ") + " and the forwarder file"})
 			}
 		}
 	}
