@@ -143,3 +143,113 @@ func foreignOwnerError(dir string, sd []byte, detail string) error {
 	}
 	return fmt.Errorf("%s is owned by another account (%s), not by you; use a directory of your own", dir, detail)
 }
+
+// ACE types and flags read by noForeignWriter (winnt.h).
+const (
+	accessDeniedACEType         = 1
+	accessAllowedObjectACEType  = 5
+	accessDeniedObjectACEType   = 6
+	accessAllowedCallbackType   = 9
+	accessDeniedCallbackType    = 10
+	accessAllowedCallbackObject = 11
+	accessDeniedCallbackObject  = 12
+	inheritOnlyACE              = 0x08
+
+	// fileWriteRights are the rights that let a holder change a file's
+	// content or its descriptor: FILE_WRITE_DATA, FILE_APPEND_DATA, DELETE,
+	// WRITE_DAC, WRITE_OWNER, GENERIC_WRITE, GENERIC_ALL.
+	fileWriteRights = 0x00000002 | 0x00000004 | 0x00010000 | 0x00040000 | 0x00080000 | 0x40000000 | 0x10000000
+)
+
+// trustedWriterSIDs may hold write rights on a file the user owns without
+// making it untrusted: the user, OWNER RIGHTS (S-1-3-4, the owner itself),
+// SYSTEM (S-1-5-18) and BUILTIN\Administrators (S-1-5-32-544). The last two
+// are on every inherited DACL in a profile and can take ownership of any
+// file anyway, so refusing them would refuse every key file a build before
+// WH-4 wrote and protect against nobody (the Unix analogue is root).
+func trustedWriterSIDs(user []byte) [][]byte {
+	return [][]byte{
+		user,
+		{1, 1, 0, 0, 0, 0, 0, 3, 4, 0, 0, 0},
+		{1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0},
+		builtinAdministratorsSID(),
+	}
+}
+
+// noForeignWriter reports whether the DACL of sd grants no write-type right
+// (fileWriteRights) to any SID other than the trusted writers: the Windows
+// integrity decision for a file whose content must be the user's, though
+// anyone may read it (checkpoint public keys, WH-4 round 1). A NULL or
+// missing DACL grants everything and is refused. Allow ACEs of the object
+// and callback kinds are refused rather than parsed (fail closed); deny
+// ACEs are ignored, which can only make the answer stricter. Inherit-only
+// ACEs do not apply to the file itself. The owner is not looked at; the
+// caller checks it with ownerIs.
+func noForeignWriter(sd, user []byte) bool {
+	if len(sd) < sdHeaderSize || !validSID(user) {
+		return false
+	}
+	control := binary.LittleEndian.Uint16(sd[2:])
+	if control&seSelfRelative == 0 || control&seDACLPresent == 0 {
+		return false
+	}
+	off := uint64(binary.LittleEndian.Uint32(sd[16:]))
+	if off < sdHeaderSize || off+aclHeaderSize > uint64(len(sd)) {
+		return false
+	}
+	acl := sd[off:]
+	aclSize := int(binary.LittleEndian.Uint16(acl[2:]))
+	if aclSize < aclHeaderSize || aclSize > len(acl) {
+		return false
+	}
+	count := int(binary.LittleEndian.Uint16(acl[4:]))
+	aces := acl[aclHeaderSize:aclSize]
+	for i := 0; i < count; i++ {
+		if len(aces) < aceHeaderSize {
+			return false
+		}
+		size := int(binary.LittleEndian.Uint16(aces[2:]))
+		if size < aceHeaderSize || size > len(aces) {
+			return false
+		}
+		ace := aces[:size]
+		aces = aces[size:]
+		if ace[1]&inheritOnlyACE != 0 {
+			continue
+		}
+		switch ace[0] {
+		case accessDeniedACEType, accessDeniedObjectACEType, accessDeniedCallbackType, accessDeniedCallbackObject:
+			continue
+		case accessAllowedACEType:
+		default: // allowed object/callback ACEs and anything unknown
+			return false
+		}
+		if len(ace) < aceHeaderSize+4 {
+			return false
+		}
+		if binary.LittleEndian.Uint32(ace[4:])&fileWriteRights == 0 {
+			continue
+		}
+		sid := ace[aceHeaderSize+4:]
+		if !validSID(sid) || !trustedWriter(sid[:sidLen(sid)], user) {
+			return false
+		}
+	}
+	return true
+}
+
+func trustedWriter(sid, user []byte) bool {
+	for _, t := range trustedWriterSIDs(user) {
+		if bytes.Equal(sid, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownerWritableMode is the Unix integrity decision for a file anyone may
+// read: owned by uid, and neither group nor others may write it (WH-4
+// round 1). Compare ownerOnlyMode, which is about secrecy.
+func ownerWritableMode(perm os.FileMode, owner, uid int) bool {
+	return perm&0o022 == 0 && owner == uid
+}

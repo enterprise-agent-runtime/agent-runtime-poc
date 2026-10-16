@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -339,5 +340,61 @@ func TestEnsure_ExistingSubdirsAndForeignOwner(t *testing.T) {
 	// "a Warden home and its run directory" as it used to (WH-4).
 	if err := l.Ensure(); err == nil || !strings.Contains(err.Error(), "reparse point") || !strings.Contains(err.Error(), wantLinkRefusal) {
 		t.Fatalf("Ensure with keys/ a junction = %v; want a refusal saying %q", err, wantLinkRefusal)
+	}
+}
+
+// TestReadOwnerWritable_DACL guards WH-4 round 1 (CWE-1188) on Windows: the
+// integrity check for key files accepts the inherited DACL (SYSTEM,
+// Administrators, the user) every build before WH-4 wrote, and a DACL that
+// lets others read; it refuses a DACL that grants another SID a write-type
+// right, with the icacls /reset hint, and a junction.
+func TestReadOwnerWritable_DACL(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	inherited := filepath.Join(dir, "inherited.pub")
+	if err := os.WriteFile(inherited, []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadOwnerWritable(inherited, 64); err != nil {
+		t.Fatalf("inherited DACL (%s): %v; want accepted", ownerOnlyDetail(inherited), err)
+	}
+	withDACL := func(name, aces string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("k"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sd, err := winio.SddlToSecurityDescriptor("O:" + u.Uid + "D:P(A;;FA;;;" + u.Uid + ")" + aces)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := setSecurity(p, sd); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if _, err := ReadOwnerWritable(withDACL("readable.pub", "(A;;FR;;;WD)"), 64); err != nil {
+		t.Errorf("Everyone may read: %v; want accepted", err)
+	}
+	for name, aces := range map[string]string{
+		"everyone-write.pub": "(A;;FW;;;WD)",
+		"users-modify.pub":   "(A;;0x1301bf;;;BU)",
+		"users-writedac.pub": "(A;;WD;;;BU)",
+	} {
+		p := withDACL(name, aces)
+		if _, err := ReadOwnerWritable(p, 64); err == nil || !strings.Contains(err.Error(), "icacls") || strings.Contains(err.Error(), "remove it") {
+			t.Errorf("%s (%s): ReadOwnerWritable = %v; want a refusal with the icacls hint", name, ownerOnlyDetail(p), err)
+		}
+	}
+	target := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "junction.pub")
+	makeJunction(t, link, target)
+	if _, err := ReadOwnerWritable(link, 64); err == nil {
+		t.Error("junction accepted")
 	}
 }

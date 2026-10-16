@@ -300,3 +300,26 @@ func TestEnsure_LooseMarkerIsNoProof(t *testing.T) {
 // wantLinkRefusal is the wording ensureDir's link refusal must carry for
 // any managed directory (WH-4).
 const wantLinkRefusal = "Warden's directories must be real directories"
+
+// TestMoveAside_KeepsContent: a refused file is renamed beside itself as
+// <name>.refused-<unix nanos>, with its content, and the original name is
+// free (WH-4 round 1: a refused checkpoint.pub must not be destroyed).
+func TestMoveAside_KeepsContent(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "checkpoint.pub")
+	if err := os.WriteFile(p, []byte("old key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := MoveAside(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(filepath.Base(moved), "checkpoint.pub.refused-") {
+		t.Fatalf("moved to %s", moved)
+	}
+	if b, err := os.ReadFile(moved); err != nil || string(b) != "old key" {
+		t.Fatalf("moved content %q %v", b, err)
+	}
+	if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original name still taken (%v)", err)
+	}
+}

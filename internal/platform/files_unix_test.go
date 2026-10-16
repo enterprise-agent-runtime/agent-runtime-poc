@@ -159,3 +159,90 @@ func TestEnsure_ExistingSubdirsTightened(t *testing.T) {
 		t.Fatalf("Ensure with keys/ a symlink = %v; want a refusal saying %q", err, wantLinkRefusal)
 	}
 }
+
+// TestReadOwnerWritable_Unix guards WH-4 round 1 (CWE-1188): the integrity
+// check for key files accepts what a build before WH-4 wrote (0644) and the
+// user's own read-only files, and refuses anything group or others can
+// write, a symlink and a FIFO, deciding on the descriptor it reads from.
+// The foreign-owner case is TestOwnerWritableMode (no root here).
+func TestReadOwnerWritable_Unix(t *testing.T) {
+	dir := t.TempDir()
+	put := func(name string, perm os.FileMode) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(name), perm); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, perm); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	for _, perm := range []os.FileMode{0o644, 0o600, 0o444} {
+		p := put("ok-"+perm.String(), perm)
+		if b, err := ReadOwnerWritable(p, 64); err != nil || string(b) != filepath.Base(p) {
+			t.Errorf("%v: ReadOwnerWritable = %q, %v; want the content", perm, b, err)
+		}
+	}
+	for _, perm := range []os.FileMode{0o664, 0o646, 0o666} {
+		p := put("loose-"+perm.String(), perm)
+		if _, err := ReadOwnerWritable(p, 64); err == nil || !strings.Contains(err.Error(), "chmod go-w") || strings.Contains(err.Error(), "remove it") {
+			t.Errorf("%v: ReadOwnerWritable = %v; want a refusal with the chmod go-w hint", perm, err)
+		}
+	}
+	target := put("target", 0o644)
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadOwnerWritable(link, 64); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Errorf("symlink: ReadOwnerWritable = %v; want a refusal", err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadOwnerWritable(fifo, 64); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("FIFO: ReadOwnerWritable = %v; want a refusal", err)
+	}
+}
+
+// TestMoveAside_TightensOwnFileOnly: a moved-aside file the user owns is
+// made 0600; a moved-aside symlink is moved as a link and its target is
+// left alone (WH-4 round 1).
+func TestMoveAside_TightensOwnFileOnly(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "checkpoint.pub")
+	if err := os.WriteFile(p, []byte("old key"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := MoveAside(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(moved); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("moved file %s: %v %v; want 0600", moved, fi.Mode(), err)
+	}
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("t"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, p); err != nil {
+		t.Fatal(err)
+	}
+	moved, err = MoveAside(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(moved); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("moved symlink %s: %v %v; want the link itself", moved, fi.Mode(), err)
+	}
+	if fi, _ := os.Stat(target); fi.Mode().Perm() != 0o644 {
+		t.Fatalf("symlink target re-permissioned to %v", fi.Mode())
+	}
+}

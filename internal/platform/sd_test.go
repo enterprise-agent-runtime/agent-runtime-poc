@@ -397,3 +397,66 @@ func TestForeignOwnerError_NamesElevation(t *testing.T) {
 		t.Errorf("another user's directory: message %q; want the plain refusal without elevation", msg)
 	}
 }
+
+// TestNoForeignWriter is the Windows integrity decision for files anyone may
+// read but only the user may have written (checkpoint public keys; WH-4
+// round 1, CWE-1188): ReadOwnerOnly refused the inherited DACL (SYSTEM,
+// Administrators, the user) of every key file a build before WH-4 wrote.
+// Pure, so it runs on every OS.
+func TestNoForeignWriter(t *testing.T) {
+	user := testSID(5, 21, 1111, 2222, 3333, 1001)
+	other := testSID(5, 21, 1111, 2222, 3333, 1002)
+	system := testSID(5, 18)
+	admins := testSID(5, 32, 544)
+	everyone := testSID(1, 0)
+	const fileGenericRead = 0x00120089
+	const fileGenericWrite = 0x00120116
+	const writeDAC = 0x00040000
+	const genericAll = 0x10000000
+	allow := func(mask uint32, sid []byte) []byte { return testACE(accessAllowedACEType, 0, mask, sid) }
+	for _, c := range []struct {
+		name string
+		sd   []byte
+		want bool
+	}{
+		{"owner-only", testSD(user, seDACLPresent|seDACLProtected, allow(fileAllAccess, user)), true},
+		{"inherited profile DACL", testSD(user, seDACLPresent, testACE(0, 0x10, fileAllAccess, system), testACE(0, 0x10, fileAllAccess, admins), testACE(0, 0x10, fileAllAccess, user)), true},
+		{"everyone may read", testSD(user, seDACLPresent, allow(fileAllAccess, user), allow(fileGenericRead, everyone)), true},
+		{"everyone may write", testSD(user, seDACLPresent, allow(fileAllAccess, user), allow(fileGenericWrite, everyone)), false},
+		{"another user full", testSD(user, seDACLPresent, allow(fileAllAccess, user), allow(fileAllAccess, other)), false},
+		{"another user WRITE_DAC only", testSD(user, seDACLPresent, allow(fileAllAccess, user), allow(writeDAC, other)), false},
+		{"another user GENERIC_ALL", testSD(user, seDACLPresent, allow(genericAll, other)), false},
+		{"inherit-only grant to another user", testSD(user, seDACLPresent, allow(fileAllAccess, user), testACE(0, inheritOnlyACE, fileAllAccess, other)), true},
+		{"deny ACE for another user", testSD(user, seDACLPresent, testACE(accessDeniedACEType, 0, fileAllAccess, other), allow(fileAllAccess, user)), true},
+		{"allowed-object ACE", testSD(user, seDACLPresent, allow(fileAllAccess, user), testACE(accessAllowedObjectACEType, 0, fileGenericRead, other)), false},
+		{"NULL DACL", testSD(user, 0), false},
+		{"truncated", testSD(user, seDACLPresent, allow(fileAllAccess, user))[:sdHeaderSize+4], false},
+	} {
+		if got := noForeignWriter(c.sd, user); got != c.want {
+			t.Errorf("%s: noForeignWriter = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestOwnerWritableMode is the Unix integrity decision (WH-4 round 1): the
+// owner must be the user and neither group nor others may write. 0644 is
+// accepted, unlike ownerOnlyMode; a foreign owner never is.
+func TestOwnerWritableMode(t *testing.T) {
+	for _, c := range []struct {
+		perm       os.FileMode
+		owner, uid int
+		want       bool
+	}{
+		{0o644, 1000, 1000, true},
+		{0o600, 1000, 1000, true},
+		{0o444, 1000, 1000, true},
+		{0o664, 1000, 1000, false},
+		{0o646, 1000, 1000, false},
+		{0o644, 1001, 1000, false},
+		{0o644, 0, 1000, false},
+	} {
+		if got := ownerWritableMode(c.perm, c.owner, c.uid); got != c.want {
+			t.Errorf("%v owner %d uid %d: ownerWritableMode = %v, want %v", c.perm, c.owner, c.uid, got, c.want)
+		}
+	}
+}

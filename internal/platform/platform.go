@@ -18,8 +18,10 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // EnvHome overrides the Warden home (tests and parallel CI, CLAUDE.md §8.4).
@@ -206,7 +208,7 @@ func readLimited(r io.Reader, path string, max int) ([]byte, error) {
 		return nil, err
 	}
 	if len(b) > max {
-		return nil, fmt.Errorf("%s is larger than %d bytes; it is not a token file", path, max)
+		return nil, fmt.Errorf("%s is larger than the %d bytes expected of it", path, max)
 	}
 	return b, nil
 }
@@ -311,3 +313,28 @@ func EndpointMissing(err error) bool {
 // HomeMarker is the file Ensure leaves in every Warden home it creates or
 // accepts; an existing directory without it is not re-permissioned.
 const HomeMarker = ".warden-home"
+
+// errNotOwnerWritable is wrapped by every refusal of ReadOwnerWritable.
+var errNotOwnerWritable = errors.New("not the user's own unmodifiable file")
+
+// notOwnerWritable is a ReadOwnerWritable refusal: why, the file's owner and
+// permissions, and how to fix it. It never says to remove the file: what it
+// guards are verification keys, and removing one discards the anchor.
+func notOwnerWritable(path, why, detail, fix string) error {
+	return fmt.Errorf("%s %s (%s), so another account could have written it; %s: %w", path, why, detail, fix, errNotOwnerWritable)
+}
+
+// MoveAside renames a refused file at path to path.refused-<unix nanos> in
+// the same directory, so a caller replacing it neither trusts nor destroys
+// it (it may be a legitimate file with loose permissions; WH-4 round 1). The
+// rename moves the entry itself, never a link's target. Afterwards the moved
+// file is made owner-only when it is a regular file the user owns; that step
+// is best effort and never follows a link. It returns the new name.
+func MoveAside(path string) (string, error) {
+	dst := path + ".refused-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if err := os.Rename(path, dst); err != nil {
+		return "", err
+	}
+	tightenMoved(dst)
+	return dst, nil
+}

@@ -474,18 +474,15 @@ func TestAudit_ExportVerifyRoundTrip(t *testing.T) {
 	if code, _ := callErr(c, "audit.verify", map[string]any{"file": filepath.Join(e.l.Home, "missing.jsonl")}); code != CodeNotFound {
 		t.Fatalf("missing file = %d", code)
 	}
-	// A checkpoint key file another account could have planted (0644 on
-	// Unix, an inherited DACL on Windows) fails the verification instead of
-	// being trusted (WH-4, CWE-732).
-	loose := filepath.Join(e.l.Keys(), "checkpoint-planted.pub")
-	if err := os.WriteFile(loose, []byte("planted"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(loose, 0o644); err != nil {
+	// A checkpoint key entry that fails the integrity check (here a
+	// directory named like a key, refused on every OS; the writable-by-others
+	// cases are tested in internal/secrets and internal/platform) fails the
+	// verification instead of being trusted or skipped (WH-4, CWE-732).
+	if err := os.Mkdir(filepath.Join(e.l.Keys(), "checkpoint-planted.pub"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if code, d := callErr(c, "audit.verify", map[string]any{"file": path, "strict": true}); code != CodeInvalidState || d.Reason != "untrusted_key_file" {
-		t.Fatalf("file verify with a loose key file = %d %+v; want invalid state, untrusted_key_file", code, d)
+		t.Fatalf("file verify with an untrusted key entry = %d %+v; want invalid state, untrusted_key_file", code, d)
 	}
 }
 
