@@ -30,10 +30,27 @@ func ownerSDDL() (string, error) {
 	return "D:P(A;;GA;;;" + u.Uid + ")", nil
 }
 
-// Listen creates the pipe with an owner-only DACL. go-winio creates the
-// first instance exclusively, so a second daemon fails here.
+// pipeSDDL is ownerSDDL with the owner set to the current user as well.
+// Without "O:" the owner is the token's default owner, which for an elevated
+// administrator is BUILTIN\Administrators; the client requires owner ==
+// user (verifyPipeServer), so the daemon states it.
+func pipeSDDL() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	d, err := ownerSDDL()
+	if err != nil {
+		return "", err
+	}
+	return "O:" + u.Uid + d, nil
+}
+
+// Listen creates the pipe owned by the current user with an owner-only DACL
+// (pipeSDDL). go-winio creates the first instance exclusively, so a second
+// daemon fails here.
 func Listen(home string) (net.Listener, error) {
-	sddl, err := ownerSDDL()
+	sddl, err := pipeSDDL()
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +66,10 @@ func Listen(home string) (net.Listener, error) {
 	return l, nil
 }
 
-// Dial connects to the daemon pipe.
+// Dial connects to the daemon pipe and, before returning the connection,
+// verifies that the current user serves it (verifyPipeServer). Another
+// local user can create the pipe name first; nothing, in particular not the
+// token, may be written to a pipe that fails the check.
 func Dial(ctx context.Context, home string) (net.Conn, error) {
 	c, err := winio.DialPipeContext(ctx, Endpoint(home))
 	if err != nil {
@@ -57,6 +77,14 @@ func Dial(ctx context.Context, home string) (net.Conn, error) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("wardend is not running (%s): %w", Endpoint(home), err)
+	}
+	me, err := currentUserSID()
+	if err == nil {
+		err = verifyPipeServer(c, me)
+	}
+	if err != nil {
+		c.Close()
+		return nil, fmt.Errorf("refusing %s: %w", Endpoint(home), err)
 	}
 	return c, nil
 }
