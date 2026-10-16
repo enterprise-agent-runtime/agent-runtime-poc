@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"warden.dev/warden/internal/platform"
 )
 
 // TestDial_RefusesTokenFileNotOwnerOnly guards WH-1+2 (d) (security review
@@ -48,5 +51,23 @@ func TestDial_NoTokenFile(t *testing.T) {
 	defer cancel()
 	if _, err := Dial(ctx, e.l, "warden-test", "0.1.0", nil); err == nil || !strings.Contains(err.Error(), "wardend is not running") {
 		t.Fatalf("Dial without a token file: %v", err)
+	}
+}
+
+// TestDial_NotRunningSentinel: the two "no daemon" cases, no token file and
+// a token file without an endpoint, are api.ErrNotRunning, on which alone the
+// CLI starts a daemon (WH-1+2 review of c8f81ca).
+func TestDial_NotRunningSentinel(t *testing.T) {
+	l := platform.Layout{Home: t.TempDir()}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := Dial(ctx, l, "warden-test", "0.1.0", nil); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("no token file: %v; want ErrNotRunning", err)
+	}
+	if err := platform.WriteOwnerOnly(l.Token(), []byte(token)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Dial(ctx, l, "warden-test", "0.1.0", nil); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("token file, no endpoint: %v; want ErrNotRunning", err)
 	}
 }

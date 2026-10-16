@@ -73,11 +73,19 @@ func connect(ctx context.Context, autostart bool) (*api.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	return connectTo(ctx, l, autostart, startDaemon)
+}
+
+// connectTo is connect for a layout, with the daemon starter injected.
+func connectTo(ctx context.Context, l platform.Layout, autostart bool, start func(context.Context, platform.Layout) error) (*api.Client, error) {
 	c, err := api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil)
-	if err == nil || !autostart {
+	// Start a daemon only when none answers: any other error (a refused
+	// token file above all) must reach the user, and starting a second
+	// wardend would replace the running one's token (WH-1+2).
+	if err == nil || !autostart || !errors.Is(err, api.ErrNotRunning) {
 		return c, err
 	}
-	if err := startDaemon(ctx, l); err != nil {
+	if err := start(ctx, l); err != nil {
 		return nil, err
 	}
 	return api.Dial(ctx, l, "warden-cli", buildinfo.Version, nil)

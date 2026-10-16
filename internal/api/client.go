@@ -57,6 +57,9 @@ func Dial(ctx context.Context, l platform.Layout, name, version string, onNotify
 	}
 	nc, err := platform.Dial(ctx, l.Home)
 	if err != nil {
+		if platform.EndpointMissing(err) {
+			return nil, notRunning{err}
+		}
 		return nil, err
 	}
 	return Handshake(ctx, nc, tok, name, version, onNotify)
@@ -68,7 +71,7 @@ func Dial(ctx context.Context, l platform.Layout, name, version string, onNotify
 // FX-3; A05 §3.1).
 func readToken(path string) (string, error) {
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("wardend is not running (no token file at %s)", path)
+		return "", fmt.Errorf("%w (no token file at %s)", ErrNotRunning, path)
 	}
 	if err := platform.CheckOwnerOnly(path); err != nil {
 		return "", fmt.Errorf("refusing to send the token: %w", err)
@@ -193,3 +196,14 @@ func (c *Client) Close() error {
 	<-c.closed
 	return err
 }
+
+// ErrNotRunning: no daemon answers for this home (no token file, or no
+// endpoint). The CLI starts a daemon on this error only; any other Dial
+// error, such as a refused token file, is the user's to see (WH-1+2).
+var ErrNotRunning = errors.New("wardend is not running")
+
+// notRunning keeps the transport's message and matches ErrNotRunning.
+type notRunning struct{ err error }
+
+func (e notRunning) Error() string   { return e.err.Error() }
+func (e notRunning) Unwrap() []error { return []error{ErrNotRunning, e.err} }

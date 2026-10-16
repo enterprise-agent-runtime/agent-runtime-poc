@@ -12,11 +12,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 // EnvHome overrides the Warden home (tests and parallel CI, CLAUDE.md §8.4).
@@ -194,3 +196,10 @@ func ExeName(name string) string {
 
 // Arch names the CPU architecture.
 func Arch() string { return runtime.GOARCH }
+
+// EndpointMissing reports a Dial failure that means no daemon: the socket
+// or pipe does not exist, or a stale socket refuses the connection
+// (WH-1+2: the CLI starts a daemon on this alone).
+func EndpointMissing(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED)
+}
