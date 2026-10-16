@@ -312,6 +312,10 @@ func TestEnsure_ExistingSubdirsAndForeignOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := identity{sid: unsafe.Slice((*byte)(unsafe.Pointer(admins)), syscall.GetLengthSid(admins))}
+	// foreignOwnerError names elevation when the owner is this SID (WH-4).
+	if string(builtinAdministratorsSID()) != string(other.sid) {
+		t.Fatalf("builtinAdministratorsSID = %x; Windows says S-1-5-32-544 is %x", builtinAdministratorsSID(), other.sid)
+	}
 	before, err := pathSecurity(l.Home)
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +335,9 @@ func TestEnsure_ExistingSubdirsAndForeignOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	makeJunction(t, l.Keys(), target)
-	if err := l.Ensure(); err == nil || !strings.Contains(err.Error(), "reparse point") {
-		t.Fatalf("Ensure with keys/ a junction = %v; want a refusal", err)
+	// The refusal names what is refused: every managed directory, not just
+	// "a Warden home and its run directory" as it used to (WH-4).
+	if err := l.Ensure(); err == nil || !strings.Contains(err.Error(), "reparse point") || !strings.Contains(err.Error(), wantLinkRefusal) {
+		t.Fatalf("Ensure with keys/ a junction = %v; want a refusal saying %q", err, wantLinkRefusal)
 	}
 }

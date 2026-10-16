@@ -296,3 +296,7 @@ func TestEnsure_LooseMarkerIsNoProof(t *testing.T) {
 		t.Fatalf("home re-permissioned:\nbefore %s\nafter  %s", before, after)
 	}
 }
+
+// wantLinkRefusal is the wording ensureDir's link refusal must carry for
+// any managed directory (WH-4).
+const wantLinkRefusal = "Warden's directories must be real directories"

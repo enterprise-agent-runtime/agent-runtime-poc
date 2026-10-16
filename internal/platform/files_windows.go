@@ -174,7 +174,7 @@ func protectDir(dir string, me identity) error {
 		return &os.PathError{Op: "GetKernelObjectSecurity", Path: dir, Err: err}
 	}
 	if !ownerIs(cur, me.sid) {
-		return fmt.Errorf("%s is owned by another account (%s), not by you; use a directory of your own", dir, sddlDetail(cur))
+		return foreignOwnerError(dir, cur, sddlDetail(cur))
 	}
 	r, _, e := procSetKernelObjectSecurity.Call(uintptr(h), ownerOnlyInformation|protectedDACLSecurityInformation, uintptr(unsafe.Pointer(&sd[0])))
 	runtime.KeepAlive(sd)

@@ -3,6 +3,7 @@ package platform
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 )
 
@@ -119,4 +120,26 @@ func sidLen(b []byte) int { return sidHeaderSize + 4*int(b[1]) }
 // owner-only: its owner can read it and chmod it (WH-1+2, CWE-283).
 func ownerOnlyMode(perm os.FileMode, owner, uid int) bool {
 	return perm&0o077 == 0 && owner == uid
+}
+
+// builtinAdministratorsSID is S-1-5-32-544, the default owner of what an
+// elevated administrator's process creates.
+func builtinAdministratorsSID() []byte {
+	return []byte{1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 0x20, 0x02, 0, 0}
+}
+
+// foreignOwnerError is protectDir's refusal of a directory another account
+// owns; detail renders the descriptor. The refusal stands whoever the owner
+// is: BUILTIN\Administrators is not accepted either, since every elevated
+// process of every administrator on the machine could then change it. But
+// when it is the owner, the directory was almost certainly created earlier
+// by a Warden run under an elevated token (an administrator's prompt), and
+// "use a directory of your own" sends the user looking for another account,
+// so the message names that cause and the fix (WH-4).
+func foreignOwnerError(dir string, sd []byte, detail string) error {
+	if ownerIs(sd, builtinAdministratorsSID()) {
+		return fmt.Errorf(`%s is owned by BUILTIN\Administrators (%s), not by you: it was probably created by Warden running elevated (as administrator). `+
+			`Remove it, or take ownership of it from an elevated prompt (takeown /f "%s" /r), then run Warden without elevation`, dir, detail, dir)
+	}
+	return fmt.Errorf("%s is owned by another account (%s), not by you; use a directory of your own", dir, detail)
 }

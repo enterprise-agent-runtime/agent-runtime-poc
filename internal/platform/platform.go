@@ -79,9 +79,9 @@ func (l Layout) Lock() string { return l.path("run", "wardend.lock") }
 func (l Layout) PID() string { return l.path("run", "wardend.pid") }
 
 // Ensure creates the home and its directories owner-only (design core §10;
-// WH-1+2). The home and run directories get an explicit owner-only
-// descriptor on Windows (0700 on Unix), inherited by what is created in
-// them; the others are 0700 and, on Windows, inherit the home's.
+// WH-1+2). The home and every directory it manages (run, db, blobs, keys,
+// exports, logs, cache) get an explicit owner-only descriptor on Windows
+// (0700 on Unix), inherited by what is created in them (D-052).
 //
 // An existing directory is re-permissioned only if it is a Warden home:
 // the platform default home, one holding HomeMarker, or an empty one. Any
@@ -145,7 +145,7 @@ func ensureDir(dir string, me identity, accept func(string, fs.FileInfo) error) 
 		return err
 	}
 	if isLink(fi) {
-		return fmt.Errorf("%s is a symbolic link, junction or other reparse point; a Warden home and its run directory must be real directories", dir)
+		return fmt.Errorf("%s is a symbolic link, junction or other reparse point; Warden's directories must be real directories", dir)
 	}
 	if !fi.IsDir() {
 		return fmt.Errorf("%s exists and is not a directory", dir)

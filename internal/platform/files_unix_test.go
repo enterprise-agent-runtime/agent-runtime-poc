@@ -153,7 +153,9 @@ func TestEnsure_ExistingSubdirsTightened(t *testing.T) {
 	if err := os.Symlink(elsewhere, l.Keys()); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Ensure(); err == nil || !strings.Contains(err.Error(), "symbolic link") {
-		t.Fatalf("Ensure with keys/ a symlink = %v; want a refusal", err)
+	// The refusal names what is refused: every managed directory, not just
+	// "a Warden home and its run directory" as it used to (WH-4).
+	if err := l.Ensure(); err == nil || !strings.Contains(err.Error(), "symbolic link") || !strings.Contains(err.Error(), wantLinkRefusal) {
+		t.Fatalf("Ensure with keys/ a symlink = %v; want a refusal saying %q", err, wantLinkRefusal)
 	}
 }

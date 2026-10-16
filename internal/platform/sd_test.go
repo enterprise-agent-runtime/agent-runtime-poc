@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/binary"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -370,5 +371,29 @@ func TestOwnerIs(t *testing.T) {
 		if got := ownerIs(c.sd, user); got != c.want {
 			t.Errorf("%s: ownerIs = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// TestForeignOwnerError_NamesElevation guards WH-4 (WH-1+2 review): a home
+// or subdirectory created earlier by an elevated process is owned by
+// BUILTIN\Administrators, and protectDir refused it with "owned by another
+// account; use a directory of your own", which sent the user looking for
+// another account. The refusal stays (Administrators is never accepted as
+// the owner); the message now names the likely cause and the fix. Any
+// other foreign owner keeps the plain message.
+func TestForeignOwnerError_NamesElevation(t *testing.T) {
+	user := testSID(5, 21, 1111, 2222, 3333, 1001)
+	ace := testACE(0, objectInheritACE|containerInheritACE, fileAllAccess, user)
+	admins := testSID(5, 32, 544)
+	msg := foreignOwnerError(`C:\Users\u\AppData\Local\Warden`, testSD(admins, seDACLPresent, ace), "O:BA").Error()
+	for _, want := range []string{"Administrators", "elevated", "Remove it", "takeown"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("Administrators-owned directory: message %q lacks %q", msg, want)
+		}
+	}
+	other := testSID(5, 21, 1111, 2222, 3333, 1002)
+	msg = foreignOwnerError(`C:\w`, testSD(other, seDACLPresent, ace), "O:S-1-5-21-1111-2222-3333-1002").Error()
+	if !strings.Contains(msg, "owned by another account") || strings.Contains(msg, "elevated") {
+		t.Errorf("another user's directory: message %q; want the plain refusal without elevation", msg)
 	}
 }
