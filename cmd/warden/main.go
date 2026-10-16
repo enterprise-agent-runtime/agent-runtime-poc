@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"warden.dev/warden/internal/api"
 	"warden.dev/warden/internal/buildinfo"
 	"warden.dev/warden/internal/platform"
+	"warden.dev/warden/internal/termsafe"
 )
 
 // exitError carries a process exit code.
@@ -164,17 +166,19 @@ func versionCmd() *cobra.Command {
 	}}
 }
 
+type doctorCheck struct {
+	ID       string  `json:"id"`
+	Status   string  `json:"status"`
+	Title    string  `json:"title"`
+	Detail   string  `json:"detail"`
+	FixHint  *string `json:"fix_hint"`
+	Blocking bool    `json:"blocking"`
+}
+
 type doctorResult struct {
-	Status   string `json:"status"`
-	Blocking bool   `json:"blocking"`
-	Checks   []struct {
-		ID       string  `json:"id"`
-		Status   string  `json:"status"`
-		Title    string  `json:"title"`
-		Detail   string  `json:"detail"`
-		FixHint  *string `json:"fix_hint"`
-		Blocking bool    `json:"blocking"`
-	} `json:"checks"`
+	Status   string        `json:"status"`
+	Blocking bool          `json:"blocking"`
+	Checks   []doctorCheck `json:"checks"`
 }
 
 func doctorCmd() *cobra.Command {
@@ -185,24 +189,32 @@ func doctorCmd() *cobra.Command {
 				return err
 			}
 			if !asJSON {
-				for _, c := range r.Checks {
-					mark := map[string]string{"ok": "ok  ", "warn": "WARN", "fail": "FAIL"}[c.Status]
-					block := ""
-					if c.Blocking && c.Status == "fail" {
-						block = " [blocking]"
-					}
-					fmt.Printf("%s  %-17s %s: %s%s\n", mark, c.ID, c.Title, c.Detail, block)
-					if c.FixHint != nil && c.Status != "ok" {
-						fmt.Printf("      fix: %s\n", *c.FixHint)
-					}
-				}
-				fmt.Printf("\noverall: %s%s\n", r.Status, map[bool]string{true: " (blocking: no task can start)", false: ""}[r.Blocking])
+				renderDoctor(os.Stdout, r)
 			}
 			if r.Blocking {
 				return exitError{1}
 			}
 			return nil
 		}}
+}
+
+// renderDoctor prints the human form of system.doctor. Detail and FixHint
+// carry text the daemon did not write (Docker engine fields, error text from
+// whatever answers on the Docker endpoint), so they are sanitized before
+// reaching the terminal (CWE-150, M2-3).
+func renderDoctor(w io.Writer, r doctorResult) {
+	for _, c := range r.Checks {
+		mark := map[string]string{"ok": "ok  ", "warn": "WARN", "fail": "FAIL"}[c.Status]
+		block := ""
+		if c.Blocking && c.Status == "fail" {
+			block = " [blocking]"
+		}
+		fmt.Fprintf(w, "%s  %-17s %s: %s%s\n", mark, c.ID, c.Title, termsafe.SanitizeDetail(c.Detail), block)
+		if c.FixHint != nil && c.Status != "ok" {
+			fmt.Fprintf(w, "      fix: %s\n", termsafe.SanitizeDetail(*c.FixHint))
+		}
+	}
+	fmt.Fprintf(w, "\noverall: %s%s\n", r.Status, map[bool]string{true: " (blocking: no task can start)", false: ""}[r.Blocking])
 }
 
 func daemonCmd() *cobra.Command {

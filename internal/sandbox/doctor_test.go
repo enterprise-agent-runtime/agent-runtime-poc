@@ -112,3 +112,74 @@ func TestL2Check_StatusFollowsBlocking(t *testing.T) {
 		}
 	}
 }
+
+// TestL2Check_RejectsMalformedEngineFields guards CWE-150 (security review
+// of FX-2, task M2-3): whoever answers on the Docker endpoint, a genuine
+// engine or a process squatting on the socket or pipe, chooses Version and
+// Os. They went into Detail and Data verbatim, so an escape sequence or a
+// megabyte of text reached every client. A malformed field now makes the
+// engine unusable under the FX-2 rule (fail when L2 is the default, warn
+// otherwise), and the raw value is echoed nowhere.
+func TestL2Check_RejectsMalformedEngineFields(t *testing.T) {
+	long := strings.Repeat("1", 65)
+	engines := []struct {
+		name, ver, os string
+		usable        bool
+	}{
+		{"version with OSC title sequence", "27\x1b]0;x\x07", "linux", false},
+		{"version of 65 characters", long, "linux", false},
+		{"version empty", "", "linux", false},
+		{"version with a space", "27.0.1 evil", "linux", false},
+		{"os capitalised", "27.0.1", "Linux", false},
+		{"os empty", "27.0.1", "", false},
+		{"os unknown", "27.0.1", "plan9", false},
+		{"os with escape", "27.0.1", "linux\x1b[2J", false},
+		// Boundaries that must stay usable: 64 characters, distro suffixes.
+		{"version of 64 characters", long[:64], "linux", true},
+		{"version with distro suffix", "27.0.1+dfsg-1ubuntu1", "linux", true},
+	}
+	for _, e := range engines {
+		for _, level := range []string{"L1", "L2"} {
+			t.Run(e.name+"/"+level, func(t *testing.T) {
+				ping := func(context.Context) (string, string, error) { return e.ver, e.os, nil }
+				c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, ping)
+				for _, r := range c.Detail {
+					if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+						t.Fatalf("detail %q contains control character %U", c.Detail, r)
+					}
+				}
+				if e.usable {
+					if c.Status != "ok" {
+						t.Errorf("status = %s, want ok (detail %q)", c.Status, c.Detail)
+					}
+					return
+				}
+				want := "warn"
+				if level == "L2" {
+					want = "fail"
+				}
+				if c.Status != want || c.Blocking != (level == "L2") {
+					t.Errorf("status = %s blocking = %v, want %s (detail %q)", c.Status, c.Blocking, want, c.Detail)
+				}
+				if c.FixHint == nil {
+					t.Error("unusable engine without a fix hint")
+				}
+				for _, raw := range []string{e.ver, e.os} {
+					if raw == "" || raw == "linux" || raw == "27.0.1" {
+						continue // well-formed fields may be shown
+					}
+					// The fixed note "Linux containers are required" is not an
+					// echo of os "Linux".
+					if strings.Contains(strings.ReplaceAll(c.Detail, "Linux containers are required", ""), raw) {
+						t.Errorf("detail %q echoes malformed %q", c.Detail, raw)
+					}
+					for k, v := range c.Data {
+						if v == raw {
+							t.Errorf("data[%s] carries malformed %q", k, raw)
+						}
+					}
+				}
+			})
+		}
+	}
+}
