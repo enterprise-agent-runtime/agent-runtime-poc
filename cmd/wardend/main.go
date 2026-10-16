@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -57,12 +58,47 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "wardend:", err)
 		return 1
 	}
+	return serve(home, *tokenStdin, daemonDeps{
+		lock:         platform.LockDaemon,
+		backend:      func(ctx context.Context, home string) secrets.Backend { return secrets.Select(ctx, home, true) },
+		runtimeStart: func(ctx context.Context, srv *api.Server) error { return srv.RuntimeStart(ctx) },
+	})
+}
+
+// daemonDeps are the parts of serve a test replaces: the daemon lock, the
+// secrets backend (tests use secrets.NewMemory, so no test touches the OS
+// keychain, D-043) and the runtime.start append.
+type daemonDeps struct {
+	lock         func(home string) (unlock func(), err error)
+	backend      func(ctx context.Context, home string) secrets.Backend
+	runtimeStart func(ctx context.Context, srv *api.Server) error
+}
+
+// serve runs the daemon for home and returns its exit code (see the
+// package comment).
+func serve(home string, tokenStdin bool, deps daemonDeps) int {
 	l := platform.Layout{Home: home}
 	if err := l.Ensure(); err != nil {
 		fmt.Fprintln(os.Stderr, "wardend:", err)
 		return 1
 	}
-	token, err := readToken(*tokenStdin)
+	// The daemon lock comes first: a second wardend for this home stops here
+	// (exit 3), before it creates a checkpoint seed, writes keys/, migrates
+	// db/ or touches run/ (WH-4 F2, CWE-362). It is held for the daemon's
+	// whole lifetime and released last: this defer is registered before the
+	// store's and the unpublish cleanup's, so it runs after both (F3), and no
+	// other daemon can publish while this one is still removing its token.
+	unlock, err := deps.lock(home)
+	if errors.Is(err, platform.ErrDaemonRunning) {
+		fmt.Fprintln(os.Stderr, "wardend: already running for", home)
+		return 3
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wardend: cannot take the daemon lock:", err)
+		return 1
+	}
+	defer unlock()
+	token, err := readToken(tokenStdin)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wardend:", err)
 		return 2
@@ -72,7 +108,7 @@ func run() int {
 
 	// Secrets backend: the OS keychain when it works, else the encrypted file.
 	var srv *api.Server
-	backend := secrets.Select(ctx, home, true)
+	backend := deps.backend(ctx, home)
 	broker := secrets.NewBroker(backend, nil, func(ctx context.Context, a secrets.Access) {
 		if srv != nil {
 			srv.SecretAccess(ctx, a)
@@ -90,8 +126,16 @@ func run() int {
 		unsigned = "keychain_locked"
 		slog.Warn("checkpoint key unavailable; checkpoints will be unsigned", "error", err.Error())
 	}
+	// Checkpoint keys are trust anchors: a key file another account could
+	// have written stops the start rather than being trusted or ignored
+	// (WH-4; secrets.PublicKeys).
+	pubKeys, err := secrets.PublicKeys(l.Keys())
+	if err != nil {
+		slog.Error("refusing to start: cannot load the checkpoint keys", "error", err.Error())
+		return 1
+	}
 	opts := store.Options{Dir: l.DB(), BlobsDir: l.Blobs(), RuntimeVersion: buildinfo.Version, User: platform.LocalUser(),
-		Redactor: broker.Redactor(), PublicKeys: secrets.PublicKeys(l.Keys())}
+		Redactor: broker.Redactor(), PublicKeys: pubKeys}
 	if signer != nil {
 		opts.Signer = signer
 	}
@@ -139,9 +183,9 @@ func run() int {
 		slog.Error("api", "error", err.Error())
 		return 1
 	}
-	// Bind first, exclusively, then write the token: a second daemon must
-	// fail before it can replace the live daemon's token (WH-1+2; this
-	// reverses A05 §3.1's token-then-bind order).
+	// Bind, then write the token, under the lock taken above: a second
+	// daemon fails before it can replace the live daemon's token (WH-1+2,
+	// WH-4; this reverses A05 §3.1's token-then-bind order).
 	ln, err := listenThenPublish(home, l.Token(), token, platform.Listen, platform.WriteOwnerOnly)
 	if errors.Is(err, platform.ErrDaemonRunning) {
 		fmt.Fprintln(os.Stderr, "wardend: already running for", home)
@@ -151,8 +195,18 @@ func run() int {
 		slog.Error("refusing to serve", "endpoint", platform.Endpoint(home), "error", err.Error())
 		return 1
 	}
+	// From here every exit path unpublishes, in the A05 §3.1 order: the
+	// endpoint (Serve closes it too; a second Close is harmless), then the
+	// token (only if it is still ours), then the pid file (WH-4 F4: a failed
+	// runtime.start used to leave both behind). The store closes after this
+	// and the lock is released last (deferred first, above).
+	defer func() {
+		removeOwnToken(l.Token(), token)
+		os.Remove(l.PID())
+	}()
+	defer ln.Close()
 	_ = platform.WriteOwnerOnly(l.PID(), []byte(strconv.Itoa(os.Getpid())))
-	if err := srv.RuntimeStart(ctx); err != nil {
+	if err := deps.runtimeStart(ctx, srv); err != nil {
 		slog.Error("cannot record runtime.start; the runtime fails closed", "error", err.Error())
 		return 1
 	}
@@ -176,9 +230,8 @@ func run() int {
 	case <-time.After(5 * time.Second):
 	}
 	broker.Flush()
-	// Shutdown order: endpoint (closed by Serve), token, pid (A05 §3.1).
-	os.Remove(l.Token())
-	os.Remove(l.PID())
+	// The deferred cleanup removes the token and pid file, then the store
+	// closes, then the lock is released.
 	slog.Info("wardend stopped", "reason", reason)
 	return 0
 }
@@ -251,12 +304,32 @@ func writeToken(path, token string, write func(string, []byte) error) error {
 	return nil
 }
 
-// listenThenPublish binds the daemon endpoint, which only one daemon per
-// home can hold (platform.Listen creates it exclusively), and only then
-// writes and verifies the token file (writeToken). A second daemon fails
-// with ErrDaemonRunning before it can touch the live daemon's token
-// (WH-1+2). Clients that connect in between find no token, or a stale one,
-// and retry: startDaemon polls, and a client sees ErrNotRunning.
+// removeOwnToken removes the token file at shutdown only if it still holds
+// this daemon's token (A05 §3.1, WH-4, CWE-367). A daemon that started in
+// the shutdown window has written its own token there, and removing it
+// would lock that daemon's clients out. The file is read through the same
+// no-follow, owner-only check the client uses; a file that fails it, or
+// holds another value, is left alone. The daemon lock (platform.LockDaemon)
+// is held until after this step, so no other daemon can publish between
+// the read and the remove.
+func removeOwnToken(path, token string) {
+	got, err := platform.ReadOwnerOnly(path, api.MaxTokenFile)
+	if err != nil || subtle.ConstantTimeCompare(got, []byte(token)) != 1 {
+		return
+	}
+	os.Remove(path)
+}
+
+// listenThenPublish binds the daemon endpoint and only then writes and
+// verifies the token file (writeToken). The caller holds the daemon lock
+// (platform.LockDaemon) for its whole lifetime, which makes the sequence,
+// Listen's stale-socket removal included, exclusive per home: after a
+// crash two wardends could both remove the stale socket and bind, the
+// second removing the first one's fresh socket (WH-4, CWE-367). Listen
+// still refuses a live endpoint with ErrDaemonRunning, so a daemon of an
+// older build that holds no lock keeps its token too (WH-1+2). Clients
+// that connect between bind and token find no token, or a stale one, and
+// retry: startDaemon polls, and a client sees ErrNotRunning.
 func listenThenPublish(home, tokenPath, token string, listen func(string) (net.Listener, error), write func(string, []byte) error) (net.Listener, error) {
 	ln, err := listen(home)
 	if err != nil {

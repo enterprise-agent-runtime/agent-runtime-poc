@@ -22,6 +22,45 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-027 · 2026-10-16 · M2-12a: the per-task Unix socket for the L1 egress proxy
+
+- **Asked:** M2 plan task M2-12a. Delivered under "merge each task when its review passes".
+- **Task:** The socket through which a sandboxed process reaches its task's egress proxy in L1: never reachable by another account, not even briefly, and removed without touching anything that is not ours.
+- **How:**
+  - **Socket** (D-065): bound inside an owner-only directory chain and verified after bind and after chmod; peer uid checked on accept; removed by inode identity; a startup sweep for stale sockets.
+  - **Lifecycle:** `sandbox.OpenProxy` ties the proxy to the Spec's sandbox and flushes events before the socket goes.
+  - **Commits:** `2aa3972`, `2cc6c6c`.
+- **Rules kept:**
+  - INV-J: a literal `net.Listen("unix", ...)`, no archtest change; no TCP anywhere (the upstream dial is injected over `net.Pipe`).
+  - OS tags only in `internal/platform` and `internal/sandbox`; no umask change; no new dependency.
+  - Test first against stubs that follow A07 literally; 33 mutants caught.
+- **Rules changed or bent:**
+  - **A07 §2 not followed literally** (C-74): no bind-then-chmod window, no `$TMPDIR` fallback, lifecycle in `internal/sandbox`. Decided by me, confirmed by the review.
+  - **Unknown peers are refused**, stricter than the daemon socket's listener.
+- **Verified:** one review round with a small fix; probes in WSL2 for swaps during bind, pre-planted entries, the sweep, and fake peers of other uids (no second uid without sudo); `make check` green.
+- **Left:** see the M2-12a entry in PROGRESS (wiring in M2-15, owner-only session directories, ancestor checks).
+
+## W-026 · 2026-10-16 · WH-4: one daemon per home from start to exit; key files trusted for integrity
+
+- **Asked:** the WH-4 follow-ups recorded when WH-1+2 merged. Delivered under "merge each task when its review passes".
+- **Task:** Close the six minor and low findings of the WH-1+2 review: the unreaped child, the unconditional token removal, the non-exclusive stale-socket path, the confusing elevation message, untrusted public keys, a stale message.
+- **How:**
+  - **Lifecycle** (D-063): reaping spawn API, lifetime lock first, own-token removal, unpublish on every exit, unlock last.
+  - **Keys** (D-064): `ReadOwnerWritable` and `MoveAside` in `internal/platform`; `PublicKeys` and `writePublicKey` use them.
+  - **Commits:** `c8af1c6`, `cdee732`, `f943167`, `df340eb`, `d1e409c`, `05dcff2`.
+- **Rules kept:**
+  - Test first and revert checks for every item; for items 2-4 the old code had no callable function, so the red ran against a stub reproducing the old behaviour, and every revert check ran on the real code.
+  - OS code only in `internal/platform`; typed APIs only; no new dependency; no archtest allowlist change.
+  - Daemon-start tests use the in-memory secrets backend through a `daemonDeps` seam, so they never reach the keychain (extends D-043).
+- **Rules changed or bent:**
+  - **A05 §3.4's `flock wardend.pid` replaced** by a separate lock file (C-72). Decided by me.
+  - **A new -32003 reason** `untrusted_key_file` (C-73).
+  - **SYSTEM, Administrators and OWNER RIGHTS may write a key file on Windows** (D-064): the implementer's call beyond my brief, accepted by me and by the reviewer.
+- **Process slip, and the fix:** a credential leaked into the owner's Windows Credential Manager (`warden-08688311`). It came from the WH-1+2 round-3 review, where my brief asked the reviewer to run Windows binaries by hand in a temporary home; the reviewer role already forbids running the warden binaries, and my brief overrode it. Each temporary home gets its own keychain namespace (D-042), and only the integration test cleans it up (D-043). The implementer and reviewer roles now say so explicitly; briefs must not ask for manual Windows daemon runs. The owner removes the stale entries.
+- **CI found a hang in an older test:** on the first PR run, `TestDial_RefusesPipeOpenToOthers` (WH-3) hung for 10 minutes on the Windows runner. If the client connects, refuses and disconnects before go-winio's server calls `ConnectNamedPipe`, go-winio waits for a next client that never comes. The test now closes the listener before reading the byte count. This one could not be shown red first: 300 local runs of the old test passed; it needs the runner's timing.
+- **Verified:** two review rounds, code and security together; WSL2 crash-and-race trials (0 anomalies), the upgrade scenario (an old 0644 key with a locked backend now starts), the exit-3 report in about 3 s; Credential Manager unchanged across the integration test.
+- **Left:** see the WH-4 entry in PROGRESS.
+
 ## W-025 · 2026-10-16 · M2-14: the seccomp filter, in pure Go
 
 - **Asked:** M2 plan task M2-14. Delivered under "merge each task when its review passes".

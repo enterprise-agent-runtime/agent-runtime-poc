@@ -80,3 +80,33 @@ func TestListenThenPublish_SecondDaemonKeepsToken(t *testing.T) {
 		t.Fatalf("second daemon changed the token file: %q -> %q (%v)", before, after, err)
 	}
 }
+
+// TestRemoveOwnToken_LeavesAnotherDaemonsToken guards WH-4 (WH-1+2 review,
+// CWE-367): at shutdown wardend removed run/token without looking at it, so
+// a daemon B that had started in the shutdown window and written its own
+// token lost it, and every client of B was locked out. Only a file that
+// still holds this daemon's token is removed; in the normal case it is.
+func TestRemoveOwnToken_LeavesAnotherDaemonsToken(t *testing.T) {
+	const a = "ZGFlbW9uLWEtdG9rZW4tZm9yLXRlc3RzLW9ubHktbm90"
+	const b = "ZGFlbW9uLWItdG9rZW4tZm9yLXRlc3RzLW9ubHktbm90"
+	l := platform.Layout{Home: t.TempDir()}
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := platform.WriteOwnerOnly(l.Token(), []byte(b)); err != nil {
+		t.Fatal(err)
+	}
+	removeOwnToken(l.Token(), a)
+	if got, err := os.ReadFile(l.Token()); err != nil || string(got) != b {
+		t.Fatalf("daemon A's shutdown changed daemon B's token file: %q %v", got, err)
+	}
+
+	if err := platform.WriteOwnerOnly(l.Token(), []byte(a)); err != nil {
+		t.Fatal(err)
+	}
+	removeOwnToken(l.Token(), a)
+	if _, err := os.Lstat(l.Token()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon A's own token file left after shutdown (%v)", err)
+	}
+	removeOwnToken(l.Token(), a) // already gone: nothing to do, no panic
+}

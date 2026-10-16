@@ -1,7 +1,8 @@
 // Package platform confines every operating-system difference of the PoC
 // (CLAUDE.md §3, §6; WRD-02 §3): the Warden home directory, the daemon
 // transport (Unix socket on Linux/macOS, named pipe with an owner-only DACL
-// on Windows), owner-only files, the default sandbox level, detached daemon
+// on Windows), the L1 per-task proxy socket (design A07 §2, tasksock_*.go),
+// owner-only files, the default sandbox level, detached daemon
 // start, process-group termination and terminal input without echo.
 // Nothing above this package (and internal/sandbox, internal/secrets) may
 // branch on runtime.GOOS.
@@ -18,8 +19,10 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // EnvHome overrides the Warden home (tests and parallel CI, CLAUDE.md §8.4).
@@ -72,13 +75,16 @@ func (l Layout) Config() string { return l.path("config.yaml") }
 // Token is the API token file.
 func (l Layout) Token() string { return l.path("run", "token") }
 
+// Lock is the daemon lock file, held for the daemon's lifetime (LockDaemon).
+func (l Layout) Lock() string { return l.path("run", "wardend.lock") }
+
 // PID is the daemon pid file.
 func (l Layout) PID() string { return l.path("run", "wardend.pid") }
 
 // Ensure creates the home and its directories owner-only (design core §10;
-// WH-1+2). The home and run directories get an explicit owner-only
-// descriptor on Windows (0700 on Unix), inherited by what is created in
-// them; the others are 0700 and, on Windows, inherit the home's.
+// WH-1+2). The home and every directory it manages (run, db, blobs, keys,
+// exports, logs, cache) get an explicit owner-only descriptor on Windows
+// (0700 on Unix), inherited by what is created in them (D-052).
 //
 // An existing directory is re-permissioned only if it is a Warden home:
 // the platform default home, one holding HomeMarker, or an empty one. Any
@@ -142,7 +148,7 @@ func ensureDir(dir string, me identity, accept func(string, fs.FileInfo) error) 
 		return err
 	}
 	if isLink(fi) {
-		return fmt.Errorf("%s is a symbolic link, junction or other reparse point; a Warden home and its run directory must be real directories", dir)
+		return fmt.Errorf("%s is a symbolic link, junction or other reparse point; Warden's directories must be real directories", dir)
 	}
 	if !fi.IsDir() {
 		return fmt.Errorf("%s exists and is not a directory", dir)
@@ -203,7 +209,7 @@ func readLimited(r io.Reader, path string, max int) ([]byte, error) {
 		return nil, err
 	}
 	if len(b) > max {
-		return nil, fmt.Errorf("%s is larger than %d bytes; it is not a token file", path, max)
+		return nil, fmt.Errorf("%s is larger than the %d bytes expected of it", path, max)
 	}
 	return b, nil
 }
@@ -308,3 +314,28 @@ func EndpointMissing(err error) bool {
 // HomeMarker is the file Ensure leaves in every Warden home it creates or
 // accepts; an existing directory without it is not re-permissioned.
 const HomeMarker = ".warden-home"
+
+// errNotOwnerWritable is wrapped by every refusal of ReadOwnerWritable.
+var errNotOwnerWritable = errors.New("not the user's own unmodifiable file")
+
+// notOwnerWritable is a ReadOwnerWritable refusal: why, the file's owner and
+// permissions, and how to fix it. It never says to remove the file: what it
+// guards are verification keys, and removing one discards the anchor.
+func notOwnerWritable(path, why, detail, fix string) error {
+	return fmt.Errorf("%s %s (%s), so another account could have written it; %s: %w", path, why, detail, fix, errNotOwnerWritable)
+}
+
+// MoveAside renames a refused file at path to path.refused-<unix nanos> in
+// the same directory, so a caller replacing it neither trusts nor destroys
+// it (it may be a legitimate file with loose permissions; WH-4 round 1). The
+// rename moves the entry itself, never a link's target. Afterwards the moved
+// file is made owner-only when it is a regular file the user owns; that step
+// is best effort and never follows a link. It returns the new name.
+func MoveAside(path string) (string, error) {
+	dst := path + ".refused-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if err := os.Rename(path, dst); err != nil {
+		return "", err
+	}
+	tightenMoved(dst)
+	return dst, nil
+}
