@@ -184,6 +184,12 @@ func ImportRules(module string, files []File) []Violation {
 			out = append(out, Violation{f.Rel, 1, "imports", "apps/ contains no Go"})
 			continue
 		}
+		if under(f.Dir, "cmd/warden-exec") && f.Package != "main" && f.Package != "main_test" {
+			// The executor binary is wiring only; its code lives in
+			// internal/exec, which R4 guards. A library package here would be
+			// importable executor code outside R4's reach.
+			out = append(out, Violation{f.Rel, 1, "imports", "only package main under cmd/warden-exec (found package " + f.Package + ")"})
+		}
 		for _, imp := range f.Imports {
 			internal, isInternal := strings.CutPrefix(imp, module+"/")
 			if imp == module {
@@ -227,6 +233,12 @@ func ImportRules(module string, files []File) []Violation {
 				// package cannot import the forwarder and listen on the host.
 				// Test files are included.
 				bad = "R4: only cmd/warden-exec imports internal/exec"
+			}
+			if isInternal && under(internal, "cmd") {
+				// cmd/ holds binaries; nothing imports them. Without this a
+				// library under cmd/warden-exec could carry the forwarder into
+				// the daemon around R4. Test files are included.
+				bad = "nothing imports a package under cmd/"
 			}
 			if isInternal && under(internal, "spikes") {
 				bad = "nothing imports spikes/"

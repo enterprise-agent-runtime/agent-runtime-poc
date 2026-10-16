@@ -16,6 +16,7 @@ import (
 // File is what the rules need to know about one Go source file.
 type File struct {
 	Rel        string   // slash-separated path relative to the scanned root
+	Package    string   // package clause name ("main", "exec", "main_test", ...)
 	Dir        string   // slash-separated directory relative to the root ("" for the root)
 	Test       bool     // *_test.go
 	Imports    []string // import paths, any alias, including blank imports
@@ -45,15 +46,27 @@ func (v Violation) String() string {
 	return fmt.Sprintf("%s:%d: %s: %s", v.Rel, v.Line, v.Rule, v.Detail)
 }
 
-// skippedDirs are never scanned: documentation, VCS data, JS/Rust build
-// trees and test fixtures (fixtures are scanned explicitly by the tests).
-var skippedDirs = map[string]bool{
-	".git": true, "docs": true, "node_modules": true, "target": true,
-	"dist": true, "vendor": true, "testdata": true, "fixtures": true,
+// rootSkippedDirs are skipped only directly under the scanned root: the
+// documentation tree, the fixture sources and the JS/Rust/vendor build trees.
+// Deeper down a directory with one of these names is an ordinary Go package
+// to the go tool, so it is scanned like any other; skipping it at any depth
+// once left every rule blind to code that is compiled into the binaries.
+var rootSkippedDirs = map[string]bool{
+	"docs": true, "node_modules": true, "target": true,
+	"dist": true, "vendor": true, "fixtures": true,
 }
 
-// Scan parses every .go file under root. Directories in skippedDirs are not
-// entered, except root itself.
+// goIgnored reports whether the go tool ignores a directory or file of this
+// name at any depth: testdata, and names starting with "." or "_" (go help
+// packages). Such code is never compiled, so it is never scanned. testdata
+// trees are scanned explicitly by the tests.
+func goIgnored(name string) bool {
+	return name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+}
+
+// Scan parses every .go file under root that the go tool would compile in
+// some build: it skips what goIgnored names at any depth and rootSkippedDirs
+// directly under root. Build constraints are not evaluated.
 func Scan(root string) ([]File, error) {
 	var files []File
 	fset := token.NewFileSet()
@@ -61,13 +74,16 @@ func Scan(root string) ([]File, error) {
 		if err != nil {
 			return err
 		}
+		if p == root {
+			return nil
+		}
 		if d.IsDir() {
-			if p != root && skippedDirs[d.Name()] {
+			if goIgnored(d.Name()) || (rootSkippedDirs[d.Name()] && filepath.Dir(p) == filepath.Clean(root)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(p, ".go") {
+		if goIgnored(d.Name()) || !strings.HasSuffix(p, ".go") {
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)
@@ -90,7 +106,7 @@ func parseFile(fset *token.FileSet, abs, rel string) (File, error) {
 	if err != nil {
 		return File{}, fmt.Errorf("parse %s: %w", rel, err)
 	}
-	f := File{Rel: rel, Dir: path.Dir(rel), Test: strings.HasSuffix(rel, "_test.go")}
+	f := File{Rel: rel, Package: af.Name.Name, Dir: path.Dir(rel), Test: strings.HasSuffix(rel, "_test.go")}
 	if f.Dir == "." {
 		f.Dir = ""
 	}

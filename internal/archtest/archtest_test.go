@@ -121,12 +121,24 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 		"imports internal/exec/buildinfo.go",      // R3/R10: buildinfo reaches exec only through exec.Config
 		"imports internal/exec/thirdparty.go",     // R3: third-party module other than x/sys
 		"imports internal/sandbox/importsfwd.go",  // R4: a daemon package links the forwarder
-		"imports internal/policy/bad.go",          // policy importing a provider
-		"imports internal/providers/bad/bad.go",   // third-party import in a provider
-		"imports internal/providers/bad/bad.go",   // provider importing internal/store
-		"os-selection internal/api/os.go",         // //go:build linux
-		"os-selection internal/api/os.go",         // runtime.GOOS
-		"os-selection internal/api/x_windows.go",  // file-name suffix
+		// Re-review of fb26514..788c9e2: two ways around R4. (1) A library
+		// package under cmd/warden-exec could import the forwarder and be
+		// imported by the daemon. (2) Scan skipped docs/, fixtures/ and the
+		// like at any depth, although the go tool compiles them, so every rule
+		// was blind there. Still skipped, as by the go tool: testdata/ at any
+		// depth, names starting with "." or "_" (internal/api/testdata/l.go,
+		// internal/api/_old/l.go, internal/api/_x.go), and the root-level build
+		// and doc trees (docs/l.go).
+		"imports cmd/warden-exec/lib/lib.go",     // only package main under cmd/warden-exec
+		"imports internal/api/fixtures/x.go",     // R4 inside a nested fixtures/ dir
+		"imports internal/api/importslib.go",     // nothing imports a cmd/ package
+		"INV-J internal/api/docs/l.go",           // net.Listen("tcp") inside a nested docs/ dir
+		"imports internal/policy/bad.go",         // policy importing a provider
+		"imports internal/providers/bad/bad.go",  // third-party import in a provider
+		"imports internal/providers/bad/bad.go",  // provider importing internal/store
+		"os-selection internal/api/os.go",        // //go:build linux
+		"os-selection internal/api/os.go",        // runtime.GOOS
+		"os-selection internal/api/x_windows.go", // file-name suffix
 		// internal/exec/sys_linux.go and cmd/warden-exec/main_darwin.go select by
 		// OS and are allowed (C-61); these two are still rejected.
 		"os-selection internal/executor/x_linux.go", // a name prefix of internal/exec is not internal/exec
