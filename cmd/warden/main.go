@@ -125,17 +125,18 @@ func startDaemon(ctx context.Context, l platform.Layout) error {
 	// The token file is not removed here: a daemon that won the endpoint a
 	// moment ago may just have written it, and the new wardend replaces a
 	// stale one itself once it holds the endpoint (WH-1+2).
-	pid, err := platform.SpawnDaemon(exe, nil, filepath.Join(l.Logs(), "wardend.log"), nil)
+	d, err := platform.SpawnDaemon(exe, nil, filepath.Join(l.Logs(), "wardend.log"), nil)
 	if err != nil {
 		return fmt.Errorf("start wardend: %w", err)
 	}
+	defer d.Close()
 	pause := func() { time.Sleep(150 * time.Millisecond) }
-	ours, err := waitUp(ctx, l, dialCLI, func() bool { return platform.Alive(pid) }, 100, 20, pause)
+	ours, err := waitUp(ctx, l, dialCLI, d.Exited, 100, 20, pause)
 	if err != nil {
 		return fmt.Errorf("%w; see %s", err, filepath.Join(l.Logs(), "wardend.log"))
 	}
 	if ours {
-		fmt.Fprintf(os.Stderr, "started wardend (pid %d)\n", pid)
+		fmt.Fprintf(os.Stderr, "started wardend (pid %d)\n", d.PID)
 	} else {
 		fmt.Fprintln(os.Stderr, "wardend was started concurrently by another client")
 	}
@@ -146,23 +147,29 @@ func startDaemon(ctx context.Context, l platform.Layout) error {
 // wardend may exit (code 3) because another one won the endpoint; that one
 // binds before it writes its token (WH-1+2), so a client can see no token
 // or a stale one for a moment. Polling therefore goes on for graceTries
-// more attempts after ours has exited; ours reports whether the daemon
-// that answered is the one we spawned (still alive).
-func waitUp(ctx context.Context, l platform.Layout, dial dialFunc, alive func() bool, tries, graceTries int, pause func()) (ours bool, err error) {
+// more attempts after ours has exited; ours reports whether the one we
+// spawned was still running when a daemon answered. exited must see a real
+// exit (platform.Daemon reaps its child on Unix, WH-4): a zombie taken for
+// a running wardend kept the grace from ever starting.
+func waitUp(ctx context.Context, l platform.Layout, dial dialFunc, exited func() (platform.ExitStatus, bool), tries, graceTries int, pause func()) (ours bool, err error) {
 	grace := -1
+	var status platform.ExitStatus
 	for i := 0; i < tries; i++ {
 		c, err := dial(ctx, l)
 		if err == nil {
 			if c != nil {
 				c.Close()
 			}
-			return grace < 0, nil
+			_, gone := exited()
+			return !gone, nil
 		}
-		if grace < 0 && !alive() {
-			grace = graceTries
+		if grace < 0 {
+			if st, gone := exited(); gone {
+				status, grace = st, graceTries
+			}
 		}
 		if grace == 0 {
-			return false, errors.New("wardend exited during start")
+			return false, fmt.Errorf("wardend exited during start (%s)", exitHint(status))
 		}
 		if grace > 0 {
 			grace--
@@ -170,6 +177,18 @@ func waitUp(ctx context.Context, l platform.Layout, dial dialFunc, alive func() 
 		pause()
 	}
 	return false, errors.New("wardend did not come up within 15 s")
+}
+
+// exitHint is the exit status with what wardend's exit codes mean
+// (cmd/wardend: 1 start failure, 2 bad --token-stdin, 3 already running).
+func exitHint(s platform.ExitStatus) string {
+	switch s.Code {
+	case 3:
+		return s.String() + ": another wardend holds this home but did not answer"
+	case 1, 2:
+		return s.String() + ": it refused to start"
+	}
+	return s.String()
 }
 
 // do connects (starting the daemon if needed), calls one method and

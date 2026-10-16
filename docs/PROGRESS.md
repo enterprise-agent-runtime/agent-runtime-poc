@@ -40,13 +40,12 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 - [x] **WH-2** Owner-only also requires owner == current user (CWE-283); the client reads the token once on a no-follow handle before dialling; bind before token, autostart only on `ErrNotRunning` (D-051, D-053, C-66, C-67).
   - **Commits:** `c8f81ca`, `4e452d5`, `19b0043`, `eebe8d7`, `330a5ed`, `9730d41`, `6e0f286`, `160d10e`, `5533efd`.
   - **Review:** three rounds, code and security together. An earlier round reproduced a second daemon overwriting the live token; round 3 approved after 40 crash-and-race trials with no anomaly and every earlier probe (symlink, FIFO, junction, loose marker, planted temp name) refused.
-- [ ] **WH-4** Follow-ups from the WH-1+2 review (all minor or low, none a confidentiality issue):
-  - Unix: the spawned wardend is released, not reaped, so a zombie looks alive and a failed start costs 16 s and the wrong message; reap it and test with a real child that exits 3.
-  - Shutdown removes the token file without checking it is still this daemon's (CWE-367); compare before removing.
-  - Unix Listen's stale-socket path is not exclusive under a race (CWE-367); hold a `run/wardend.lock` flock for the daemon's lifetime.
-  - Windows: a directory created earlier under an elevated token is owned by Administrators and refused with a confusing message; name elevation in it.
-  - `PublicKeys` should accept only owner-only `keys/*.pub` (CWE-732).
-  - `ensureDir`'s link message still names only the home and run directory.
+- [x] **WH-4** Follow-ups from the WH-1+2 review (D-063, D-064, C-72, C-73).
+  - **What landed:** the spawned wardend is reaped (a failed start reports its exit status in about 3 s); a lifetime lock `run/wardend.lock` taken before any write and released last; the token removed at shutdown only if it is still ours; the elevation hint for Administrators-owned directories; checkpoint key files trusted for integrity (owner, no foreign writer), a refused one moved aside; the link message covers every directory.
+  - **Commits:** `c8af1c6`, `cdee732`, `f943167`, `df340eb`, `d1e409c`, `05dcff2`.
+  - **Review:** two rounds. Round 1 found the first key-file check refused every 0644 key an older build wrote, stopping an upgraded headless home (reproduced), and the lock taken after keys and migrations. Round 2 approved; each test fails on revert.
+  - **Low, left:** `writePublicKey` moves a key aside on any read error, including a transient Windows sharing violation (move only on the integrity refusal or a parse failure); the "store closes before unlock" order is checked by reading, not by a test; on Windows a scanner holding `wardend.lock` open reports "already running" (retry briefly); the CLI sends a malformed token and gets -32602 instead of -32001 (validate the pattern first); a sudo-owned directory on Unix could get a hint like the elevation one.
+  - **For M6 (desktop):** with `--token-stdin` a losing sidecar exits 3 without reading stdin, so the desktop's write may fail with EPIPE; attach on exit 3 as D-053 says.
 - [x] **WH-3** The client verifies that the endpoint's server is the current user before sending the token, on Windows and on Unix (D-049).
   - **Daemon side:** the socket directory must be owned by the uid; the macOS peer check is on.
   - **New test:** the Windows pipe DACL is owner-only, which was a missing M1 transport test.
@@ -86,7 +85,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Left for M3:** the PDP behind `Decider`, the 120 s approval hold, the deny cache and per-host rate-limit summaries.
   - **Minor, left:** the burst summary is flushed only at the next accept or at shutdown (delayed, not lost; a 10 s timer would make it timely), and the flush runs in the accept loop (a slow store delays only the task's own accepts).
   - **Accepted residual:** no tunnel inspection after a valid ClientHello, so domain fronting through the inner Host is possible.
-- [ ] **M2-12a** per-task Unix listener for L1
+- [x] **M2-12a** Per-task Unix listener for L1 (D-065, C-74).
+  - **Pieces:** `internal/platform` `ListenTaskSocket`, `TaskSocket`, `SweepTaskSockets` (Linux and macOS; unsupported elsewhere); `internal/sandbox` `OpenProxy`, `ProxyListener`, `SweepProxySockets`.
+  - **Commits:** `2aa3972`, `2cc6c6c`.
+  - **Review:** one round, approved; its one low finding (a swapped directory during bind could make the refusal delete another session's live socket) was fixed before merge. 33 mutants caught; `-race -count=20` in WSL2. Cross-user cases use seams: no second uid is available without sudo.
+  - **Left for M2-15 (wiring):** call `SweepProxySockets(home)` once in wardend after `platform.Listen` succeeds and before any sandbox; `Manager.Create` calls `OpenProxy` before launch, binds `pl.Path()` at `/run/warden/proxy.sock`, and closes it on every failure path; `Destroy` closes it before `sandbox.destroy`.
+  - **Left for session creation:** make `<home>/sessions` and S owner-only (D-052's `Ensure` does not manage `sessions/`); otherwise `OpenProxy` fails closed with `sandbox_unavailable`.
+  - **Low, left:** check ancestors above the home, or do every operation relative to an `os.OpenRoot` of `S/scratch`; a `hook-<n>.sock` (A12 §7.3) needs its own sweep pattern; archtest could list `net.ListenUnix` for consistency (it only accepts unix networks, so not a gap).
 
 **Group D** (L1 sandbox, WSL2):
 

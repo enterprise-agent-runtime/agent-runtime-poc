@@ -68,14 +68,15 @@ func TestDaemonStop_HomeRemovableImmediately(t *testing.T) {
 	}
 	// Starting wardend is the C-45 / D-006 path (platform.SpawnDaemon), the
 	// same one "warden daemon start" uses.
-	pid, err := platform.SpawnDaemon(exe, nil, filepath.Join(l.Logs(), "wardend.log"), nil)
+	d, err := platform.SpawnDaemon(exe, nil, filepath.Join(l.Logs(), "wardend.log"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if platform.Alive(pid) {
-			_ = platform.TerminateGroup(pid, 0)
+		if _, gone := d.Exited(); !gone {
+			_ = platform.TerminateGroup(d.PID, 0)
 		}
+		d.Close()
 		// The daemon generated a checkpoint seed in this home's own keychain
 		// namespace; it outlives the home unless deleted here.
 		cleanTestKeychain(t, home)
@@ -94,7 +95,7 @@ func TestDaemonStop_HomeRemovableImmediately(t *testing.T) {
 			c.Close()
 			break
 		}
-		if ctx.Err() != nil || !platform.Alive(pid) {
+		if _, gone := d.Exited(); ctx.Err() != nil || gone {
 			log, _ := os.ReadFile(filepath.Join(l.Logs(), "wardend.log"))
 			t.Fatalf("wardend did not come up: %v\n%s", err, log)
 		}

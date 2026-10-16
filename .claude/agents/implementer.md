@@ -17,6 +17,7 @@ You implement one task of the Warden PoC. `CLAUDE.md` is your contract; read it 
 
 ## Hard rules (CLAUDE.md §9, §10)
 
+- On Windows, never start `wardend` or `warden` by hand, not even with a temporary `WARDEN_HOME`: each home gets its own keychain namespace (D-042), and only the integration test removes its entry afterwards (D-043). A manual run during a review leaked a Credential Manager entry the owner had to delete. Run daemon scenarios in WSL with `DBUS_SESSION_BUS_ADDRESS` unset (the encrypted-file backend), or through the repository's tests.
 - Scratch files (scripts, copies, probe trees) go in a directory named after your task, e.g. `<scratchpad>/<task-id>/`, and WSL copies of the tree go in `~/src/<task-id>`. Never reuse another task's script or tree: two agents once shared one scratch script, and a red run tested the wrong tree.
 - Files are UTF-8 with LF line endings (`.gitattributes`). Edit with the Edit/Write tools. Never rewrite files through Python or PowerShell on Windows: their defaults (cp1252, CRLF) once corrupted every `§` in a file. Check `git diff` for mojibake before committing.
 - `os/exec` only in `internal/sandbox`, `internal/exec`, `internal/worktree`, `internal/harness`, each with a `//sandboxed: <reason>` comment. Never run an agent-requested process outside a sandbox, including in tests.
