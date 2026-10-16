@@ -93,6 +93,8 @@ const (
 	armExecve          = 221
 	amdGetpid          = 39
 	armGetpid          = 172
+	amdPidfdOpen       = 434
+	armPidfdOpen       = 434
 	amdClone           = 56
 	armClone           = 220
 	amdSocket          = 41
@@ -121,6 +123,12 @@ const (
 	armProcessVmReadv  = 270
 	amdProcessVmWritev = 311
 	armProcessVmWritev = 271
+	amdPidfdGetfd      = 438
+	armPidfdGetfd      = 438
+	amdProcessMadvise  = 440
+	armProcessMadvise  = 440
+	amdKcmp            = 312
+	armKcmp            = 272
 	amdMount           = 165
 	armMount           = 40
 	amdUmount2         = 166
@@ -205,7 +213,7 @@ const (
 )
 
 // sysnumAMD64 holds every system call the table names plus the ordinary
-// controls the tests run (read, write, openat, execve, getpid). Built per
+// controls the tests run (read, write, openat, execve, getpid, pidfd_open). Built per
 // call: no mutable package state (CLAUDE.md §7).
 func sysnumAMD64() map[string]int {
 	return map[string]int{
@@ -214,6 +222,7 @@ func sysnumAMD64() map[string]int {
 		"openat":            amdOpenat,
 		"execve":            amdExecve,
 		"getpid":            amdGetpid,
+		"pidfd_open":        amdPidfdOpen,
 		"clone":             amdClone,
 		"socket":            amdSocket,
 		"ioctl":             amdIoctl,
@@ -229,6 +238,9 @@ func sysnumAMD64() map[string]int {
 		"ptrace":            amdPtrace,
 		"process_vm_readv":  amdProcessVmReadv,
 		"process_vm_writev": amdProcessVmWritev,
+		"pidfd_getfd":       amdPidfdGetfd,
+		"process_madvise":   amdProcessMadvise,
+		"kcmp":              amdKcmp,
 		"mount":             amdMount,
 		"umount2":           amdUmount2,
 		"pivot_root":        amdPivotRoot,
@@ -284,6 +296,7 @@ func sysnumARM64() map[string]int {
 		"openat":            armOpenat,
 		"execve":            armExecve,
 		"getpid":            armGetpid,
+		"pidfd_open":        armPidfdOpen,
 		"clone":             armClone,
 		"socket":            armSocket,
 		"ioctl":             armIoctl,
@@ -297,6 +310,9 @@ func sysnumARM64() map[string]int {
 		"ptrace":            armPtrace,
 		"process_vm_readv":  armProcessVmReadv,
 		"process_vm_writev": armProcessVmWritev,
+		"pidfd_getfd":       armPidfdGetfd,
+		"process_madvise":   armProcessMadvise,
+		"kcmp":              armKcmp,
 		"mount":             armMount,
 		"umount2":           armUmount2,
 		"pivot_root":        armPivotRoot,

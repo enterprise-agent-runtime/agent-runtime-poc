@@ -123,9 +123,13 @@ func Table() []Row {
 			Reason: "Kernel code loading or known container-escape primitives; a build never calls them",
 		},
 		{
-			Syscalls: plain("ptrace", "process_vm_readv", "process_vm_writev"),
+			// pidfd_getfd, process_madvise and kcmp are stricter than A06: they
+			// reach another process like ptrace does (CWE-269; M2-14 review
+			// stole an fd with pidfd_getfd while ptrace was EPERM). pidfd_open
+			// alone is harmless and stays allowed.
+			Syscalls: plain("ptrace", "process_vm_readv", "process_vm_writev", "pidfd_getfd", "process_madvise", "kcmp"),
 			Action:   errno(errEPERM),
-			Reason:   "No tracing (strace -p 1 fails cleanly)",
+			Reason:   "No tracing (strace -p 1 fails cleanly), and no other cross-process access: fd theft, remote madvise, kernel object comparison",
 		},
 		{
 			Syscalls: plain("mount", "umount2", "pivot_root", "chroot", "move_mount", "open_tree",

@@ -96,6 +96,33 @@ func probes() map[string]func() int {
 		"ptrace(PEEKUSER, ppid)": func() int {
 			return raw3(unix.SYS_PTRACE, unix.PTRACE_PEEKUSR, uintptr(os.Getppid()), 0)
 		},
+		// The review's CWE-269 finding: with ptrace refused, pidfd_getfd
+		// still copied another process's fd. Self is always a permitted
+		// target, so unfiltered this succeeds on any host.
+		"pidfd_open(self)": func() int {
+			pfd, err := unix.PidfdOpen(os.Getpid(), 0)
+			if err == nil {
+				unix.Close(pfd)
+			}
+			return errnoOf(err)
+		},
+		"pidfd_getfd(self, 2)": func() int {
+			pfd, err := unix.PidfdOpen(os.Getpid(), 0)
+			if err != nil {
+				return -3
+			}
+			defer unix.Close(pfd)
+			fd, err := unix.PidfdGetfd(pfd, 2, 0)
+			if err == nil {
+				unix.Close(fd)
+			}
+			return errnoOf(err)
+		},
+		"kcmp(self, self, KCMP_VM)": func() int {
+			pid := uintptr(os.Getpid())
+			_, _, e := unix.Syscall6(unix.SYS_KCMP, pid, pid, 1 /* KCMP_VM */, 0, 0, 0)
+			return int(e)
+		},
 		"mount(tmpfs)": func() int { return errnoOf(unix.Mount("none", "/tmp", "tmpfs", 0, "")) },
 		"keyctl(GET_KEYRING_ID)": func() int {
 			return raw3(unix.SYS_KEYCTL, unix.KEYCTL_GET_KEYRING_ID, uintptr(0xfffffffd) /* KEY_SPEC_SESSION_KEYRING */, 0)
@@ -251,6 +278,9 @@ func TestSeccompKernel_EnforcesErrnoRows(t *testing.T) {
 		{"unshare(CLONE_NEWNET)", unix.EPERM, false},
 		{"setns(-1, 0)", unix.EPERM, true}, // unfiltered: EBADF
 		{"ptrace(PEEKUSER, ppid)", unix.EPERM, true},
+		{"pidfd_open(self)", 0, false},                  // not filtered: legitimate uses
+		{"pidfd_getfd(self, 2)", unix.EPERM, true},      // unfiltered: a copy of fd 2
+		{"kcmp(self, self, KCMP_VM)", unix.EPERM, true}, // unfiltered: 0 (same VM)
 		{"mount(tmpfs)", unix.EPERM, false},
 		{"keyctl(GET_KEYRING_ID)", unix.EPERM, true}, // unfiltered: success
 		{"clone3(NULL, 0)", unix.ENOSYS, true},

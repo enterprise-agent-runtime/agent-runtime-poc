@@ -25,6 +25,10 @@ func a06Unconditional() map[string]verdict {
 	set(vKill, "kexec_load", "kexec_file_load", "init_module", "finit_module", "delete_module",
 		"open_by_handle_at", "iopl", "ioperm")
 	set(vErrno(1), "ptrace", "process_vm_readv", "process_vm_writev")
+	// Stricter than A06: the other ptrace-class calls. Review of M2-14 stole
+	// an fd with pidfd_getfd while ptrace was EPERM (CWE-269). pidfd_open
+	// itself stays allowed (a control below).
+	set(vErrno(1), "pidfd_getfd", "process_madvise", "kcmp")
 	set(vErrno(1), "mount", "umount2", "pivot_root", "chroot", "move_mount", "open_tree", "fsopen",
 		"fsconfig", "fsmount", "fspick", "mount_setattr")
 	set(vErrno(1), "unshare", "setns")
@@ -167,7 +171,7 @@ func TestSeccompTable_A06(t *testing.T) {
 				}
 			}
 
-			for _, name := range []string{"read", "write", "openat", "execve", "getpid"} {
+			for _, name := range []string{"read", "write", "openat", "execve", "getpid", "pidfd_open"} {
 				for _, args := range [][6]uint64{{}, junk} {
 					if got := runFor(t, p, a, callNr(t, a, name), args); got != vAllow {
 						t.Errorf("control %s = %v, want allow", name, got)

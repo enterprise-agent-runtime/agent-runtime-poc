@@ -190,7 +190,7 @@ func TestDockerProfile_SameRowsAsProgram(t *testing.T) {
 	rng := rand.New(rand.NewPCG(14, 2026)) // fixed seed: deterministic
 	for _, a := range Arches() {
 		prog := programFor(t, a)
-		names := append(slices.Clone(tableNames), "read", "write", "openat", "execve", "getpid")
+		names := append(slices.Clone(tableNames), "read", "write", "openat", "execve", "getpid", "pidfd_open")
 		for _, name := range names {
 			nr, ok := a.Nr(name)
 			if !ok {
@@ -203,6 +203,7 @@ func TestDockerProfile_SameRowsAsProgram(t *testing.T) {
 					probes = append(probes, c.args)
 				}
 			}
+			probes = append(probes, edgeProbes(name, rng.Uint32())...)
 			for i := 0; i < 300; i++ {
 				var args [6]uint64
 				for j := range args {
@@ -226,4 +227,46 @@ func TestDockerProfile_SameRowsAsProgram(t *testing.T) {
 			}
 		}
 	}
+}
+
+// edgeProbes are the values next to every filter boundary (from the M2-14
+// review): for each listed value v (each mask bit for AnyBit), v-3..v+3 and
+// v with each single bit flipped, in the filtered argument, each with the
+// upper half 0, all ones, and one fixed pseudo-random value. This is where a
+// complement cube or a jump that is off by one would show.
+func edgeProbes(name string, upper uint32) [][6]uint64 {
+	var out [][6]uint64
+	for _, r := range Table() {
+		for _, sc := range r.Syscalls {
+			if sc.Name != name || sc.Filter == nil {
+				continue
+			}
+			f := sc.Filter
+			vals := f.Values
+			if f.Kind == AnyBit {
+				for b := 0; b < 32; b++ {
+					if f.Mask&(1<<b) != 0 {
+						vals = append(vals, 1<<b)
+					}
+				}
+			}
+			var lows []uint32
+			for _, v := range vals {
+				for d := -3; d <= 3; d++ {
+					lows = append(lows, v+uint32(d))
+				}
+				for b := 0; b < 32; b++ {
+					lows = append(lows, v^(1<<b))
+				}
+			}
+			for _, lo := range lows {
+				for _, hi := range []uint32{0, 0xffffffff, upper} {
+					var args [6]uint64
+					args[f.Arg] = uint64(hi)<<32 | uint64(lo)
+					out = append(out, args)
+				}
+			}
+		}
+	}
+	return out
 }

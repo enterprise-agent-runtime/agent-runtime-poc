@@ -34,11 +34,14 @@
       "names": [
         "ptrace",
         "process_vm_readv",
-        "process_vm_writev"
+        "process_vm_writev",
+        "pidfd_getfd",
+        "process_madvise",
+        "kcmp"
       ],
       "action": "SCMP_ACT_ERRNO",
       "errnoRet": 1,
-      "comment": "No tracing (strace -p 1 fails cleanly)"
+      "comment": "No tracing (strace -p 1 fails cleanly), and no other cross-process access: fd theft, remote madvise, kernel object comparison"
     },
     {
       "names": [
