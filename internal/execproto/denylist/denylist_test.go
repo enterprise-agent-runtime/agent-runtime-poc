@@ -86,6 +86,13 @@ func TestArgv_Heuristic(t *testing.T) {
 		{[]string{"echo", "not a path .env"}, "", false},
 		{[]string{".env"}, "", false}, // argv[0] is the program
 		{nil, "", false},
+		// Git revision syntax has the 8.3 short-name shape (HEAD~1). Review
+		// of 6e260c3: with the 8.3 rule in Argv these routine commands were
+		// denied before approval. The 8.3 rule stays out of Argv; see Argv.
+		{[]string{"git", "diff", "HEAD~1"}, "", false},
+		{[]string{"git", "rebase", "HEAD~2"}, "", false},
+		{[]string{"git", "log", "origin/main~3"}, "", false},
+		{[]string{"cat", "ENV~1"}, "", false}, // Match, MatchUnder and the executor refuse the path itself
 	}
 	for _, c := range cases {
 		if _, got := Argv(c.argv, c.cwd); got != c.deny {

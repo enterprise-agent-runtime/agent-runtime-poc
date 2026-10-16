@@ -47,8 +47,20 @@ func Normalize(p string) string {
 
 // Match reports the first pattern matching p. Matching is ASCII
 // case-insensitive. p is a path relative to a mounted root (CF-17) or an
-// absolute path; both use the same globs.
+// absolute path; both use the same globs. A path with an NTFS 8.3
+// short-name segment matches too (ShortNameMatch, see IsShortName).
+//
+// Because of the 8.3 rule, Match and MatchUnder are not suitable for
+// absolute Windows host paths in their short form: C:\Users\RUNNER~1\...
+// (the TEMP of GitHub's Windows runners) is denied as a whole. Callers pass
+// root-relative paths, or expand host paths to their long form first
+// (GetLongPathName). No caller passes such a path today.
 func Match(p string) (string, bool) {
+	return match(p, true)
+}
+
+// match is Match, with the 8.3 rule only when shortNames is set.
+func match(p string, shortNames bool) (string, bool) {
 	p = strings.ToLower(Normalize(p))
 	p = strings.TrimPrefix(p, "./")
 	segs := split(p)
@@ -57,9 +69,11 @@ func Match(p string) (string, bool) {
 			return pat, true
 		}
 	}
-	for _, s := range segs {
-		if IsShortName(s) {
-			return ShortNameMatch, true
+	if shortNames {
+		for _, s := range segs {
+			if IsShortName(s) {
+				return ShortNameMatch, true
+			}
 		}
 	}
 	return "", false
@@ -106,7 +120,10 @@ func IsShortName(seg string) bool {
 
 // MatchUnder additionally denies anything under one of the given absolute
 // roots (the effective Warden home, CONFLICTS C-53), except paths inside an
-// allowed root (the task's own mounted roots, CF-17).
+// allowed root (the task's own mounted roots, CF-17). It applies the 8.3
+// short-name rule like Match, so the same caveat holds: an absolute Windows
+// host path in short form (C:\Users\RUNNER~1\...) outside the allowed roots
+// is denied. Pass long-form paths (GetLongPathName).
 func MatchUnder(abs string, denyRoots, allowRoots []string) (string, bool) {
 	n := strings.ToLower(Normalize(abs))
 	for _, a := range allowRoots {
@@ -165,6 +182,13 @@ func matchSegs(pat, segs []string) bool {
 // argv[0] (or the value of --flag=value) without whitespace, at most 4096
 // bytes, that names a deny-listed path relative to cwd or absolutely,
 // denies the call. ["cat", ".env"] is denied before approval is asked.
+//
+// Argv leaves out the 8.3 short-name rule: git revision syntax has that
+// shape (HEAD~1, origin/main~3), and routine git commands would be denied
+// before approval. Nothing is lost by it. An argv check is a heuristic that
+// a spawned process defeats anyway (it can build any path at run time); the
+// defence against 8.3 aliases of paths is Match and MatchUnder, which the
+// executor applies to every path it opens and the mask layer to every mount.
 func Argv(argv []string, cwdRel string) (string, bool) {
 	for _, a := range argv[min(1, len(argv)):] {
 		if _, v, ok := strings.Cut(a, "="); ok && strings.HasPrefix(a, "-") {
@@ -173,11 +197,11 @@ func Argv(argv []string, cwdRel string) (string, bool) {
 		if a == "" || len(a) > 4096 || strings.ContainsAny(a, " \t\n") {
 			continue
 		}
-		if pat, ok := Match(a); ok {
+		if pat, ok := match(a, false); ok {
 			return pat, true
 		}
 		if cwdRel != "" {
-			if pat, ok := Match(path.Join(cwdRel, strings.ReplaceAll(a, "\\", "/"))); ok {
+			if pat, ok := match(path.Join(cwdRel, strings.ReplaceAll(a, "\\", "/")), false); ok {
 				return pat, true
 			}
 		}

@@ -160,11 +160,14 @@ func Resolve(roots []Root, method string, root execproto.RootName, input string)
 // points at ".env" or ".git/config" is refused as what it reaches.
 // res.DenyMatch keeps the first match.
 //
-// The .git ban is checked first, so a write to an 8.3 segment (which the
-// deny-list matches too) is reported as the .git refusal it may be.
+// The write ban is checked first, so a write to an 8.3 segment (which the
+// deny-list matches too) is refused as outside_roots, like the .git
+// refusal it may be, with its own detail.
 func checkResult(acc methodAccess, res *execproto.Resolved, rel string) error {
-	if acc.write && touchesGit(rel) {
-		return execproto.NewError(execproto.ErrOutsideRoots, "writes to .git are not allowed")
+	if acc.write {
+		if detail := writeBan(rel); detail != "" {
+			return execproto.NewError(execproto.ErrOutsideRoots, detail)
+		}
 	}
 	if pat, ok := denylist.Match(rel); ok && rel != "" {
 		if !acc.reportDeny {
@@ -187,22 +190,31 @@ func hasDotDot(p string) bool {
 	return false
 }
 
-// touchesGit reports whether a root-relative path has a ".git" segment. A06
-// §5.3 says the path "must not start with .git", meaning the worktree's .git
+// writeBan is the write ban of A06 §5.3: it returns the refusal detail for a
+// root-relative write path, "" when the path may be written.
+//
+// A06 says the path "must not start with .git", meaning the worktree's .git
 // file; read literally that would also ban .gitignore and .github/, so the
 // rule is applied per segment. Any segment counts, not only the first, so a
 // nested repository's hooks cannot be planted either, and the comparison
 // ignores case because macOS and Windows file systems do (CLAUDE.md §9 rule
-// 6). An NTFS 8.3 short-name segment counts too: GIT~1 is .git on a volume
-// with short names, and the string does not say which long name an alias
-// stands for (CWE-41; git's CVE-2014-9390).
-func touchesGit(rel string) bool {
+// 6). An NTFS 8.3 short-name segment is refused too: GIT~1 is .git on a
+// volume with short names, and the string does not say which long name an
+// alias stands for (CWE-41; git's CVE-2014-9390). The two get their own
+// text, so the model and the audit trail are told which rule refused: a
+// write to ENV~1 is not about .git.
+func writeBan(rel string) string {
+	shortName := false
 	for _, s := range strings.Split(rel, "/") {
-		if strings.EqualFold(s, ".git") || denylist.IsShortName(s) {
-			return true
+		if strings.EqualFold(s, ".git") {
+			return "writes to .git are not allowed"
 		}
+		shortName = shortName || denylist.IsShortName(s)
 	}
-	return false
+	if shortName {
+		return "writes to an 8.3 short name are not allowed: it may alias a protected name"
+	}
+	return ""
 }
 
 // validateInput is A06 §5.1 step 1.

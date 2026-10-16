@@ -199,6 +199,33 @@ func TestResolve_ReadOnlyRoot(t *testing.T) {
 	}
 }
 
+// TestResolve_WriteBanDetail: the .git ban also refuses 8.3 segments, and
+// the detail (which reaches the model and the audit trail) must say which
+// rule bit. Review of 6e260c3: a write to ENV~1 was reported as "writes to
+// .git are not allowed", which sends whoever reads it looking for a .git
+// that is not there. The code stays outside_roots for both.
+func TestResolve_WriteBanDetail(t *testing.T) {
+	for input, want := range map[string]string{
+		".git/config":     ".git",
+		"ENV~1":           "8.3 short name",
+		"sub/ENV~1.LOC":   "8.3 short name",
+		"vendor/GIT~1/x":  "8.3 short name",
+		"a/.GIT/hooks/pc": ".git",
+	} {
+		_, err := Resolve(testRoots(), execproto.MethodFSWrite, "", input)
+		var e *execproto.Error
+		if !errors.As(err, &e) || e.Code != execproto.ErrOutsideRoots {
+			t.Fatalf("write %q: %v, want outside_roots", input, err)
+		}
+		if !strings.Contains(e.Data.Detail, want) {
+			t.Errorf("write %q: detail %q does not mention %q", input, e.Data.Detail, want)
+		}
+		if want != ".git" && strings.Contains(e.Data.Detail, ".git") {
+			t.Errorf("write %q: detail %q blames .git", input, e.Data.Detail)
+		}
+	}
+}
+
 // TestResolve_MissingRoot: a root the method allows but the sandbox does not
 // have (no scratch configured) is outside the roots, not a panic or a path
 // relative to "".
