@@ -156,19 +156,30 @@ func listenTaskSocket(root, path string, o taskSockOpts) (*TaskSocket, error) {
 		}
 		return nil, err
 	}
-	// Re-check after bind: the entry is the user's socket (recorded first,
-	// so a refusal below still removes it), and the directory it was bound
-	// in is the one checked before, still owner-only.
+	// Re-check after bind. First the directory must still be the one
+	// checked before (same inode, Lstat on both sides of reading the
+	// entry); only then is the entry at the path recorded as ours, so that
+	// a refusal removes it. After a swap the path leads somewhere else, and
+	// nothing is removed by path: the listener is closed and its file, in
+	// the moved directory, is left dead (review of 2aa3972, CWE-367: the
+	// path could hold another session's live socket).
+	sameDir := func() bool {
+		d, err := os.Lstat(dir)
+		return err == nil && os.SameFile(di, d)
+	}
+	if !sameDir() {
+		return fail(refused("socket directory %s was replaced during bind", dir))
+	}
 	fi, ferr := os.Lstat(path)
+	if !sameDir() {
+		return fail(refused("socket directory %s was replaced during bind", dir))
+	}
 	if ferr == nil && fi.Mode().Type() == os.ModeSocket && o.ownerOf(fi) == o.uid {
 		s.fi = fi
 	}
-	di2, err := o.checkSocketDir(dir)
-	if err != nil {
+	// The same directory, still owner-only and the user's.
+	if _, err := o.checkSocketDir(dir); err != nil {
 		return fail(err)
-	}
-	if !os.SameFile(di, di2) {
-		return fail(refused("socket directory %s was replaced during bind", dir))
 	}
 	if ferr != nil {
 		return fail(fmt.Errorf("%w: %v", ErrTaskSocketRefused, ferr))
@@ -246,13 +257,28 @@ func (s *TaskSocket) Accept() (net.Conn, error) {
 			return nil, err
 		}
 		uid, known, err := s.peer(c)
-		if err != nil || !known || uid != s.uid {
-			slog.Warn("refused a connection from another user on a proxy socket", "path", s.path)
+		if reason := peerRefusal(uid, known, err, s.uid); reason != "" {
+			slog.Warn("refused a connection on a proxy socket", "path", s.path, "reason", reason)
 			_ = c.Close()
 			continue
 		}
 		return c, nil
 	}
+}
+
+// peerRefusal is why Accept refuses a peer, or "" to accept it. Each
+// refusal names its actual cause, so the log does not blame "another user"
+// for a credential that could not be read.
+func peerRefusal(uid int, known bool, err error, want int) string {
+	switch {
+	case err != nil:
+		return "peer credential unreadable"
+	case !known:
+		return "peer credential not reported"
+	case uid != want:
+		return "peer is another user"
+	}
+	return ""
 }
 
 // Close stops accepting. It does not remove the socket file; Remove does.

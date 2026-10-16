@@ -41,7 +41,9 @@ func TestOpenProxy_RefusesBeforeCreatingAnything(t *testing.T) {
 		{"proxy of another sandbox", func(s *Spec, c *proxy.Config) {
 			c.SandboxID = "sb_01JAXS2Q7M2V9KTC3F6YH5N0PC"
 		}, ErrInvalidSpec},
-		{"proxy config refused", func(s *Spec, c *proxy.Config) { c.Events = nil }, nil},
+		// A Config proxy.New refuses is a daemon bug like an invalid Spec
+		// (review of 2aa3972: it was returned unwrapped).
+		{"proxy config refused", func(s *Spec, c *proxy.Config) { c.Events = nil }, ErrInvalidSpec},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,7 +55,7 @@ func TestOpenProxy_RefusesBeforeCreatingAnything(t *testing.T) {
 				pl.Close()
 				t.Fatal("OpenProxy succeeded")
 			}
-			if tc.want != nil && !errors.Is(err, tc.want) {
+			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
 			if _, err := os.Lstat(l.home); !errors.Is(err, os.ErrNotExist) {

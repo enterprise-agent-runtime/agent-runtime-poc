@@ -33,10 +33,12 @@ type ProxyListener struct {
 // OpenProxy opens the Spec's proxy socket (S/scratch/px-<n>.sock, pinned
 // by Validate, D-056) and starts serving a TaskProxy built from cfg on it.
 // cfg is bound to the sandbox: an empty SandboxID becomes s.ID, any other
-// is refused. A Spec that is not a valid L1 Spec is ErrInvalidSpec; a
-// socket that cannot be opened owner-only (or L1 not existing on this OS,
-// platform.ErrTaskSocketUnsupported) is ErrUnavailable. Nothing is created
-// unless OpenProxy succeeds.
+// is refused. A Spec that is not a valid L1 Spec, or a Config proxy.New
+// refuses, is ErrInvalidSpec, and nothing is created on disk. A socket that
+// cannot be opened owner-only (or L1 not existing on this OS,
+// platform.ErrTaskSocketUnsupported) is ErrUnavailable; by then the
+// session's scratch directory (S/scratch, 0700) may have been created, and
+// it is left in place, but no socket is.
 //
 // ctx bounds the proxy's life; Close ends it earlier and must be called in
 // every case, since only Close removes the socket.
@@ -56,7 +58,7 @@ func OpenProxy(ctx context.Context, s *Spec, cfg proxy.Config) (*ProxyListener, 
 	}
 	p, err := proxy.New(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: proxy config: %w", ErrInvalidSpec, err)
 	}
 	sock, err := platform.ListenTaskSocket(s.WardenHome, s.Proxy.Socket)
 	if err != nil {

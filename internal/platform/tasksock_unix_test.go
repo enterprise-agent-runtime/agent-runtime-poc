@@ -380,6 +380,40 @@ func TestTaskSocket_RefusesChangesDuringBind(t *testing.T) {
 				t.Error("the listener bound in the moved directory still accepts")
 			}
 		}},
+		// Review of 2aa3972 (CWE-367): the entry at the path was recorded as
+		// "ours" before the directory identity was checked, so a refusal
+		// after a swap unlinked whatever socket of the user now sat at the
+		// path, such as another session's live px-1.sock (on Linux that
+		// detaches the bind in the other sandbox). After a directory swap
+		// nothing may be removed by path.
+		{"directory swapped for one holding another socket", func(t *testing.T, tr taskTree) {
+			if err := os.Rename(tr.scratch, filepath.Join(tr.session, "moved")); err != nil {
+				t.Fatal(err)
+			}
+			other := filepath.Join(tr.session, "other")
+			if err := os.Mkdir(other, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			l, err := net.Listen("unix", filepath.Join(other, "px-1.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.(*net.UnixListener).SetUnlinkOnClose(false)
+			t.Cleanup(func() { l.Close() })
+			if err := os.Rename(other, tr.scratch); err != nil {
+				t.Fatal(err)
+			}
+		}, "replaced during bind", func(t *testing.T, tr taskTree) {
+			fi, err := os.Lstat(tr.sock)
+			if err != nil || fi.Mode().Type() != os.ModeSocket {
+				t.Fatalf("the other socket at the path was removed: %v, %v", fi, err)
+			}
+			c, err := net.Dial("unix", tr.sock)
+			if err != nil {
+				t.Fatalf("the other socket no longer accepts: %v", err)
+			}
+			c.Close()
+		}},
 		{"socket directory loosened", func(t *testing.T, tr taskTree) {
 			chmod(t, tr.scratch, 0o755)
 		}, "not owner-only", func(t *testing.T, tr taskTree) {
@@ -751,5 +785,30 @@ func chmod(t *testing.T, p string, m os.FileMode) {
 	t.Helper()
 	if err := os.Chmod(p, m); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestPeerRefusal_NamesTheReason: Accept logs why it refused a peer
+// (review of 2aa3972: every refusal was logged as "another user", which
+// misleads whoever debugs an unreadable or unreported credential). The
+// decision and its reason come from one pure function.
+func TestPeerRefusal_NamesTheReason(t *testing.T) {
+	me := os.Getuid()
+	cases := []struct {
+		name  string
+		uid   int
+		known bool
+		err   error
+		want  string
+	}{
+		{"same uid", me, true, nil, ""},
+		{"another uid", me + 1, true, nil, "peer is another user"},
+		{"unreadable", me, true, errors.New("EINVAL"), "peer credential unreadable"},
+		{"not reported", me, false, nil, "peer credential not reported"},
+	}
+	for _, c := range cases {
+		if got := peerRefusal(c.uid, c.known, c.err, me); got != c.want {
+			t.Errorf("%s: peerRefusal = %q, want %q", c.name, got, c.want)
+		}
 	}
 }
