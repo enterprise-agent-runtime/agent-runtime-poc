@@ -65,7 +65,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Commits:** `bcfa1fc`, `c37e6d7`, `8bcce6f`, `fdbde48`.
   - **Review:** three rounds. They found a write that ignored its deadline (CWE-1088), unsanitized executor text, silently ignored unknown ids, and a cancel-while-waiting teardown. Fuzzing ran 5.3M + 1.5M execs with no failure; `-race -count=20` passes; coverage 94–98%.
   - **Left for M3:** check `WaitResult.State == exited && ExitCode != nil` before trusting that all output is in.
-- [ ] **M2-6** Resolve and race-free open
+- [x] **M2-6** Resolve and race-free open under the roots (D-054, D-055, C-68).
+  - **Pieces:** pure `Resolve` in `internal/exec` (every OS), the fd-stack walk and `OpenCanonical` (openat2, or the O_NOFOLLOW walk) on Linux and macOS.
+  - **Commits:** `ab63720`, `6e260c3`, `deeea82`.
+  - **Review:** three rounds. They found `/work//../..` clamped instead of refused (CWE-22), NTFS short names past every deny-list layer (CWE-41), an untested st_dev check, an open that trusted a forged `Resolved`, and the 8.3 rule over-blocking `git diff HEAD~1`. FuzzResolve ran 1.38M execs clean; `-race` passes in WSL2.
+  - **Left for M2-7:** refuse reads of regular files with `st_nlink > 1` (hard links, CWE-59); pass only `Tree.Resolve` output to `OpenCanonical`; temp names that cannot match the deny-list or the 8.3 rule (e.g. `.warden-tmp-<rand>`); reject `Resolved.Root != worktree` for model-originated calls.
+  - **Left for L2 (owner sign-off):** a spawned process in Windows L2 can still open `ENV~1` past the `/dev/null` mask; disable 8.3 names on the sessions volume or have doctor refuse.
+  - **Low:** `strings.ToLower` does not fold U+017F (matters on case-insensitive APFS).
 - [ ] **M2-7** fs operations (also: refuse a patch touching more than 4096 files before applying, D-048)
 - [ ] **M2-8** proc operations, rlimits and output cap
 - [ ] **M2-9** git.run
