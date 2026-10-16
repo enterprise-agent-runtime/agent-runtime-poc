@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -179,5 +180,24 @@ func TestRegisterFS_Twice(t *testing.T) {
 			t.Errorf("%s: second RegisterFS succeeded", mode)
 		}
 		_ = a.Close()
+	}
+}
+
+// TestExecProtocol_FSPatchResultTooLarge is review round 1's finding 1 on
+// the wire: the daemon must get too_large with nothing written, not
+// too_large for a patch that was applied (the reviewer's probe).
+func TestExecProtocol_FSPatchResultTooLarge(t *testing.T) {
+	c, work := fsClient(t, execproto.ModeTool)
+	var b strings.Builder
+	for i := 0; i < execproto.MaxPatchFiles; i++ {
+		fmt.Fprintf(&b, "--- /dev/null\n+++ %s/p%04d%s\n@@ -0,0 +1 @@\n+x\n", strings.Repeat("<", 200), i, strings.Repeat("<", 127))
+	}
+	zero := 0
+	err := c.FS(context.Background(), execproto.MethodFSPatch, execproto.PatchParams{Patch: b.String(), Strip: &zero}, nil)
+	if !errors.Is(err, execproto.ErrTooLarge) {
+		t.Errorf("oversized result: %v, want too_large", err)
+	}
+	if _, err := os.Stat(work + "/" + strings.Repeat("<", 200)); err == nil {
+		t.Error("files were written for a patch reported too_large")
 	}
 }

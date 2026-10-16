@@ -143,16 +143,52 @@ func TestSearchArgs_Limits(t *testing.T) {
 	}
 	// A literal query is literal, and case_sensitive defaults to true.
 	s, _ = searchArgs(execproto.SearchParams{Query: "a.b"})
-	if s.re.MatchString("axb") || !s.re.MatchString("a.b") || s.re.MatchString("A.B") {
+	if s.find("axb") >= 0 || s.find("xa.b") != 1 || s.find("A.B") >= 0 {
 		t.Error("literal query is not matched literally and case-sensitively")
 	}
 	s, _ = searchArgs(execproto.SearchParams{Query: "a.b", CaseSensitive: boolp(false)})
-	if !s.re.MatchString("A.B") || s.re.MatchString("AxB") {
+	if s.find("xA.B") != 1 || s.find("AxB") >= 0 {
 		t.Error("case-insensitive literal query")
 	}
 	s, _ = searchArgs(execproto.SearchParams{Query: "a.b", Regex: true})
-	if !s.re.MatchString("axb") {
+	if s.find("axb") != 0 {
 		t.Error("regex query is not a regex")
+	}
+}
+
+// TestSearchArgs_RegexCost is CWE-1333/CWE-400. RE2 never backtracks, but
+// its cost is still the input length times the size of the compiled
+// program: ".{1000}z" (1003 instructions) took about 30 s on one 2 MiB
+// line in review, and no context check can interrupt a single match call.
+// So the program is capped at maxRegexInsts (invalid_argument above it),
+// and searchSpec.cost, the instructions per input byte, is what the
+// search's per-file budget multiplies by the file size. A case-sensitive
+// literal does not use the regex engine at all (strings.Index, cost 1),
+// so a 1024-byte literal stays searchable.
+func TestSearchArgs_RegexCost(t *testing.T) {
+	cases := []struct {
+		name  string
+		p     execproto.SearchParams
+		code  execproto.Code
+		cheap bool // cost 1: no regex program
+	}{
+		{"counted repetition", execproto.SearchParams{Query: ".{1000}z", Regex: true}, execproto.ErrInvalidArgument, false},
+		{"folded alternation", execproto.SearchParams{Query: `(?i)(?:\pL{1000}z|\pN{1000}y)`, Regex: true}, execproto.ErrInvalidArgument, false},
+		{"nested repetition", execproto.SearchParams{Query: `((a{10}){10}){10}`, Regex: true}, execproto.ErrInvalidArgument, false},
+		{"case-insensitive long literal", execproto.SearchParams{Query: strings.Repeat("a", 1024), CaseSensitive: boolp(false)}, execproto.ErrInvalidArgument, false},
+		{"long literal", execproto.SearchParams{Query: strings.Repeat("a", 1024)}, 0, true},
+		{"ordinary regex", execproto.SearchParams{Query: `func \w+\(`, Regex: true}, 0, false},
+		{"just under the cap", execproto.SearchParams{Query: `[a-z]{500}q`, Regex: true}, 0, false},
+	}
+	for _, c := range cases {
+		s, err := searchArgs(c.p)
+		if codeOf(err) != c.code {
+			t.Errorf("%s: err %v, want code %d", c.name, err, c.code)
+			continue
+		}
+		if err == nil && (s.cost == 1) != c.cheap || err == nil && (s.cost < 1 || s.cost > maxRegexInsts) {
+			t.Errorf("%s: cost %d", c.name, s.cost)
+		}
 	}
 }
 

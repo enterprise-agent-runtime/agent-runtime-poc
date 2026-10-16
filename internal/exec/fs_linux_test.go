@@ -960,6 +960,11 @@ func TestFSPatch_ChangedBeforeCommit(t *testing.T) {
 			if f.content(t, c.touch) != "changed by someone else" || f.content(t, "work/.gitignore") != "old\n" {
 				t.Error("the concurrent change was overwritten or the first step not undone")
 			}
+			if c.name == "renamed original" {
+				// The rename's target was linked before the original was
+				// found changed: that half step must be undone too.
+				f.missing(t, "work/a/h.txt")
+			}
 			f.noTemps(t)
 		})
 	}

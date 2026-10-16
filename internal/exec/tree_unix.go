@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -50,6 +51,8 @@ type Tree struct {
 	// fails that step, so a test can prove the rollback restores
 	// everything (fs_unix.go).
 	beforeCommit func(step int) error
+
+	now func() time.Time
 }
 
 type treeRoot struct {

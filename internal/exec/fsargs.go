@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"path"
 	"regexp"
+	"regexp/syntax"
 	"strings"
 	"unicode/utf8"
 
@@ -75,8 +76,18 @@ func listArgs(p execproto.ListParams) (listSpec, error) {
 	return s, nil
 }
 
+// maxRegexInsts caps the compiled program of a regex (or case-insensitive)
+// query. RE2 never backtracks, but a match still costs the input length
+// times the program size, and no context check can interrupt one match
+// call: ".{1000}z" (1003 instructions) took about 30 s on one 2 MiB line
+// in review (CWE-1333, CWE-400). Ordinary queries compile to 5-50
+// instructions; a case-insensitive literal of more than about 1000 bytes
+// is refused too.
+const maxRegexInsts = 1000
+
 type searchSpec struct {
-	re               *regexp.Regexp
+	find             func(line string) int // byte offset of the first match, -1 for none
+	cost             int                   // work per input byte: 1 for a case-sensitive literal, else the program size
 	include, exclude []string
 	maxMatches       int
 	context          int
@@ -84,11 +95,11 @@ type searchSpec struct {
 }
 
 // searchArgs checks exec.fs.search's bounds and compiles the query. A
-// literal query is quoted, so it is matched literally by the same RE2
-// engine. RE2 runs in time linear in the input, which is what keeps a
-// model-written pattern from stalling the executor: there is no
-// backtracking, and a Perl-only construct such as a backreference does not
-// compile.
+// case-sensitive literal is found with strings.Index, which is linear.
+// Anything else is compiled by RE2: no backtracking, and a Perl-only
+// construct such as a backreference does not compile; its program is
+// capped at maxRegexInsts, and its size is the cost the search multiplies
+// by each file's size (searchMaxFileCost in fs_unix.go).
 func searchArgs(p execproto.SearchParams) (searchSpec, error) {
 	if p.Query == "" || len(p.Query) > execproto.MaxSearchQueryBytes {
 		return searchSpec{}, invalid("query must be 1 to 1024 bytes")
@@ -115,16 +126,42 @@ func searchArgs(p execproto.SearchParams) (searchSpec, error) {
 	if s.exclude, err = globArgs(p.Exclude); err != nil {
 		return searchSpec{}, err
 	}
+	caseSensitive := p.CaseSensitive == nil || *p.CaseSensitive
+	if !p.Regex && caseSensitive {
+		lit := p.Query
+		s.find = func(l string) int { return strings.Index(l, lit) }
+		s.cost = 1
+		return s, nil
+	}
 	q := p.Query
 	if !p.Regex {
 		q = regexp.QuoteMeta(q)
 	}
-	if p.CaseSensitive != nil && !*p.CaseSensitive {
+	if !caseSensitive {
 		q = "(?i)" + q
 	}
-	if s.re, err = regexp.Compile(q); err != nil {
+	parsed, err := syntax.Parse(q, syntax.Perl) // the flags regexp.Compile uses
+	if err != nil {
 		return searchSpec{}, invalid("query is not valid RE2")
 	}
+	prog, err := syntax.Compile(parsed.Simplify())
+	if err != nil {
+		return searchSpec{}, invalid("query is not valid RE2")
+	}
+	if len(prog.Inst) > maxRegexInsts {
+		return searchSpec{}, invalid("query is too complex: its program exceeds 1000 instructions")
+	}
+	re, err := regexp.Compile(q)
+	if err != nil {
+		return searchSpec{}, invalid("query is not valid RE2")
+	}
+	s.find = func(l string) int {
+		if loc := re.FindStringIndex(l); loc != nil {
+			return loc[0]
+		}
+		return -1
+	}
+	s.cost = len(prog.Inst)
 	return s, nil
 }
 

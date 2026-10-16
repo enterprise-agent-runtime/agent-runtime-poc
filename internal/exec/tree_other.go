@@ -68,3 +68,6 @@ func (*Tree) Patch(context.Context, execproto.PatchParams) (execproto.PatchResul
 func (*Tree) Stat(context.Context, execproto.StatParams) (execproto.StatResult, error) {
 	return execproto.StatResult{}, unsupported()
 }
+
+// SweepTemps does nothing on this OS.
+func (*Tree) SweepTemps() (int, error) { return 0, nil }

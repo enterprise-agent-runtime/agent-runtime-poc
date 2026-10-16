@@ -40,10 +40,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,8 +73,26 @@ const (
 	searchMaxEntries    = 100_000
 	// searchBinaryProbe is how much of a file is checked for a NUL byte.
 	searchBinaryProbe = 8 << 10
+	// searchTimeout is the method deadline of exec.fs.search (A06 §4.4
+	// timeout; A06 gives no value). Tree.now makes the clock injectable.
+	searchTimeout = 30 * time.Second
+	// searchMaxFileCost bounds a file's size times the query's cost
+	// (searchSpec.cost): a larger file is skipped as too_large. It bounds
+	// every single match call, which no check can interrupt, to about one
+	// second for the worst program (RE2 measured about 14 ns per
+	// instruction and byte in review): 2 MiB at cost 32, 64 KiB at the
+	// 1000-instruction cap. A case-sensitive literal costs 1.
+	searchMaxFileCost = 1 << 26
+	// searchCheckLines is how often a file's lines check cancellation and
+	// the deadline.
+	searchCheckLines = 1024
 	// patchMaxStagedBytes bounds the files one patch produces together.
 	patchMaxStagedBytes = 128 << 20
+	// patchFrameReserve is what the result budget of a patch leaves of the
+	// 8 MiB frame (A06 §4.1) for the JSON-RPC envelope around the result:
+	// {"jsonrpc":"2.0","id":...,"result":...}. 64 KiB covers any id the
+	// daemon sends (it uses integers) with a wide margin.
+	patchFrameReserve = 64 << 10
 
 	newFileMode = 0o644
 	execMode    = 0o755
@@ -351,14 +371,29 @@ func (t *Tree) List(ctx context.Context, p execproto.ListParams) (execproto.List
 
 // searcher is one exec.fs.search walk.
 type searcher struct {
-	t       *Tree
-	ctx     context.Context
-	idx     int
-	root    execproto.RootName
-	spec    searchSpec
-	out     execproto.SearchResult
-	bytes   int64
-	entries int
+	t        *Tree
+	ctx      context.Context
+	idx      int
+	root     execproto.RootName
+	spec     searchSpec
+	out      execproto.SearchResult
+	bytes    int64
+	entries  int
+	now      func() time.Time
+	deadline time.Time
+}
+
+// check is the cancellation and deadline check (A06 §4.4 timeout): first
+// the caller's context (the server cancels every handler when the
+// connection ends, and Serve waits for them), then the method deadline.
+func (s *searcher) check() error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if s.now().After(s.deadline) {
+		return execproto.NewError(execproto.ErrTimeout, "search exceeded its time limit")
+	}
+	return nil
 }
 
 // Search is exec.fs.search: RE2 (or literal) matching, line by line, over
@@ -366,13 +401,21 @@ type searcher struct {
 // what it does not search: a deny-listed name (counted skipped.denied, and
 // a denied directory is not entered), a symlink (never followed), a FIFO,
 // socket or device, and a .git directory. Each file it does search is
-// opened like a read (Resolve, then OpenCanonical, O_NONBLOCK, regular,
-// one link), so a file reached under another name than the walk saw, or
-// with a second hard link, is skipped as denied rather than searched.
-// Files over max_file_bytes are skipped whole (too_large), files with a
-// NUL in their first 8 KiB as binary. One search reads at most 64 MiB and
-// visits at most 100 000 entries; reaching a bound, or max_matches,
-// returns what was found with truncated: true.
+// resolved with the search row (worktree only) and opened like a read
+// (OpenCanonical, O_NONBLOCK, regular, one link), so a file reached under
+// another name or in another root than the walk saw, or with a second hard
+// link, is skipped rather than searched.
+//
+// Bounds (CWE-400, CWE-1333): files over max_file_bytes are skipped whole
+// (too_large), and so are files whose size times the query's cost (its
+// program size, see searchArgs) exceeds searchMaxFileCost, which bounds
+// every single match call; files with a NUL in their first 8 KiB are
+// binary. One search reads at most 64 MiB and visits at most 100 000
+// entries; reaching a bound, or max_matches, returns what was found with
+// truncated: true. Cancellation and the method deadline (searchTimeout,
+// A06 §4.4 timeout) are checked per directory, per file and every
+// searchCheckLines lines; past the deadline the search fails timeout and
+// returns no partial result.
 func (t *Tree) Search(ctx context.Context, p execproto.SearchParams) (execproto.SearchResult, error) {
 	spec, err := searchArgs(p)
 	if err != nil {
@@ -387,7 +430,14 @@ func (t *Tree) Search(ctx context.Context, p execproto.SearchParams) (execproto.
 		return execproto.SearchResult{}, err
 	}
 	idx, _ := t.root(res.Root)
-	s := &searcher{t: t, ctx: ctx, idx: idx, root: res.Root, spec: spec}
+	now := t.now
+	if now == nil {
+		now = time.Now
+	}
+	s := &searcher{t: t, ctx: ctx, idx: idx, root: res.Root, spec: spec, now: now, deadline: now().Add(searchTimeout)}
+	if err := s.check(); err != nil {
+		return execproto.SearchResult{}, err
+	}
 	st, ok, err := t.lstat(res)
 	switch {
 	case err != nil:
@@ -399,7 +449,7 @@ func (t *Tree) Search(ctx context.Context, p execproto.SearchParams) (execproto.
 	case unix.S_IFDIR:
 		err = s.dir(splitPath(res.RelPath))
 	case unix.S_IFREG:
-		s.file(res.RelPath, &st)
+		_, err = s.file(res.RelPath, &st)
 	default:
 		return execproto.SearchResult{}, notRegular()
 	}
@@ -412,7 +462,7 @@ func (t *Tree) Search(ctx context.Context, p execproto.SearchParams) (execproto.
 func (s *searcher) dir(start []string) error {
 	stack := [][]string{start}
 	for len(stack) > 0 {
-		if err := s.ctx.Err(); err != nil {
+		if err := s.check(); err != nil {
 			return err
 		}
 		d := stack[len(stack)-1]
@@ -451,9 +501,10 @@ func (s *searcher) dir(start []string) error {
 					subdirs = append(subdirs, with(d, name))
 				}
 			case unix.S_IFREG:
-				if s.file(rel, &st) {
+				stop, err := s.file(rel, &st)
+				if err != nil || stop {
 					_ = unix.Close(fd)
-					return nil
+					return err
 				}
 			}
 		}
@@ -489,28 +540,34 @@ func (s *searcher) included(rel string) bool {
 	return false
 }
 
-// file searches one regular file; it reports whether the search is over.
-func (s *searcher) file(rel string, st *unix.Stat_t) (stop bool) {
+// file searches one regular file; it reports whether the search is over,
+// and fails only on cancellation or the deadline.
+func (s *searcher) file(rel string, st *unix.Stat_t) (stop bool, err error) {
+	if err := s.check(); err != nil {
+		return true, err
+	}
 	if _, denied := denylist.Match(rel); denied {
 		s.out.Skipped.Denied++
-		return false
+		return false, nil
 	}
 	if !s.included(rel) {
-		return false
+		return false, nil
 	}
 	switch {
 	case uint64(st.Nlink) > 1:
 		s.out.Skipped.Denied++
-		return false
-	case st.Size > s.spec.maxFileBytes:
+		return false, nil
+	case st.Size > s.spec.maxFileBytes, st.Size*int64(s.spec.cost) > searchMaxFileCost:
 		s.out.Skipped.TooLarge++
-		return false
+		return false, nil
 	case s.bytes+st.Size > searchMaxTotalBytes:
 		s.out.Truncated = true
-		return true
+		return true, nil
 	}
-	r, err := s.t.Resolve(execproto.MethodFSRead, s.root, rel)
-	if err == nil && r.RelPath != rel {
+	// The search row, not the read row: read may address scratch, and an
+	// absolute link swapped in since the walk would be followed there.
+	r, err := s.t.Resolve(execproto.MethodFSSearch, s.root, rel)
+	if err == nil && (r.Root != s.root || r.RelPath != rel) {
 		err = conflict() // a link appeared on the way since the walk
 	}
 	var f *os.File
@@ -523,43 +580,48 @@ func (s *searcher) file(rel string, st *unix.Stat_t) (stop bool) {
 		} else {
 			s.out.Skipped.Unreadable++
 		}
-		return false
+		return false, nil
 	}
 	data, err := io.ReadAll(io.LimitReader(f, s.spec.maxFileBytes+1))
 	_ = f.Close()
 	switch {
 	case err != nil:
 		s.out.Skipped.Unreadable++
-		return false
-	case int64(len(data)) > s.spec.maxFileBytes:
+		return false, nil
+	case int64(len(data)) > s.spec.maxFileBytes, int64(len(data))*int64(s.spec.cost) > searchMaxFileCost:
 		s.out.Skipped.TooLarge++
-		return false
+		return false, nil
 	}
 	s.bytes += int64(len(data))
 	if bytes.IndexByte(data[:min(len(data), searchBinaryProbe)], 0) >= 0 {
 		s.out.Skipped.Binary++
-		return false
+		return false, nil
 	}
 	s.out.FilesScanned++
 	return s.match(rel, string(data))
 }
 
-func (s *searcher) match(rel, data string) (stop bool) {
+func (s *searcher) match(rel, data string) (stop bool, err error) {
 	lines := strings.Split(data, "\n")
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
 	line := func(i int) string { return cutText(strings.TrimSuffix(lines[i], "\r")) }
 	for i, l := range lines {
-		loc := s.spec.re.FindStringIndex(strings.TrimSuffix(l, "\r"))
-		if loc == nil {
+		if i%searchCheckLines == 0 {
+			if err := s.check(); err != nil {
+				return true, err
+			}
+		}
+		col := s.spec.find(strings.TrimSuffix(l, "\r"))
+		if col < 0 {
 			continue
 		}
 		if len(s.out.Matches) == s.spec.maxMatches {
 			s.out.Truncated = true
-			return true
+			return true, nil
 		}
-		m := execproto.SearchMatch{RelPath: rel, Line: i + 1, Column: loc[0] + 1, Text: line(i)}
+		m := execproto.SearchMatch{RelPath: rel, Line: i + 1, Column: col + 1, Text: line(i)}
 		for j := max(0, i-s.spec.context); j < i; j++ {
 			m.Before = append(m.Before, line(j))
 		}
@@ -568,7 +630,7 @@ func (s *searcher) match(rel, data string) (stop bool) {
 		}
 		s.out.Matches = append(s.out.Matches, m)
 	}
-	return false
+	return false, nil
 }
 
 // checkPrefixes holds every directory a write may create on its way to
@@ -864,6 +926,16 @@ func (t *Tree) Patch(ctx context.Context, p execproto.PatchParams) (execproto.Pa
 	seen := map[string]bool{}
 	items := make([]patchItem, 0, len(files))
 	var staged int
+	// The result must fit the frame, or the server replaces it by
+	// too_large after the files were written, and the daemon records a
+	// failure for writes that happened (CWE-223/754, review round 1). It
+	// is estimated from the parse before anything is resolved or staged,
+	// dry run included, and then sized exactly as json.Marshal
+	// (MarshalWire) will write it, entry by entry, before each is staged.
+	if patchResultEstimate(files) > execproto.MaxFrameBytes-patchFrameReserve {
+		return execproto.PatchResult{}, tooLarge("the patch result would exceed the 8 MiB frame")
+	}
+	resultSize := patchResultBase()
 	for i, fp := range files {
 		if err := ctx.Err(); err != nil {
 			return execproto.PatchResult{}, err
@@ -875,11 +947,19 @@ func (t *Tree) Patch(ctx context.Context, p execproto.PatchParams) (execproto.Pa
 		if staged += len(it.result); staged > patchMaxStagedBytes {
 			return execproto.PatchResult{}, tooLarge("the patched files exceed the staging cap")
 		}
+		entry, err := json.Marshal(it.file)
+		if err != nil {
+			return execproto.PatchResult{}, ioError("result could not be encoded")
+		}
+		if resultSize += len(entry) + 1; resultSize > execproto.MaxFrameBytes-patchFrameReserve { // +1: the comma
+			return execproto.PatchResult{}, tooLarge("the patch result would exceed the 8 MiB frame")
+		}
 		if sg != nil && fp.op != execproto.PatchDelete {
 			if err := sg.stage(i, it); err != nil {
 				return execproto.PatchResult{}, err
 			}
 		}
+		it.result = nil // staged on disk (or a dry run): not held until the commit
 		items = append(items, it)
 	}
 	out := execproto.PatchResult{Applied: !p.DryRun}
@@ -999,10 +1079,57 @@ func (fp filePatch) relPathOf(it patchItem) string {
 	return it.to.RelPath
 }
 
+// patchResultEstimate is the encoded size of the PatchResult of files,
+// computed from the parse alone, before any path is resolved or anything
+// staged. It never underestimates: a relative name cleaned as Resolve
+// cleans it (backslashes as separators, path.Clean) is exactly the
+// rel_path the patch reports, since a path that resolves to anything else
+// is refused, and an absolute name only gets shorter once its root prefix
+// is removed. Sha256After always has the same length.
+func patchResultEstimate(files []filePatch) int {
+	clean := func(n string) string {
+		c := path.Clean(strings.ReplaceAll(n, `\`, "/"))
+		if c == "." {
+			return ""
+		}
+		return c
+	}
+	size := patchResultBase()
+	for _, fp := range files {
+		e := execproto.PatchFile{Op: fp.op, Hunks: len(fp.hunks)}
+		switch fp.op {
+		case execproto.PatchDelete:
+			e.RelPath = clean(fp.from)
+		case execproto.PatchRename:
+			e.RelPath, e.FromRelPath = clean(fp.to), clean(fp.from)
+		default:
+			e.RelPath = clean(fp.to)
+		}
+		if fp.op != execproto.PatchDelete {
+			e.Sha256After = "sha256:" + strings.Repeat("0", 64)
+		}
+		b, _ := json.Marshal(e)
+		size += len(b) + 1
+	}
+	return size
+}
+
+// patchResultBase is the encoded size of a PatchResult with no files,
+// with the longer of the two applied values: what every entry is added to.
+func patchResultBase() int {
+	b, _ := json.Marshal(execproto.PatchResult{Applied: false, Files: []execproto.PatchFile{}})
+	return len(b)
+}
+
 // stager holds one patch's staging directory: a fresh directory at the
 // worktree root, open for the whole call, holding the staged results
 // ("t<i>") and the originals replaced or removed by the commit ("b<i>").
 // It is the one fd the patch keeps, whatever the number of files.
+//
+// Its name starts with tempPrefix. Normally cleanup removes it; it stays
+// when an undo step failed (keep), because it then holds the only copy of
+// the originals, and when the executor dies mid-patch. Either way the
+// executor removes it at its next start (Tree.SweepTemps).
 type stager struct {
 	t         *Tree
 	idx       int
@@ -1010,6 +1137,7 @@ type stager struct {
 	fd        int
 	made      [][]string // parent directories created for the results
 	committed bool
+	keep      bool
 }
 
 func (t *Tree) newStager(idx int) (*stager, error) {
@@ -1042,8 +1170,13 @@ func (s *stager) stage(i int, it patchItem) error {
 }
 
 // cleanup empties and removes the staging directory and, unless the patch
-// was committed, the directories made for it.
+// was committed, the directories made for it. A kept staging directory
+// (an undo failed) and the tree around it are left as they are.
 func (s *stager) cleanup() {
+	if s.keep {
+		_ = unix.Close(s.fd)
+		return
+	}
 	if names, _, err := readNames(s.fd); err == nil {
 		for _, n := range names {
 			_ = unix.Unlinkat(s.fd, n, 0)
@@ -1089,8 +1222,11 @@ func (s *stager) commit(items []patchItem) error {
 		if err != nil {
 			for j := len(undo) - 1; j >= 0; j-- {
 				if undo[j]() != nil {
-					err = ioError("the patch failed and could not be rolled back completely")
+					s.keep = true
 				}
+			}
+			if s.keep {
+				return s.keptError()
 			}
 			return err
 		}
@@ -1098,6 +1234,16 @@ func (s *stager) commit(items []patchItem) error {
 	}
 	s.committed = true
 	return nil
+}
+
+// keptError is the io_error of a patch whose rollback failed: the tree is
+// partly patched, and the staging directory, which holds the originals
+// ("b<i>"), is kept and named in rel_path by its own temporary name, which
+// carries nothing from the patch or the tree.
+func (s *stager) keptError() error {
+	e := ioError("the patch failed and could not be rolled back completely; the originals are kept in the staging directory")
+	e.(*execproto.Error).Data.RelPath = s.name
+	return e
 }
 
 // commitOne applies one staged result and returns how to undo it.
@@ -1177,7 +1323,9 @@ func (s *stager) commitOne(i int, it patchItem) (func() error, error) {
 			return nil, err
 		}
 		if err := withParent(it.from, func(dir int, base string) error { return takeOriginal(dir, base, false) }); err != nil {
-			_ = unlink(it.to)()
+			if unlink(it.to)() != nil {
+				s.keep = true // half a rename left: commit reports it like a failed undo
+			}
 			return nil, err
 		}
 		return func() error {
@@ -1188,4 +1336,63 @@ func (s *stager) commitOne(i int, it patchItem) (func() error, error) {
 			return err
 		}, nil
 	}
+}
+
+// SweepTemps removes what an interrupted exec.fs.patch or exec.fs.write
+// left at the worktree root: entries named .warden-tmp-* that the
+// executor's user owns. A staging directory is emptied of its files and
+// removed; anything else (a file, or a link, which is removed as a link
+// and never followed) is unlinked. Nothing is followed and nothing outside
+// the root's own entries is touched; a directory with a subdirectory in it
+// is left. It returns how many entries it removed.
+//
+// cmd/warden-exec calls it at start, before serving (M2-10): a staging
+// directory kept after a failed rollback, or left by a crash, would
+// otherwise stay in the worktree, where git add -A would pick it up.
+// Temporary files of writes in subdirectories are not swept: a walk of the
+// whole tree at every start is not worth it for empty or inert files.
+func (t *Tree) SweepTemps() (int, error) {
+	idx, ok := t.root(execproto.RootWorktree)
+	if !ok || t.roots[idx].Mode != execproto.RootRW {
+		return 0, nil
+	}
+	root := t.roots[idx].fd
+	names, _, err := readNames(root)
+	if err != nil {
+		return 0, err
+	}
+	uid := os.Geteuid()
+	n := 0
+	for _, name := range names {
+		if !strings.HasPrefix(name, tempPrefix) {
+			continue
+		}
+		var st unix.Stat_t
+		if unix.Fstatat(root, name, &st, unix.AT_SYMLINK_NOFOLLOW) != nil || int(st.Uid) != uid {
+			continue
+		}
+		if st.Mode&unix.S_IFMT == unix.S_IFDIR {
+			dir, err := openDir(root, name)
+			if err != nil {
+				continue
+			}
+			if inner, _, err := readNames(dir); err == nil {
+				for _, e := range inner {
+					var est unix.Stat_t
+					if unix.Fstatat(dir, e, &est, unix.AT_SYMLINK_NOFOLLOW) == nil && est.Mode&unix.S_IFMT != unix.S_IFDIR {
+						_ = unix.Unlinkat(dir, e, 0)
+					}
+				}
+			}
+			_ = unix.Close(dir)
+			if unix.Unlinkat(root, name, unix.AT_REMOVEDIR) == nil {
+				n++
+			}
+			continue
+		}
+		if unix.Unlinkat(root, name, 0) == nil {
+			n++
+		}
+	}
+	return n, nil
 }
