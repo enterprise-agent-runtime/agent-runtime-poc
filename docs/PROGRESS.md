@@ -38,7 +38,11 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 - [ ] **WH-1** Token file created with its owner-only DACL already set (CreateFile security attributes), random O_EXCL temp name; protected DACLs on the home and run directories
 - [ ] **WH-2** Owner-only check also requires owner == token user (CWE-283); production callers in wardend after writing the token and in the client before sending it
-- [ ] **WH-3** Client verifies the named pipe's server is the current user before sending the token (pipe squatting); Windows test that the pipe DACL is owner-only
+- [x] **WH-3** The client verifies that the endpoint's server is the current user before sending the token, on Windows and on Unix (D-049).
+  - **Daemon side:** the socket directory must be owned by the uid; the macOS peer check is on.
+  - **New test:** the Windows pipe DACL is owner-only, which was a missing M1 transport test.
+  - **Commits:** `963cc2b`, `f04a5d0`, `0365c39`.
+  - **Review:** a combined code and security review approved it after a real cross-user squat in WSL2. The squatter got 0 bytes, and the daemon refused the squatted directory.
 
 **Group B** (executor; no Docker):
 
