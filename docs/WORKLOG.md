@@ -22,6 +22,26 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-013 · 2026-10-16 · M2 preflight, plan and owner decisions
+
+- **Asked:** Owner: "Keep working at the next step" (the next step was `/preflight M2`, then `/plan M2`).
+- **Task:** Check the machine for M2, plan M2, and get the owner's decisions on the plan's questions.
+- **How:**
+  - **Preflight:** read-only checks on Windows and WSL2. The L1 prerequisites are ok. Docker is not running anywhere, WSL2 has only cgroup v1, and D: has 30 GB free. It also found that `warden daemon stop` returns before the daemon releases its files on Windows (now M2-1).
+  - **Plan:** the planner produced M2-0 to M2-23 plus WH-1..3, recorded in PROGRESS.md.
+  - **Decisions:** the owner answered four questions.
+- **Rules kept:** No code was written before the owner agreed (`/plan`, CLAUDE.md §15). The two contract questions were asked as §10 requires: a new dependency, and a change to §6.
+- **Rules changed or bent:**
+  - **CLAUDE.md §4** allows `golang.org/x/sys` (D-041). Why: `openat2`, seccomp and the Windows security APIs written as hand-made raw syscalls would be riskier security code, and the module is already in go.sum.
+  - **CLAUDE.md §6** allows OS build tags in `internal/exec` and `cmd/warden-exec` (C-61). Why: the executor has per-OS semantics, and the rule's intent (OS differences in a few known places) still holds.
+  - **WRD-16 §10.7's online egress row** becomes opt-in (C-62). Why: CLAUDE.md §8.1 L3 keeps integration tests off the network, and CLAUDE.md wins under §2.
+  - **Approved:** owner, 2026-10-16, for all three.
+  - **Not asked:** branching per task PR, which follows the planner's recommendation and §11's branch per milestone.
+- **Verified:** Every preflight result came from a command run on the machine (see PROGRESS.md, M2 preflight). The plan was checked: each task names a test, nothing is outside WRD-16 §2.1, and the "ask" items were raised as questions.
+- **Left:**
+  - Docker Desktop must be started for group E.
+  - Installing the WSL escape-check tools needs the owner's OK.
+
 ## W-012 · 2026-10-16 · The work log
 
 - **Asked:** Owner: "for everything you do, we need a log that says what was the task about, how was implemented, if we kept the rules from the docs or we changed them, why did we change the rules, and so on."
