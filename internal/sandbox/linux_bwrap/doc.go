@@ -14,9 +14,15 @@
 // the read-only root. Worktree masks (INV-I, mount layer) are rendered from
 // the Spec as /dev/null binds and read-only tmpfs mounts.
 //
-// Launching the argv, rlimits, cgroups and orphan recovery are M2-15; the
-// L2 Docker seccomp.json is M2-18/M2-21.
+// The launch (A06 §13.2) runs only through Plan.Start in command.go:
+// bwrap directly with the rlimit fallback, or under the systemd-run --user
+// --scope wrapper when cgroup v2 delegation is available (A06 §11.6),
+// where systemd-run gets only the bus variables and bwrap runs under
+// "env -i". Manager (Linux) implements sandbox.Manager: create, destroy
+// (§13.3), the executor-exit watchdog (§13.4) and orphan recovery of its
+// own home (§13.5). The L2 Docker seccomp.json is M2-18/M2-21.
 //
-// The argv builder is pure and builds on every OS; only the memfd hand-over,
-// the wait-status mapping and the default host probes are Linux-only.
+// The argv builder, the wrapper and the lifecycle helpers are pure and
+// build on every OS; the memfd hand-over, the wait-status mapping, the
+// default host probes and the Manager are Linux-only.
 package linux_bwrap

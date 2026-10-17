@@ -190,7 +190,7 @@ func build(in buildInput) (*Plan, error) {
 	}
 	a.add("--")
 	a.add(executorCommand(s, x)...)
-	return &Plan{Argv: a, Fds: fdPlan(), Missing: in.Features.Missing()}, nil
+	return &Plan{Argv: a, Fds: fdPlan(), Missing: in.Features.Missing(), SandboxID: s.ID, WardenHome: s.WardenHome}, nil
 }
 
 // mountGroup is one non-mask mount and the masks that follow it.
