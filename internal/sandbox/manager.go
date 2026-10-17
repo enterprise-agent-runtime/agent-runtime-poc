@@ -53,6 +53,10 @@ type Handle struct {
 // exec.hello and sandbox.destroy at the end of teardown (A06 §13.2, §13.3).
 // The interface itself carries no event sink yet, and
 // sandboxtest.FakeSandbox emits no events.
+//
+// The L2 manager (M2-21) calls CheckEngine immediately before it creates
+// any network or container, on every Create, and refuses with its error;
+// doctor's sandbox.l2 check only reports (CWE-636).
 type Manager interface {
 	// Create validates the Spec, builds and launches the sandbox and
 	// returns it ready.

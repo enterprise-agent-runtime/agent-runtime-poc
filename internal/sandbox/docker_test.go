@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -32,18 +33,20 @@ func fakeEngine(t *testing.T, response string) func(context.Context) (net.Conn, 
 // phrase, chosen by whoever answers on the endpoint, into the error and from
 // there into the doctor Detail, raw C1 controls and all and without a length
 // bound. Only the numeric code may survive, at the probe and in the check.
+// (M2-17: the probe is now the gate's fetch, GET /version then GET /info.)
 func TestDockerPing_ErrorKeepsOnlyStatusCode(t *testing.T) {
 	reason := "x" + string(rune(0x9d)) + "0;pwn" + string(rune(0x9c)) + string(rune(0x9b)) + "2J" + strings.Repeat("A", 64<<10)
 	dial := fakeEngine(t, "HTTP/1.1 500 "+reason+"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 
-	_, _, err := dockerPingVia(context.Background(), dial)
-	if err == nil || err.Error() != "engine answered HTTP 500" {
-		t.Fatalf("err = %.200q, want %q", err, "engine answered HTTP 500")
+	_, err := fetchEngineVia(context.Background(), dial)
+	var ae *engineAnswerError
+	if !errors.As(err, &ae) || err.Error() != "engine answered HTTP 500 to GET /version" {
+		t.Fatalf("err = %.200q, want %q", err, "engine answered HTTP 500 to GET /version")
 	}
 
 	for _, level := range []string{"L1", "L2"} {
-		ping := func(ctx context.Context) (string, string, error) { return dockerPingVia(ctx, dial) }
-		c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, ping)
+		fetch := func(ctx context.Context) (EngineFacts, error) { return fetchEngineVia(ctx, dial) }
+		c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, "linux", fetch)
 		if strings.Contains(c.Detail, "pwn") || len(c.Detail) > 200 {
 			t.Errorf("%s: detail carries the reason phrase (%d bytes): %.200q", level, len(c.Detail), c.Detail)
 		}
