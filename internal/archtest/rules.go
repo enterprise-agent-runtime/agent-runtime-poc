@@ -114,10 +114,14 @@ var osDirs = []string{"internal/platform", "internal/sandbox", "internal/secrets
 var execImports = []string{"os/exec", "golang.org/x/sys/execabs", "net/http/cgi", "go/build", "go/importer", "plugin"}
 
 // processStarters are the calls that create a process without os/exec.
+// Execveat and Fexecve are named for x/sys/unix although v0.48 has neither:
+// the executor runs the checked file by descriptor through a raw
+// SYS_EXECVEAT (M2-8), and a typed wrapper added later must be covered
+// the day it appears (syscall has neither).
 var processStarters = map[string]map[string]bool{
 	"os":                       {"StartProcess": true},
 	"syscall":                  {"ForkExec": true, "StartProcess": true, "Exec": true, "CreateProcess": true, "CreateProcessAsUser": true},
-	"golang.org/x/sys/unix":    {"Exec": true, "ForkExec": true},
+	"golang.org/x/sys/unix":    {"Exec": true, "ForkExec": true, "Execveat": true, "Fexecve": true},
 	"golang.org/x/sys/windows": {"CreateProcess": true, "CreateProcessAsUser": true, "ShellExecute": true, "ShellExecuteEx": true},
 }
 

@@ -109,6 +109,8 @@ func TestRules_CatchKnownViolations(t *testing.T) {
 	want := []string{
 		"INV-H internal/sandbox/nocomment/x.go", // os/exec without justification
 		"INV-H internal/store/spawn.go",         // aliased os.StartProcess outside sandbox packages
+		"INV-H internal/store/execveat.go",      // unix.Execveat outside the sandbox packages
+		"INV-H internal/store/execveat.go",      // unix.Fexecve outside the sandbox packages
 		"INV-H internal/store/x_test.go",        // tests are not exempt from INV-H
 		"INV-J internal/api/listen.go",          // net.Listen("tcp", ...)
 		"INV-J internal/api/listen.go",          // http.ListenAndServe
