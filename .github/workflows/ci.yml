@@ -182,6 +182,25 @@ jobs:
             TestSweepTaskSockets_SymlinkedHome
             TestSweepTaskSockets_NoSessions
             TestPeerRefusal_NamesTheReason
+            # M2-8: real processes through the executor's spawn path (the
+            # checked file is what runs, limits, no survivors, output cap).
+            TestSpawn_RunsArgvAndReportsExit
+            TestSpawn_RefusesShellStrings
+            TestSpawn_EnvironmentIsTheAllowlist
+            TestSpawn_SecretEnv
+            TestSpawn_RlimitsApplied
+            TestSpawn_NoInheritedDescriptors
+            TestSpawn_ExecutesTheCheckedFile
+            TestSpawn_CommandCannotRaiseLimits
+            TestWait_SIGSYSIsSeccompKill
+            TestWait_CPULimitIsResource
+            TestWait_DrainBoundEndsTheWait
+            TestNoProcessSurvivesItsCall
+            TestNoProcessSurvives_OrphanAndExecutorGroup
+            TestOutputCap_BothStreams
+            TestIOBeforeWait_RealProcesses
+            TestShutdown_KillsEverything
+            TestHarness_CwdAndRelativeArgv0
             # M2-15: the L1 launch, directly and under the systemd-run scope
             # (the scope ones skip without a user manager; the step above
             # starts one), the manager lifecycle and the orphan sweep.

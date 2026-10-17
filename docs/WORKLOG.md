@@ -22,6 +22,25 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-033 · 2026-10-17 · M2-8: the executor's process methods
+
+- **Asked:** M2 plan task M2-8, the task that wires `IsShellStringResolved` into spawn. Delivered under "merge each task when its review passes".
+- **Task:** exec.proc.spawn, io, wait and signal inside the sandbox: argv only, the environment allowlist, rlimits, the output cap, and no process outliving its call.
+- **How:**
+  - **Spawn and the shim** (D-075): the A06 §6 checks, then `execveat` on the checked file; limits, working directory and descriptors set in the child.
+  - **Process table:** WNOWAIT waits so pids are not reused, the stray sweep, the drain bound, executor-side KILL after TERM.
+  - **Coverage** (D-076): the child-side helpers run in the test process.
+  - **Commits:** `12d4732`, `09af2a5`, `c2a92c4`.
+- **Rules kept:**
+  - INV-H: process-starting code only in `//sandboxed` files of `internal/exec`; the tests start only fixed commands (`/bin/echo`, `/bin/sleep`, `dd`, the test binary in helper mode), never anything agent-requested.
+  - INV-C: `secret_env` never logged, quoted or chunked; R3 imports; injected clock, no wall-clock assertions.
+- **Rules changed or bent:**
+  - **A raw `SYS_EXECVEAT`**: x/sys has no typed wrapper; raw calls were already allowed in `internal/exec`, so no allowlist change. archtest now names `Execveat` and `Fexecve` for when x/sys adds them. CLAUDE.md's INV-H row now lists them too (owner approval 2026-10-17).
+  - **The CPU hard limit is soft + 1 s** (C-78), changing a resolution accepted in round 0, after `-race` showed soft = hard misreporting a runaway; the reviewer accepted it.
+  - **A semantic merge conflict:** M2-7 and M2-8 each declared the same `invalid` helper in package exec; I redid the merge locally (unpushed) with one copy, so no red commit exists.
+- **Verified:** two review rounds, code and security together, with probes for the swap race (worktree, system path, PATH), rlimit raises, group escapes, the output cap, the drain bound and the CPU limit; `make check` green; `-race` in WSL2.
+- **Left:** see the M2-8 entry in PROGRESS, and the owner's choice of a content check against copied shells (M2-8b).
+
 ## W-032 · 2026-10-17 · M2-23: a CI job that proves the Linux sandbox tests run
 
 - **Asked:** M2 plan task M2-23, started once M2-13's bwrap test existed. Delivered under "merge each task when its review passes".
