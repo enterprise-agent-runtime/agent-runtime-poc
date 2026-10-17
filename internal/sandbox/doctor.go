@@ -8,9 +8,13 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"warden.dev/warden/internal/platform"
 )
 
 // Check is one doctor result (A05 types.json doctorCheck).
@@ -30,6 +34,7 @@ func hint(s string) *string { return &s }
 // Options tune the probes.
 type Options struct {
 	DefaultLevel string // L1 | L2 (sandbox.default_level)
+	Home         string // the effective Warden home (platform.Layout.Home)
 }
 
 // MinBwrap is the oldest supported bubblewrap (A06 §11.2; Ubuntu 22.04
@@ -113,4 +118,78 @@ func versionAtLeast(v, min string) bool {
 		}
 	}
 	return true
+}
+
+// ShortNamesFix is the remedy for a Warden home whose volume creates NTFS
+// 8.3 names. The doctor check sandbox.short_names and the L2 spec
+// builder's short_names_enabled refusal (internal/sandbox/oci) give the
+// same text. The order follows the owner's decision of 2026-10-16: move
+// the home first (on the owner's machine to D:), change the volume second.
+const ShortNamesFix = "Put WARDEN_HOME on a volume without 8.3 name creation " +
+	"(the sandbox.short_names check of warden doctor reports it per volume; `fsutil 8dot3name query <drive>:` needs elevation), " +
+	"or have an administrator disable it for this volume with `fsutil 8dot3name set <drive>: 1`, " +
+	"which affects new names only, then remove existing ones with `fsutil 8dot3name strip`."
+
+// shortNamesCheck reports whether the volume holding the Warden home's
+// sessions directory (where every worktree lives; the home itself until
+// sessions/ exists) creates 8.3 short names. With creation on, a sandboxed
+// process can open a masked .env as ENV~1, or rename a directory to give
+// it a new alias, so the L2 spec builder refuses such a worktree
+// (sandbox_unavailable, short_names_enabled). Doctor warns rather than
+// fails: nothing is unsafe until an L2 sandbox is built, and the builder
+// refuses then. The query needs no elevation (platform.HostFS).
+//
+// Whether the case-sensitivity flag can be set is not reported: HostFS
+// reads the flag but cannot tell "unsupported" from "off" without trying
+// to set it, and setting depends on the directory's ACL (full control),
+// which only the attempt reveals.
+func shortNamesCheck(home string, fs platform.HostFS) Check {
+	c := shortNamesVerdict(home, fs)
+	c.Detail = capRunes(c.Detail, maxDoctorText)
+	return c
+}
+
+// maxDoctorText is the doctorCheck detail and fix_hint limit of
+// api/types.json.
+const maxDoctorText = 1000
+
+// capRunes cuts s to at most n characters, ending in "..." when cut.
+func capRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-3]) + "..."
+}
+
+func shortNamesVerdict(home string, fs platform.HostFS) Check {
+	c := Check{ID: "sandbox.short_names", Group: "sandbox", Title: "NTFS 8.3 short names on the Warden home volume"}
+	unknown := func(why string) Check {
+		c.Status = "warn"
+		c.Detail = "whether the volume of the Warden home creates 8.3 short names could not be determined: " + why +
+			"; L2 sandboxes are refused until it can be"
+		c.FixHint = hint("Check that the Warden home exists and is readable, then run warden doctor again. " + ShortNamesFix)
+		return c
+	}
+	if home == "" {
+		return unknown("the Warden home is not known")
+	}
+	dir := home
+	if st, err := os.Stat(filepath.Join(home, "sessions")); err == nil && st.IsDir() {
+		dir = filepath.Join(home, "sessions")
+	}
+	on, err := fs.ShortNameCreation(dir)
+	if err != nil {
+		return unknown(err.Error())
+	}
+	c.Data = map[string]any{"short_names": on, "path": dir}
+	if on {
+		c.Status = "warn"
+		c.Detail = "the volume of " + dir + " creates 8.3 short names (ENV~1 for .env), which would bypass the worktree masks; L2 sandboxes are refused there"
+		c.FixHint = hint(ShortNamesFix)
+		return c
+	}
+	c.Status = "ok"
+	c.Detail = "the volume of " + dir + " does not create 8.3 short names"
+	return c
 }

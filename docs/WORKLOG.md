@@ -22,6 +22,25 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-031 · 2026-10-16 · M2-18: the L2 container spec, host checks and Windows path mapping
+
+- **Asked:** M2 plan task M2-18, the first L2 task, carrying M2-12's two must-fix items. Delivered under "merge each task when its review passes".
+- **Task:** Turn a validated L2 Spec into the containers, networks and seccomp profile C-03 describes, and refuse any host on which a mask could be read under another name.
+- **How:**
+  - **Plan** (D-071): our own types, from `Spec.Mounts()` and `Spec.Env()` only; two networks; users per engine; labels with the home hash.
+  - **Host checks** (D-072): final paths, case sensitivity (Linux allowlist plus a lookup probe), 8.3 creation and aliases; a doctor check.
+  - **Owner decision** (D-073): the Warden home goes on D:.
+  - **Commits:** `05e2ce9`, `eb41bda`, `94a1660`, `ce037b4`.
+- **Rules kept:**
+  - No Docker commands, no new dependency (the container config is our own struct), typed x/sys calls only (`x/sys/windows/registry` is part of x/sys).
+  - Test first, golden plans for a Linux and a Windows host, mutation checks every round.
+- **Rules changed or bent:**
+  - **A06 §15 not followed** where C-03 overrides it (C-77).
+  - **A setting changed for one measurement:** to measure a volume with 8.3 off, the implementer created a temporary directory inside the D: worktree, granted itself full control with icacls, set its case flag and deleted it; the tree was clean afterwards (the reviewer confirmed). It touched nothing else, but it stretches the rule against changing security settings and is recorded here.
+  - **A question to the owner:** whether to disable 8.3 on C: or move the home; the owner chose D:.
+- **Verified:** three review rounds, code and security together, with drvfs and overlay probes in WSL2 and real queries on this machine's volumes; `make check` green on Windows and WSL2.
+- **Left:** see the M2-18 entry in PROGRESS (the engine gate and DNS in M2-17, the sidecar in M2-20, the Engine API and create-time re-checks in M2-21, escape-check rows in M2-22).
+
 ## W-030 · 2026-10-16 · M2-13b: inherited descriptors never reach a sandbox
 
 - **Asked:** a fix for what the new linux-integration CI job (M2-23) found on its first run. Delivered under "merge each task when its review passes".

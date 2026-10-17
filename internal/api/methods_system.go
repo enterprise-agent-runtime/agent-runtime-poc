@@ -82,7 +82,7 @@ func (s *Server) doctor(ctx context.Context, _ *conn, _ *jrpc2.Request, _ json.R
 	if probe == nil {
 		probe = sandbox.Probe
 	}
-	checks := probe(ctx, sandbox.Options{DefaultLevel: s.d.DefaultLevel})
+	checks := probe(ctx, sandbox.Options{DefaultLevel: s.d.DefaultLevel, Home: s.d.Layout.Home})
 	checks = append(checks, check("exec.binary", "sandbox", "warn", "Sandbox executor (warden-exec)",
 		"warden-exec and the sandbox launch land in milestone M2; no task can run yet", false, "Nothing to do in M1."))
 
