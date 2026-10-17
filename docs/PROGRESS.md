@@ -119,6 +119,7 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Low, left:** a toolchain configured as `/nix/var/nix/profiles/...` (the standard multi-user Nix profile) is refused although it resolves into `/nix/store` (apply the store-only rule to the resolved root); mask `/etc/pki/tls/private` (Fedora) like `/etc/ssl/private`; `Plan.Argv` is exported, so a hand-written launcher could bypass `Command` (the `//sandboxed` gate reviews that); a home that does not exist fails closed when toolchains are configured.
   - **Left for M2-16:** escape-check rows for `/proc/1/environ` and the masks.
   - **Later:** `--ro-bind-fd` with O_PATH descriptors on bwrap ≥ 0.9 against the EvalSymlinks-to-bind window (only same-uid host processes can use it); `doctor_linux.go` should use `ParseFeatures` and report missing flags; a doctor line for Arch's `/sbin -> usr/bin` layout, which fails closed today.
+- [x] **M2-13b** Inherited descriptors never reach a sandbox (D-070). Found by the M2-23 CI job on ubuntu-24.04; reproduced in WSL by opening a descriptor without close-on-exec before the launch. Commit `6ae5cc5`; 8 mutants caught. Left for M2-10: `warden-exec` flags every descriptor above its planned ones at start (it cannot import `internal/platform`, A02 R3).
 - [x] **M2-14** seccomp in pure Go (D-061, D-062, C-71).
   - **Pieces:** `internal/sandbox/seccomp`: the A06 §11.5 table as data, the cBPF assembler and `Render(arch)`, `DockerProfile()`, `Version = "v1"`.
   - **Commits:** `1d0e81b`, `dd19245`, `961e265`.
@@ -132,12 +133,24 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 **Group E** (L2 sandbox):
 
 - [ ] **M2-17** [Docker] engine gate at creation (CWE-636), plus `sandbox.default_level` normalisation (CWE-178)
-- [ ] **M2-18** container spec and Windows path mapping
+- [x] **M2-18** container spec and Windows path mapping (D-071, D-072, D-073, C-77).
+  - **Pieces:** `internal/sandbox/oci` (`Build`, `Plan`, `MapHostPath`, `CheckImageRef`); `internal/platform` `HostFS` (case sensitivity, 8.3 creation and aliases, final paths) for Windows, Linux and macOS; the Windows doctor check `sandbox.short_names`; `platform.HomeHash`.
+  - **Commits:** `05e2ce9`, `eb41bda`, `94a1660`, `ce037b4`.
+  - **Review:** three rounds. They found host checks that passed unknown file systems (NFS, FUSE) and then overlay and zfs as case-sensitive, the value-3 meaning of `NtfsDisable8dot3NameCreation`, a hint citing a doctor check that did not exist yet, and small sidecar-host and label gaps. Measured on this machine: the case flag needs full control of the directory (not elevation) and does not stop 8.3 aliasing; 8.3 is on for C: and off for D:.
+  - **The two M2-12 must-fix items** (case-insensitive masks, 8.3 aliases) are closed for L2 by refusing such hosts; the mitigation that sets the case flag on `S/worktree` before checkout is M2-21's.
+  - **Left for M2-17:** the engine gate (rootless or Desktop, refuse a rootful native engine) and the engine version: refuse Moby older than 26.0.0, 25.0.5, 23.0.11 (CVE-2024-29018, the embedded resolver forwarding external names from internal networks); check Podman's aardvark-dns.
+  - **Left for M2-20:** the sidecar's command, port, resources and limits (C-03 asks for pids, memory and cpu limits on it too).
+  - **Left for M2-21:** map the Plan to the Engine API with `HostConfig.Mounts` (never `Binds` strings: mask names may contain `:` or `,`); NetworkMode internal at create and inspect `Internal=true`; seccomp bytes inline with their sha256; write the artefact owner-only; re-run the final-path and worktree checks and re-verify the engine immediately before create; resolve host paths to their long form before the Spec; set the case flag on the empty `S/worktree` before checkout; ExecBin must be the static Linux ELF; verify Docker Desktop's WSL2 backend reads the engine `/dev/null` and behaves as drvfs did.
+  - **Left for M2-22 (escape check):** `.ENV`, `ENV~1`, rename a mask ancestor then read through `<NAME>~1`, `.env.`, `.env `, `.env::$DATA`; resolving an external name from the sandbox fails; the bridge gateway, `host.docker.internal` and 192.168.65.x are unreachable; runc's libseccomp version and bad-arch action.
+  - **Left for M2-10:** with no `--init`, `warden-exec` is PID 1 and must reap zombies.
 - [ ] **M2-19** images and `make images`
 - [ ] **M2-20** [Docker] proxy sidecar
 - [ ] **M2-21** [Docker] launch over container stdio, orphan cleanup
 - [ ] **M2-22** [Docker] escape-check L2 in WSL2 and on Windows
-- [ ] **M2-23** CI Linux integration job, pinned to ubuntu-24.04
+- [x] **M2-23** CI Linux integration job, pinned to ubuntu-24.04 (D-074).
+  - **Commits:** `8ae66bb`, `56c540c`, `ca809f3`, `b9455ed`.
+  - **Found on its first run:** descriptors inherited without close-on-exec inside the sandbox (fixed in M2-13b, D-070) and the checker script committed as 100644. Green since.
+  - **Keep in mind:** the required-test list is kept by hand; a renamed test fails the job loudly, but a new Linux integration test is not required until it is added to the list. `ci.yml` triggers `push` only on `main`, so the milestone branch gets CI through pull requests.
 - [~] **INV-I** `TestDenyListThreeLayers` covers the exec and mount layers in M2; the policy layer arrives in M3
 
 ## Milestone M1 — skeleton, platform layer, store, providers, daemon, CLI, Copilot spike (open items carried)

@@ -50,6 +50,11 @@ func run() int {
 	tokenStdin := flag.Bool("token-stdin", false, "read the API token from stdin (desktop sidecar start)")
 	flag.Bool("foreground", true, "run in the foreground (the default; warden daemon start detaches)")
 	flag.Parse()
+	// Nothing wardend inherited reaches a child it starts (CWE-403).
+	if err := platform.CloseOnExecInherited(); err != nil {
+		fmt.Fprintln(os.Stderr, "wardend:", err)
+		return 1
+	}
 	for _, k := range scrubbed {
 		os.Unsetenv(k)
 	}

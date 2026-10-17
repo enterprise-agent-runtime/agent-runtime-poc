@@ -544,3 +544,20 @@ func TestProviderAdd_DiscoversLocalModels(t *testing.T) {
 		t.Fatalf("models = %v", pv["models"])
 	}
 }
+
+// TestDoctor_PassesTheHome: the sandbox.short_names check (M2-18) reports
+// the volume of the effective Warden home, so system.doctor must hand the
+// probe that home, not leave it to guess.
+func TestDoctor_PassesTheHome(t *testing.T) {
+	var got sandbox.Options
+	e := newEnv(t, func(d *Deps) {
+		d.SandboxProbe = func(_ context.Context, o sandbox.Options) []sandbox.Check {
+			got = o
+			return []sandbox.Check{{ID: "sandbox.backend", Group: "sandbox", Status: "ok", Title: "fake", Detail: "fake"}}
+		}
+	})
+	call(t, e.dial(nil), "system.doctor", nil)
+	if got.Home != e.l.Home || got.Home == "" {
+		t.Fatalf("probe got home %q, want %q", got.Home, e.l.Home)
+	}
+}

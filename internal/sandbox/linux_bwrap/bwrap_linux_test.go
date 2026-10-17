@@ -160,7 +160,9 @@ func realSpec(t *testing.T, exe string) *sandbox.Spec {
 // executor path sees exactly the A06 §2/§11.1 view:
 //
 //   - descriptors 0-4 only: fd 3 (RPC) and 4 (stdio) passed through, the
-//     seccomp program (5) and the info pipe (6) consumed by bwrap;
+//     seccomp program (5) and the info pipe (6) consumed by bwrap; no
+//     descriptor the test process inherited or leaked without close-on-exec
+//     (M2-13b, CWE-403);
 //   - /proc/1/environ empty: bwrap's PID 1 keeps the environment bwrap was
 //     started with, so a daemon variable there is readable by the sandbox
 //     (M2-13 review, INV-C); the parent's environment here carries a fake
@@ -231,6 +233,18 @@ func TestBwrap_RunsTheBuiltArgv(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer infoR.Close()
+			// A descriptor this process inherited without close-on-exec, as the
+			// GitHub runner hands the test process (CI saw fds 142 and 145
+			// inside) and as a shell or service manager can hand wardend. Here
+			// it is the worktree's .env, opened and flagged inheritable.
+			leak, err := os.Open(filepath.Join(s.Worktree, ".env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer leak.Close()
+			if _, err := unix.FcntlInt(leak.Fd(), unix.F_SETFD, 0); err != nil {
+				t.Fatal(err)
+			}
 			cmd, err := plan.Command(ctx, bwrap, rpc, null, prog, infoW)
 			if err != nil {
 				t.Fatal(err)
