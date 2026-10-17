@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -98,4 +99,36 @@ func parseStat(pid int, s string) (procInfo, bool) {
 // call (Linux 5.11+).
 func closeRangeCloexec() error {
 	return unix.CloseRange(3, ^uint(0), unix.CLOSE_RANGE_CLOEXEC)
+}
+
+// execByFD is true: Linux has execveat (3.19+), so the shim executes the
+// checked descriptor.
+const execByFD = true
+
+// execFD is execveat(fd, "", argv, envv, AT_EMPTY_PATH): it executes the
+// file open on fd, whatever its name now names (CWE-367). x/sys v0.48 has
+// no typed Execveat, so this is the raw system call, with argv and envv
+// built by syscall.SlicePtrFromStrings exactly as syscall.Exec does.
+func execFD(fd int, argv, envv []string) error {
+	argvp, err := syscall.SlicePtrFromStrings(argv)
+	if err != nil {
+		return err
+	}
+	envp, err := syscall.SlicePtrFromStrings(envv)
+	if err != nil {
+		return err
+	}
+	empty, err := unix.BytePtrFromString("")
+	if err != nil {
+		return err
+	}
+	_, _, e := unix.Syscall6(unix.SYS_EXECVEAT, uintptr(fd), uintptr(unsafe.Pointer(empty)),
+		uintptr(unsafe.Pointer(&argvp[0])), uintptr(unsafe.Pointer(&envp[0])), unix.AT_EMPTY_PATH, 0)
+	return e
+}
+
+// fdPath is the path the kernel has for the file open on f: the file the
+// checks must be made on, whatever a later rename does to the name.
+func fdPath(f *os.File) (string, error) {
+	return os.Readlink("/proc/self/fd/" + strconv.Itoa(int(f.Fd())))
 }

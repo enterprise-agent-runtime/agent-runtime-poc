@@ -33,3 +33,15 @@ func listProcs() ([]procInfo, error) { return nil, nil }
 
 // closeRangeCloexec is unavailable on macOS; the shim walks /dev/fd.
 func closeRangeCloexec() error { return errors.ErrUnsupported }
+
+// execByFD is false: macOS has no execveat or fexecve, and executing by
+// path cannot be made safe against a swap between the check and the
+// execve (CWE-367). exec.proc.spawn therefore refuses on macOS until the
+// macOS L1 work (M7) settles how to run a checked file there.
+const execByFD = false
+
+// execFD is unavailable on macOS.
+func execFD(int, []string, []string) error { return errors.ErrUnsupported }
+
+// fdPath is unavailable here (spawn refuses before it is needed).
+func fdPath(*os.File) (string, error) { return "", errors.ErrUnsupported }

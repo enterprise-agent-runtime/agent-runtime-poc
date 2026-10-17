@@ -96,6 +96,20 @@ func runHelper(args []string) int {
 		}
 		_, _ = os.Stdout.Write(chunk[:n])
 		fmt.Print(args[2])
+	case "join-group":
+		// A grandchild that moves into process group args[1] (another
+		// handle's, or the executor's own) and, with args[2] == "hold",
+		// keeps this handle's stdout pipe open.
+		pgid, _ := strconv.Atoi(args[1])
+		c := osexec.Command("/bin/sleep", "30")
+		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: pgid}
+		if args[2] == "hold" {
+			c.Stdout = os.Stdout
+		}
+		if err := c.Start(); err != nil {
+			return 1
+		}
+		fmt.Printf("%d", c.Process.Pid)
 	case "fd-open":
 		n, _ := strconv.Atoi(args[1])
 		if _, err := unix.FcntlInt(uintptr(n), unix.F_GETFD, 0); err != nil {

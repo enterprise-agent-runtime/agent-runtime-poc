@@ -16,7 +16,6 @@ import (
 	"os"
 	osexec "os/exec"
 	"path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -138,17 +137,29 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 	if execproto.IsShellString(sp.Argv) {
 		return execproto.SpawnResult{}, shellString()
 	}
+	if !execByFD {
+		return execproto.SpawnResult{}, execproto.NewError(execproto.ErrIOError, "spawn needs execution by descriptor, which this OS lacks (macOS L1: M7)")
+	}
 	harness := p.cfg.Mode == execproto.ModeHarness
 	if harness && sp.Cwd != "" {
 		return execproto.SpawnResult{}, invalid("in harness mode the cwd is the harness spec's")
 	}
+	if harness && strings.Contains(sp.Argv[0], "/") && !strings.HasPrefix(sp.Argv[0], "/") {
+		// A relative harness argv[0] would name a file in the worktree,
+		// which the agent writes: refused (stricter than resolving it
+		// against the spec cwd).
+		return execproto.SpawnResult{}, invalid("a harness argv[0] is a bare name or an absolute path")
+	}
 	// Step 3, executable resolution, and the shell rule again on the
-	// resolved file: a name that is not a shell can be a link to one.
-	exe, real, err := p.resolveExecutable(sp.Argv[0], sp.Cwd)
+	// resolved file: a name that is not a shell can be a link to one. The
+	// file stays open: the shim executes this descriptor, so what runs is
+	// the file these checks were made on (CWE-367).
+	exe, exeFile, err := p.resolveExecutable(sp.Argv[0], sp.Cwd)
 	if err != nil {
 		return execproto.SpawnResult{}, err
 	}
-	if execproto.IsShellStringResolved(real, sp.Argv) {
+	defer exeFile.Close()
+	if execproto.IsShellStringResolved(exe, sp.Argv) {
 		return execproto.SpawnResult{}, shellString()
 	}
 	// Steps 4 and 5, profile and authorization consistency, mode, and
@@ -187,10 +198,10 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 		}
 	}
 	// §7.1 step 3: the child shim. The command line carries the limits,
-	// the cwd descriptor, the resolved path and argv; the environment
+	// the cwd descriptor (3), the executable's descriptor (4) and argv; the environment
 	// (which may hold the harness secret) travels only as the
 	// environment, never as an argument.
-	args := append([]string{"warden-exec", "child", "--limits", string(lj), "--cwd-fd", "3", "--", exe}, sp.Argv...)
+	args := append([]string{"warden-exec", "child", "--limits", string(lj), "--cwd-fd", "3", "--exec-fd", "4", "--"}, sp.Argv...)
 	cmd := &osexec.Cmd{
 		Path:        p.shim,
 		Args:        args,
@@ -198,7 +209,7 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 		Stdin:       devnull,
 		Stdout:      wr[0],
 		Stderr:      wr[1],
-		ExtraFiles:  []*os.File{dir},
+		ExtraFiles:  []*os.File{dir, exeFile},
 		SysProcAttr: sysProcAttr(),
 	}
 
@@ -294,22 +305,27 @@ func notExecutable() error {
 	return execproto.NewError(execproto.ErrInvalidArgument, "argv[0] is not an executable regular file")
 }
 
-// resolveExecutable is A06 §6 step 3. It returns the path the shim
-// executes and the real path (all symlinks followed) for the shell
-// re-check.
+// resolveExecutable is A06 §6 step 3. It returns the executable's real
+// path (no symlink left in it), on which the shell re-check is made and
+// which SpawnResult reports, and the file itself, open: the shim executes
+// that descriptor, so the file that runs is the file every check was made
+// on, whatever a concurrent rename or symlink swap does to the name
+// between the check and the execve (CWE-367; CF-19). The caller closes it.
 //
 //   - argv[0] with a "/" that is relative, or absolute under the worktree,
 //     is resolved under the worktree with §5.1 (Tree.Resolve: no escape,
-//     the deny-list applies), relative to cwd as execve would.
+//     the deny-list applies), relative to cwd as execve would, and opened
+//     with OpenCanonical, which follows no link.
 //   - Without a "/", it is looked up in the child's PATH (§8), skipping
 //     relative entries and any entry under the worktree or the private
 //     gitdir, so a repository cannot shadow npm or git.
 //   - Anything else is a system or toolchain file: inside the sandbox
-//     those are the only other files there are. A file that resolves into
-//     the worktree is resolved again as a worktree path; one under the git
-//     root is refused (A06 §6 step 3 lists system, toolchain, worktree,
-//     scratch and cache, not git).
-func (p *Procs) resolveExecutable(argv0, cwd string) (string, string, error) {
+//     those are the only other files there are. It is opened first, and
+//     the checks are made on the path the kernel reports for the open
+//     file: one that turns out to be in the worktree is resolved again as
+//     a worktree path; one under the git root is refused (A06 §6 step 3
+//     lists system, toolchain, worktree, scratch and cache, not git).
+func (p *Procs) resolveExecutable(argv0, cwd string) (string, *os.File, error) {
 	work, hasWork := p.rootPath(execproto.RootWorktree)
 	if strings.Contains(argv0, "/") {
 		switch {
@@ -335,65 +351,77 @@ func (p *Procs) resolveExecutable(argv0, cwd string) (string, string, error) {
 			return p.systemExecutable(cand)
 		}
 	}
-	return "", "", execproto.NewError(execproto.ErrNotFound, "argv[0] not found in PATH")
+	return "", nil, execproto.NewError(execproto.ErrNotFound, "argv[0] not found in PATH")
 }
 
-func (p *Procs) worktreeExecutable(input string) (string, string, error) {
+// checkExecutable requires an open file to be a regular file with an
+// execute bit.
+func checkExecutable(f *os.File) error {
+	fi, err := f.Stat()
+	switch {
+	case err != nil:
+		return execproto.NewError(execproto.ErrIOError, "cannot stat argv[0]")
+	case !fi.Mode().IsRegular():
+		return execproto.NewError(execproto.ErrNotRegular, "argv[0] is not a regular file")
+	case fi.Mode().Perm()&0o111 == 0:
+		return notExecutable()
+	}
+	return nil
+}
+
+func (p *Procs) worktreeExecutable(input string) (string, *os.File, error) {
 	r, err := p.cfg.Tree.Resolve(execproto.MethodSpawn, execproto.RootWorktree, input)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 	f, err := p.cfg.Tree.OpenCanonical(r, unix.O_RDONLY|unix.O_NONBLOCK)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return "", "", execproto.NewError(execproto.ErrIOError, "cannot stat argv[0]")
+	if err := checkExecutable(f); err != nil {
+		_ = f.Close()
+		return "", nil, err
 	}
-	if !fi.Mode().IsRegular() {
-		return "", "", execproto.NewError(execproto.ErrNotRegular, "argv[0] is not a regular file")
-	}
-	if fi.Mode().Perm()&0o111 == 0 {
-		return "", "", notExecutable()
-	}
-	return r.Canonical, r.Canonical, nil
+	return r.Canonical, f, nil
 }
 
-func (p *Procs) systemExecutable(name string) (string, string, error) {
-	real, err := filepath.EvalSymlinks(name)
+func (p *Procs) systemExecutable(name string) (string, *os.File, error) {
+	fd, err := unix.Open(name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return "", "", execproto.NewError(execproto.ErrNotFound, "argv[0] does not exist")
+		return "", nil, execproto.NewError(execproto.ErrNotFound, "argv[0] does not exist")
+	}
+	f := os.NewFile(uintptr(fd), name)
+	real, err := fdPath(f)
+	if err != nil {
+		_ = f.Close()
+		return "", nil, execproto.NewError(execproto.ErrIOError, "cannot tell which file argv[0] is")
 	}
 	if work, ok := p.rootPath(execproto.RootWorktree); ok && under(real, work) {
+		_ = f.Close()
 		return p.worktreeExecutable(real)
 	}
 	if g, ok := p.rootPath(execproto.RootGit); ok && under(real, g) {
-		return "", "", execproto.NewError(execproto.ErrOutsideRoots, "argv[0] lies under the git root")
+		_ = f.Close()
+		return "", nil, execproto.NewError(execproto.ErrOutsideRoots, "argv[0] lies under the git root")
 	}
-	fi, err := os.Stat(real)
-	if err != nil {
-		return "", "", execproto.NewError(execproto.ErrNotFound, "argv[0] does not exist")
+	if err := checkExecutable(f); err != nil {
+		_ = f.Close()
+		return "", nil, err
 	}
-	if !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
-		return "", "", notExecutable()
-	}
-	return name, real, nil
+	return real, f, nil
 }
 
 // openCwd is A06 §6 step 6: the cwd is resolved with §5.1 under the
 // worktree, must be a directory and not deny-listed, and is opened, so
 // the shim changes into exactly the directory that was checked (fchdir),
 // not whatever the path names later. In harness mode the cwd is the spec's
-// (a launch file the daemon wrote), or the worktree root.
+// (a launch file the daemon wrote), or the worktree root. The spec's path
+// is opened one component at a time without following a link
+// (openDirNoFollow), as the tool-mode cwd is resolved without one: a link a
+// sandbox process planted on the way cannot move the engine elsewhere.
 func (p *Procs) openCwd(cwd string) (*os.File, error) {
 	if p.cfg.Mode == execproto.ModeHarness && p.cfg.Harness.Cwd != "" {
-		fd, err := unix.Open(p.cfg.Harness.Cwd, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-		if err != nil {
-			return nil, execproto.NewError(execproto.ErrNotFound, "harness cwd is not a directory")
-		}
-		return os.NewFile(uintptr(fd), p.cfg.Harness.Cwd), nil
+		return openDirNoFollow(p.cfg.Harness.Cwd)
 	}
 	if cwd == "" {
 		cwd = "."
@@ -829,4 +857,29 @@ func validHandle(h string) bool {
 
 func unknownHandle() error {
 	return execproto.NewError(execproto.ErrInvalidState, "unknown handle")
+}
+
+// openDirNoFollow opens an absolute, clean directory path from "/", one
+// component at a time with O_DIRECTORY | O_NOFOLLOW, so no symlink on the
+// way is followed.
+func openDirNoFollow(p string) (*os.File, error) {
+	refuse := func() (*os.File, error) {
+		return nil, execproto.NewError(execproto.ErrNotFound, "harness cwd is not a directory reachable without a symlink")
+	}
+	dir, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return refuse()
+	}
+	for _, c := range strings.Split(strings.Trim(p, "/"), "/") {
+		if c == "" {
+			continue
+		}
+		next, err := unix.Openat(dir, c, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(dir)
+		if err != nil {
+			return refuse()
+		}
+		dir = next
+	}
+	return os.NewFile(uintptr(dir), p), nil
 }

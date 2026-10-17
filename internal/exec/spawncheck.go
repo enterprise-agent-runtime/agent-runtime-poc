@@ -54,7 +54,9 @@ type HarnessSpec struct {
 // may not replace an allowlisted variable (a PATH, HOME or HTTPS_PROXY of
 // the spec's choosing would undo the sandbox's), and the secret key may be
 // neither an allowlisted key nor a spec variable, so the one secret cannot
-// be smuggled into PATH or shadow a spec value.
+// be smuggled into PATH or shadow a spec value. And argv[0] (also of each
+// alternative) is a bare name or an absolute path: a relative one would
+// name a file in the worktree, which the agent writes.
 //
 // A06 §3.3 also says spec env values are scanned with the A15 patterns;
 // execproto has no A15 pattern set yet, so that scan is not done here
@@ -73,7 +75,7 @@ func ParseHarnessSpec(data []byte) (*HarnessSpec, error) {
 	case h.RunMode != "split" && h.RunMode != "colocated":
 		return bad("unknown run_mode")
 	case !validSpecArgv(h.Argv):
-		return bad("argv must have 1 to 64 elements of at most 4096 bytes, no NUL")
+		return bad("argv must have 1 to 64 elements of at most 4096 bytes, no NUL, and argv[0] a bare name or an absolute path")
 	case len(h.ArgvAlternatives) > 2:
 		return bad("at most 2 argv_alternatives")
 	case h.Cwd != "" && (!strings.HasPrefix(h.Cwd, "/") || path.Clean(h.Cwd) != h.Cwd || strings.IndexByte(h.Cwd, 0) >= 0):
@@ -108,7 +110,7 @@ func ParseHarnessSpec(data []byte) (*HarnessSpec, error) {
 }
 
 func validSpecArgv(a []string) bool {
-	if len(a) < 1 || len(a) > 64 || a[0] == "" {
+	if len(a) < 1 || len(a) > 64 || a[0] == "" || (strings.Contains(a[0], "/") && !strings.HasPrefix(a[0], "/")) {
 		return false
 	}
 	for _, s := range a {

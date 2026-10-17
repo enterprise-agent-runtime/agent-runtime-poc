@@ -188,6 +188,8 @@ func TestParseHarnessSpec(t *testing.T) {
 		"two secret keys":    `{"version":1,"harness_id":"copilot","run_mode":"split","argv":["a"],"secret_env_keys":["A","B"]}`,
 		"three alternatives": `{"version":1,"harness_id":"copilot","run_mode":"split","argv":["a"],"argv_alternatives":[["b"],["c"],["d"]]}`,
 		"relative cwd":       `{"version":1,"harness_id":"copilot","run_mode":"split","argv":["a"],"cwd":"work"}`,
+		"relative argv[0]":   `{"version":1,"harness_id":"copilot","run_mode":"split","argv":["./engine"]}`,
+		"relative alt argv":  `{"version":1,"harness_id":"copilot","run_mode":"split","argv":["a"],"argv_alternatives":[["bin/engine"]]}`,
 		"missing argv":       `{"version":1,"harness_id":"copilot","run_mode":"split"}`,
 	}
 	for name, in := range bad {

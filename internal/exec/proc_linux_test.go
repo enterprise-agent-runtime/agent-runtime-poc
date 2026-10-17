@@ -432,7 +432,8 @@ func TestSpawn_SecretEnv(t *testing.T) {
 
 // TestSpawn_RlimitsApplied guards A06 §7.3 through the child shim: every
 // --child-limits entry is the child's soft and hard limit, and RLIMIT_CPU
-// is the smaller of the launch value and 4 × the call timeout.
+// is the smaller of the launch value and 4 × the call timeout, with a hard
+// limit one second above it (SIGXCPU at the limit, then SIGKILL).
 func TestSpawn_RlimitsApplied(t *testing.T) {
 	limits, err := exec.ParseChildLimits("cpu=600,fsize=123456789,nofile=200,core=0,data=3221225472,nproc=4000")
 	if err != nil {
@@ -444,7 +445,7 @@ func TestSpawn_RlimitsApplied(t *testing.T) {
 	h := r.mustSpawn(p)
 	r.wait(h.Handle)
 	got := r.output(h.Handle)[execproto.StreamStdout]
-	for _, want := range []string{"cpu=120/120\n", "fsize=123456789/123456789\n", "nofile=200/200\n", "core=0/0\n", "data=3221225472/3221225472\n", "nproc=4000/4000\n"} {
+	for _, want := range []string{"cpu=120/121\n", "fsize=123456789/123456789\n", "nofile=200/200\n", "core=0/0\n", "data=3221225472/3221225472\n", "nproc=4000/4000\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("child limits:\n%s\nmissing %q", got, want)
 		}
