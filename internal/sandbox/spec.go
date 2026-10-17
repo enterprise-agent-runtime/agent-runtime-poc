@@ -70,10 +70,16 @@ const (
 )
 
 // reservedTargets are sandbox paths a toolchain mount may neither equal,
-// contain nor lie under: the task roots, the Warden files, and what the
-// backend itself creates (/tmp, /proc, /dev, generated /etc files).
+// contain nor lie under: the task roots, the Warden files, what the backend
+// itself creates (/tmp, /proc, /dev, generated /etc files, /run/warden) and
+// the host trees no sandbox may see: /sys (kernel and cgroup state), the
+// host /run (docker.sock, the user's D-Bus and agent sockets) and its old
+// name /var/run. Toolchain roots are checked twice: as configured, and
+// resolved through their symlinks by ResolveToolchains (M2-13), so a link
+// such as /var/run -> /run is caught by its target too.
 var reservedTargets = []string{
-	TargetWorktree, TargetScratch, TargetCache, TargetGit, "/git-alt", "/warden", "/run", TargetTmp, "/proc", "/dev", "/etc",
+	TargetWorktree, TargetScratch, TargetCache, TargetGit, "/git-alt", "/warden", "/run", "/var/run", TargetTmp,
+	"/proc", "/dev", "/sys", "/etc",
 }
 
 // Limits are the per-sandbox resource limits of A06 §12 (config.yaml
@@ -376,6 +382,12 @@ func (s *Spec) validateToolchains() error {
 				if slashOverlaps(tc.Root, r) {
 					return invalid("toolchain root %q overlaps the sandbox path %q", tc.Root, r)
 				}
+			}
+			// Under /nix only a store path is a toolchain: /nix/var holds
+			// the nix-daemon socket, and the daemon runs fixed-output
+			// builds with network access (M2-13 review).
+			if lr := strings.ToLower(tc.Root); slashWithin(lr, "/nix") && !slashStrictlyWithin(lr, "/nix/store") {
+				return invalid("toolchain root %q is under /nix but not inside /nix/store", tc.Root)
 			}
 			// The user's home: a root inside it is a normal toolchain
 			// (~/.nvm, ~/.local/share/mise), a root that is or contains it
