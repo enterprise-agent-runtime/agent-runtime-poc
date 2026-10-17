@@ -9,7 +9,10 @@
 #   scripts/lint-modes.sh             check this repository's index
 #   scripts/lint-modes.sh <file>      check <file>, saved `git ls-files -s` output
 #
-# Every tracked *.sh, in any directory, must be mode 100755. Fix one with
+# Every tracked *.sh, in any directory except docs/, must be mode 100755.
+# docs/ is a copy of agent-platform-docs (CLAUDE.md §2, §11), which this
+# repository never edits: a mode set here would be undone by the next
+# re-copy, and none of its scripts run in make check or CI. Fix one with
 #   git update-index --chmod=+x <path>
 # Exit 0: all are. 1: some are not, each named. 2: usage error.
 set -euo pipefail
@@ -32,7 +35,7 @@ fi
 # "<mode> <object> <stage>\t<path>"; a quoted path (control characters
 # even with quotePath off) ends in .sh" and is still checked.
 printf '%s\n' "$index" | awk -F '\t' '
-NF >= 2 && $2 ~ /\.sh"?$/ {
+NF >= 2 && $2 ~ /\.sh"?$/ && $2 !~ /^"?docs\// {
 	split($1, meta, " ")
 	if (meta[1] != "100755") {
 		printf "not executable in the index (mode %s): %s\n", meta[1], $2

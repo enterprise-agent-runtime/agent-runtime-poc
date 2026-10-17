@@ -50,9 +50,17 @@ expect 1 two-without-exec-bit-both-named "$dir/bad.txt" 'scripts/test-ci-require
 # Any directory, not only scripts/; and a path with a space.
 {
 	cat "$dir/ok.txt"
-	echo "100644 6f1d48b474aea0f65178e0cded320cdf782be28d 0${T}docs/tools/my build.sh"
+	echo "100644 6f1d48b474aea0f65178e0cded320cdf782be28d 0${T}internal/x/my build.sh"
 } >"$dir/space.txt"
-expect 1 other-directory-and-space "$dir/space.txt" 'docs/tools/my build.sh'
+expect 1 other-directory-and-space "$dir/space.txt" 'internal/x/my build.sh'
+
+# docs/ mirrors agent-platform-docs and is never edited here: its scripts
+# keep the upstream mode (100644) and are not checked.
+{
+	grep -v "docs/tools/build.sh" "$dir/ok.txt"
+	echo "100644 6f1d48b474aea0f65178e0cded320cdf782be28d 0${T}docs/tools/build.sh"
+} >"$dir/mirror.txt"
+expect 0 docs-mirror-not-checked "$dir/mirror.txt"
 
 # A file named like a script only in its middle is not a script.
 grep -v '\.sh$' "$dir/ok.txt" >"$dir/none.txt"
