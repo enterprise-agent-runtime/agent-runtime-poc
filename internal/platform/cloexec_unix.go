@@ -15,13 +15,22 @@ import (
 // (/proc/self/fd or /dev/fd). The listing's own descriptor is among them;
 // it is close-on-exec already and closed by the time it is flagged, which
 // is EBADF and ignored, as is any other descriptor that closes meanwhile.
+//
+// Names only (Readdirnames), never os.ReadDir: on macOS devfs reports no
+// entry type, so ReadDir lstats every entry, and lstat of the listing's
+// own, already closed descriptor fails with EBADF (macOS CI, 2026-10-16).
 func markDirFds(dir string) error {
-	entries, err := os.ReadDir(dir)
+	d, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("platform: list %s: %w", dir, err)
 	}
-	for _, e := range entries {
-		fd, err := strconv.Atoi(e.Name())
+	names, err := d.Readdirnames(-1)
+	d.Close()
+	if err != nil {
+		return fmt.Errorf("platform: list %s: %w", dir, err)
+	}
+	for _, name := range names {
+		fd, err := strconv.Atoi(name)
 		if err != nil || fd < 3 {
 			continue
 		}
