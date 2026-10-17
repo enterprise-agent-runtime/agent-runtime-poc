@@ -119,6 +119,7 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Low, left:** a toolchain configured as `/nix/var/nix/profiles/...` (the standard multi-user Nix profile) is refused although it resolves into `/nix/store` (apply the store-only rule to the resolved root); mask `/etc/pki/tls/private` (Fedora) like `/etc/ssl/private`; `Plan.Argv` is exported, so a hand-written launcher could bypass `Command` (the `//sandboxed` gate reviews that); a home that does not exist fails closed when toolchains are configured.
   - **Left for M2-16:** escape-check rows for `/proc/1/environ` and the masks.
   - **Later:** `--ro-bind-fd` with O_PATH descriptors on bwrap ≥ 0.9 against the EvalSymlinks-to-bind window (only same-uid host processes can use it); `doctor_linux.go` should use `ParseFeatures` and report missing flags; a doctor line for Arch's `/sbin -> usr/bin` layout, which fails closed today.
+- [x] **M2-13b** Inherited descriptors never reach a sandbox (D-070). Found by the M2-23 CI job on ubuntu-24.04; reproduced in WSL by opening a descriptor without close-on-exec before the launch. Commit `6ae5cc5`; 8 mutants caught. Left for M2-10: `warden-exec` flags every descriptor above its planned ones at start (it cannot import `internal/platform`, A02 R3).
 - [x] **M2-14** seccomp in pure Go (D-061, D-062, C-71).
   - **Pieces:** `internal/sandbox/seccomp`: the A06 §11.5 table as data, the cBPF assembler and `Render(arch)`, `DockerProfile()`, `Version = "v1"`.
   - **Commits:** `1d0e81b`, `dd19245`, `961e265`.

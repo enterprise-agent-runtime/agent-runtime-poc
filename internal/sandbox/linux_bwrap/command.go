@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"warden.dev/warden/internal/platform"
 	"warden.dev/warden/internal/sandbox"
 )
 
@@ -34,6 +35,13 @@ func (p *Plan) Command(ctx context.Context, bwrapPath string, rpc, harnessStdio,
 	files, err := p.extraFiles(rpc, harnessStdio, seccompProg, info)
 	if err != nil {
 		return nil, err
+	}
+	// Nothing this process inherited without close-on-exec may follow
+	// bwrap into the sandbox: Go flags only the descriptors it opened, and
+	// bwrap closes none (M2-13b, CWE-403). Done here, right before the Cmd
+	// exists, so no caller can skip it.
+	if err := platform.CloseOnExecInherited(); err != nil {
+		return nil, fmt.Errorf("%w: marking inherited descriptors close-on-exec: %w", sandbox.ErrUnavailable, err)
 	}
 	cmd := exec.CommandContext(ctx, bwrapPath, p.Argv[1:]...)
 	cmd.Env = []string{}
