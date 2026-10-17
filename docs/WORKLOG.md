@@ -22,6 +22,18 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-032 · 2026-10-17 · M2-23: a CI job that proves the Linux sandbox tests run
+
+- **Asked:** M2 plan task M2-23, started once M2-13's bwrap test existed. Delivered under "merge each task when its review passes".
+- **Task:** Make CI run the tests that need a real kernel and bubblewrap, and fail when they skip.
+- **How:** the `linux-integration` job, the required-tests checker over test2json events, and an exec-bit lint for tracked scripts (D-074). Commits `8ae66bb`, `56c540c`, `ca809f3`, `b9455ed`.
+- **Rules kept:** the existing jobs unchanged; the userns restriction lifted on the runner only (the owner's machines follow D-ENV-06); checker and lint tested in `make check`, each shown red first.
+- **Rules changed or bent:**
+  - **CLAUDE.md §3 and §8.1 updated** to name the job (owner approval 2026-10-17).
+  - **I overrode one implementer call:** the new lint flagged `docs/tools/build.sh`, and the implementer set its exec bit; `docs/` mirrors agent-platform-docs, which this repository never edits, so I reverted the mode and excluded `docs/` from the lint instead.
+- **What it found:** on its first real run, inherited descriptors reached the sandbox. The test had passed in WSL through every M2-13 round and both reviews, because the shell there leaks nothing; a different machine was the only way to see it. Also, a machine sleep once made a local `make check` look like a 3-hour test failure; a re-run passed in under two minutes, and the commit guard had refused to commit in between.
+- **Left:** see the M2-23 entry in PROGRESS.
+
 ## W-031 · 2026-10-16 · M2-18: the L2 container spec, host checks and Windows path mapping
 
 - **Asked:** M2 plan task M2-18, the first L2 task, carrying M2-12's two must-fix items. Delivered under "merge each task when its review passes".

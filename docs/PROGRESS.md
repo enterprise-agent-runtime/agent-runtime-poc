@@ -147,7 +147,10 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 - [ ] **M2-20** [Docker] proxy sidecar
 - [ ] **M2-21** [Docker] launch over container stdio, orphan cleanup
 - [ ] **M2-22** [Docker] escape-check L2 in WSL2 and on Windows
-- [ ] **M2-23** CI Linux integration job, pinned to ubuntu-24.04
+- [x] **M2-23** CI Linux integration job, pinned to ubuntu-24.04 (D-074).
+  - **Commits:** `8ae66bb`, `56c540c`, `ca809f3`, `b9455ed`.
+  - **Found on its first run:** descriptors inherited without close-on-exec inside the sandbox (fixed in M2-13b, D-070) and the checker script committed as 100644. Green since.
+  - **Keep in mind:** the required-test list is kept by hand; a renamed test fails the job loudly, but a new Linux integration test is not required until it is added to the list. `ci.yml` triggers `push` only on `main`, so the milestone branch gets CI through pull requests.
 - [~] **INV-I** `TestDenyListThreeLayers` covers the exec and mount layers in M2; the policy layer arrives in M3
 
 ## Milestone M1 — skeleton, platform layer, store, providers, daemon, CLI, Copilot spike (open items carried)

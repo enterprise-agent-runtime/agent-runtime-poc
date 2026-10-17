@@ -52,3 +52,118 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test -race -count=1 ./...
+
+  linux-integration:
+    # The Linux tests that need a real kernel and bubblewrap (bwrap launch,
+    # seccomp in the kernel, openat2 and the mount-crossing walk, the
+    # per-task Unix socket) skip cleanly where bwrap or a kernel feature is
+    # missing, so a green "check" or "race" job does not prove they ran.
+    # This job installs what they need, runs them with -race, and fails if
+    # any test in the required list below skipped or did not run
+    # (CLAUDE.md §3, §8.1, §12; scripts/ci-require-tests.sh). No Docker and
+    # no escape-check here (M2-16).
+    #
+    # Pinned to ubuntu-24.04, not -latest: the AppArmor userns restriction
+    # and the bwrap version are properties of the image, and a silent move to
+    # a new image must not change what this job proves. Actions are pinned
+    # by commit SHA (the tag in the comment); the race detector needs cgo.
+    name: linux integration (bwrap, seccomp, openat2; -race)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: install bubblewrap
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends bubblewrap
+          dpkg-query -W -f='bubblewrap package ${Version}\n' bubblewrap
+          bwrap --version
+          uname -r
+      # Ubuntu 24.04 lets AppArmor deny unprivileged user namespaces
+      # (kernel.apparmor_restrict_unprivileged_userns=1), and bwrap needs
+      # one. Lifting it host-wide is acceptable only because this runner is a
+      # throwaway VM. It configures nothing else: the owner's machines are set
+      # up per docs/DECISIONS-poc.md D-ENV-06 (WSL2 has no such restriction),
+      # and warden doctor reports the setting rather than changing it.
+      - name: allow unprivileged user namespaces (this runner only)
+        run: |
+          f=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -e "$f" ]; then
+            echo "before: $(cat "$f")"
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "$f not present on this kernel; nothing to lift"
+          fi
+          bwrap --unshare-all --die-with-parent --ro-bind / / true
+          echo "bwrap --unshare-all works"
+      # -json implies -v; the JSON goes to go-test.json for the check below
+      # and its Output text to the log (jq ships with the runner image).
+      - name: go test -race (Linux integration packages)
+        shell: bash
+        run: |
+          go test -race -count=1 -json ./internal/exec ./internal/platform ./internal/sandbox/... \
+            | tee go-test.json | jq -j 'select(.Output) | .Output'
+      # Runs after a red test step too, so the log says which required tests
+      # did not run and pass.
+      - name: required tests ran and did not skip
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          required=(
+            # M2-13: the built argv under the real bwrap (skips without bwrap).
+            TestBwrap_RunsTheBuiltArgv
+            # M2-14: the rendered seccomp program in the kernel, and its memfd.
+            TestSeccompKernel_EnforcesErrnoRows
+            TestSeccompKernel_KillRows
+            TestSeccompFile_HoldsTheSealedProgram
+            # M2-6: OpenCanonical. The openat2 runs skip on kernels without
+            # openat2; FallbackNoXdev skips where /dev/shm or /proc is not a
+            # separate mount.
+            TestOpenCanonical_FallbackNoXdev
+            TestOpenCanonical_SymlinkOutsideRefused
+            TestOpenCanonical_SymlinkLoop
+            TestOpenCanonical_SymlinkSwapIsConflict
+            TestOpenCanonical_ForgedResolvedRechecked
+            TestOpenCanonical_Fallback
+            # M2-7: the fs operations; each has an openat2 subtest that skips
+            # without openat2. KindsAndUnreadable skips when run as root.
+            TestFSRead
+            TestFSRead_SpecialFilesNeverBlock
+            TestFSRead_HardLinkRefused
+            TestFSWrite
+            TestFSWrite_DenyListedParentNotCreated
+            TestFSWrite_SwapDuringWrite
+            TestFSWrite_FailureRemovesNewDirectories
+            TestFSStat
+            TestFSList
+            TestFSList_KindsAndUnreadable
+            TestFSSearch
+            TestFSPatch
+            TestFSPatch_AllOrNothing
+            TestFSPatch_RollbackOnCommitFailure
+            TestFSPatch_SymlinkRefused
+            TestFSPatch_SwapDuringCommit
+            # M2-12a: the per-task Unix socket and its sweep.
+            TestTaskSocket_OwnerOnlyFromFirstConnectableMoment
+            TestTaskSocket_CreatesMissingScratch0700
+            TestTaskSocket_RefusesUnsafeDirectories
+            TestTaskSocket_RefusesExistingPath
+            TestTaskSocket_RefusesBadPaths
+            TestTaskSocket_RefusesChangesDuringBind
+            TestTaskSocket_RemoveDeletesOnlyOurSocket
+            TestTaskSocket_CloseKeepsTheFile
+            TestTaskSocket_RefusesPeerOfAnotherUid
+            TestSweepTaskSockets
+            TestSweepTaskSockets_SymlinkedSessionsDir
+            TestSweepTaskSockets_SymlinkedHome
+            TestSweepTaskSockets_NoSessions
+            TestPeerRefusal_NamesTheReason
+          )
+          bash scripts/ci-require-tests.sh go-test.json -- "${required[@]}"
