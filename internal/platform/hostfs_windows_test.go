@@ -237,3 +237,37 @@ func TestIsSystemVolume(t *testing.T) {
 		t.Fatalf("isSystemVolume(%s) = %v, %v; want true", win, got, err)
 	}
 }
+
+// CaseAliased on real NTFS (M2-18 review round 2): without the
+// case-sensitivity flag ".ENV" opens ".env", so the probe must say so;
+// with the flag it must not.
+func TestHostFS_CaseAliased(t *testing.T) {
+	h := NewHostFS()
+	plain := longTempDir(t)
+	env := filepath.Join(plain, ".env")
+	if err := os.WriteFile(env, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := h.CaseAliased(env); err != nil || !got {
+		t.Fatalf("CaseAliased(.env) in a default directory = %v, %v; want true", got, err)
+	}
+	cs := filepath.Join(longTempDir(t), "cs")
+	if err := os.Mkdir(cs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	setCaseSensitive(t, cs)
+	env = filepath.Join(cs, ".env")
+	if err := os.WriteFile(env, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := h.CaseAliased(env); err != nil || got {
+		t.Fatalf("CaseAliased(.env) in a case-sensitive directory = %v, %v; want false", got, err)
+	}
+	// Another file under the other case is not an alias.
+	if err := os.WriteFile(filepath.Join(cs, ".ENV"), []byte("y"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := h.CaseAliased(env); err != nil || got {
+		t.Fatalf("CaseAliased(.env) beside a distinct .ENV = %v, %v; want false", got, err)
+	}
+}

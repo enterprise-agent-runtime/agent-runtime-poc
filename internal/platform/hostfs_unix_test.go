@@ -78,3 +78,39 @@ func TestHostFS_FinalPathResolvesLinks(t *testing.T) {
 		t.Errorf("FinalPath of a missing path succeeded")
 	}
 }
+
+// CaseAliased on Linux and macOS (M2-18 review round 2). A local temp dir
+// (ext4/tmpfs, or a case-sensitive APFS volume) has no alias. When
+// WARDEN_TEST_FOLDING_DIR names a directory on a case-folding file system
+// (WSL drvfs under /mnt/c, an overlay over it, a default APFS volume), the
+// probe must find the alias there.
+func TestHostFS_CaseAliased(t *testing.T) {
+	h := NewHostFS()
+	check := func(dir string, want bool) {
+		t.Helper()
+		env := filepath.Join(dir, ".env")
+		if err := os.WriteFile(env, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := os.Stat(filepath.Join(dir, ".ENV"))
+		if folds := err == nil; folds != want {
+			t.Skipf("%s: .ENV opens .env = %v, not the file system this row is for", dir, folds)
+		}
+		if got, err := h.CaseAliased(env); err != nil || got != want {
+			t.Fatalf("CaseAliased(%s) = %v, %v; want %v", env, got, err, want)
+		}
+	}
+	t.Run("temp dir", func(t *testing.T) { check(t.TempDir(), false) })
+	t.Run("folding dir", func(t *testing.T) {
+		base := os.Getenv("WARDEN_TEST_FOLDING_DIR")
+		if base == "" {
+			t.Skip("WARDEN_TEST_FOLDING_DIR not set")
+		}
+		dir, err := os.MkdirTemp(base, "casealias-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(dir) })
+		check(dir, true)
+	})
+}

@@ -2,6 +2,8 @@ package platform
 
 import (
 	"errors"
+	"io/fs"
+	"path/filepath"
 	"testing"
 )
 
@@ -32,8 +34,12 @@ func TestCaseSensitiveFS(t *testing.T) {
 		{"tmpfs without GETFLAGS", 0x01021994, 0, ioctlUnsupported, true, false},
 		{"xfs", 0x58465342, 0, ioctlOK, true, false},
 		{"btrfs", 0x9123683e, 0, ioctlOK, true, false},
-		{"overlay without GETFLAGS", 0x794c7630, 0, ioctlUnsupported, true, false},
-		{"zfs", 0x2fc12fc1, 0, ioctlOK, true, false},
+		// Round 2: zfs (casesensitivity=insensitive datasets, the TrueNAS SMB
+		// default) and overlay (lookups go to the layers; measured over a
+		// drvfs lower dir: .ENV and ENV~1 read the secret) can fold case
+		// with no casefold flag, so they are unknown.
+		{"overlay", 0x794c7630, 0, ioctlUnsupported, false, true},
+		{"zfs", 0x2fc12fc1, 0, ioctlOK, false, true},
 		{"bcachefs", 0xca451a4e, 0, ioctlOK, true, false},
 		{"ext4 GETFLAGS failed", 0xef53, 0, ioctlFailed, false, true},
 		{"nfs", 0x6969, 0, ioctlUnsupported, false, true},
@@ -126,5 +132,72 @@ func TestHomeHash(t *testing.T) {
 	}
 	if h := HomeHash(def); len(h) != 8 {
 		t.Fatalf("HomeHash(default) = %q, want 8 hex digits even for the default home", h)
+	}
+}
+
+// fakeInfo is a file identity for the caseAliased seam.
+type fakeInfo struct {
+	fs.FileInfo
+	id string
+}
+
+// TestCaseAliased guards M2-18 review round 2 (CWE-178): the file system
+// allowlist cannot see a zfs dataset with casesensitivity=insensitive, an
+// overlay over a case-insensitive lower layer, or XFS ascii-ci, so Build
+// also asks the directory itself: does another case of the name open the
+// same entry? Only the same entry counts: a different file under the other
+// case is a case-sensitive directory holding two names.
+func TestCaseAliased(t *testing.T) {
+	dir := filepath.Join("w", "config")
+	p := filepath.Join(dir, ".env")
+	cases := []struct {
+		name    string
+		entries map[string]string // path -> identity
+		errs    map[string]error
+		want    bool
+		err     bool
+	}{
+		{"case-swapped name is the same file", map[string]string{p: "a", filepath.Join(dir, ".ENV"): "a"}, nil, true, false},
+		{"case-swapped name is another file", map[string]string{p: "a", filepath.Join(dir, ".ENV"): "b"}, nil, false, false},
+		{"case-swapped name missing", map[string]string{p: "a"}, nil, false, false},
+		{"lookup of the other case fails", map[string]string{p: "a"}, map[string]error{filepath.Join(dir, ".ENV"): errors.New("io error")}, false, true},
+		{"original missing", map[string]string{}, nil, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			lstat := func(q string) (fs.FileInfo, error) {
+				if err := c.errs[q]; err != nil {
+					return nil, err
+				}
+				if id, ok := c.entries[q]; ok {
+					return fakeInfo{id: id}, nil
+				}
+				return nil, fs.ErrNotExist
+			}
+			same := func(a, b fs.FileInfo) bool { return a.(fakeInfo).id == b.(fakeInfo).id }
+			got, err := caseAliased(p, lstat, same)
+			if got != c.want || (err != nil) != c.err {
+				t.Fatalf("caseAliased = %v, %v; want %v, err=%v", got, err, c.want, c.err)
+			}
+		})
+	}
+	// Mixed case: the swapped, upper and lower forms are all tried.
+	for _, alias := range []string{"rEADmE.MD", "README.MD", "readme.md"} {
+		mixed := filepath.Join(dir, "ReadMe.md")
+		lstat := func(q string) (fs.FileInfo, error) {
+			if q == mixed || q == filepath.Join(dir, alias) {
+				return fakeInfo{id: "a"}, nil
+			}
+			return nil, fs.ErrNotExist
+		}
+		if got, _ := caseAliased(mixed, lstat, func(a, b fs.FileInfo) bool { return true }); !got {
+			t.Errorf("alias %s of ReadMe.md not found", alias)
+		}
+	}
+	// A name without a cased letter has no other case to try.
+	asked := 0
+	lstat := func(q string) (fs.FileInfo, error) { asked++; return fakeInfo{id: "a"}, nil }
+	if got, err := caseAliased(filepath.Join(dir, "2024_01"), lstat, func(a, b fs.FileInfo) bool { return true }); got || err != nil || asked != 1 {
+		t.Errorf("uncased name: %v %v after %d lookups; want false, nil after 1", got, err, asked)
 	}
 }

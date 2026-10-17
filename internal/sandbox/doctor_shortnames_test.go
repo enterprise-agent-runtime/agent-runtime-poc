@@ -23,6 +23,7 @@ func (f *shortFS) ShortNameCreation(dir string) (bool, error) {
 }
 func (f *shortFS) HasShortAlias(string) (bool, error) { return false, nil }
 func (f *shortFS) FinalPath(p string) (string, error) { return p, nil }
+func (f *shortFS) CaseAliased(string) (bool, error)   { return false, nil }
 
 // TestShortNamesCheck_Verdict: the L2 spec builder refuses a worktree on a
 // volume that creates 8.3 names (short_names_enabled, M2-18), and its hint

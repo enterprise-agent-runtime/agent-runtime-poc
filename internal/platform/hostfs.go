@@ -1,5 +1,15 @@
 package platform
 
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode"
+)
+
 // HostFS answers the questions the L2 container spec (internal/sandbox/oci,
 // design A06 §15, CONFLICTS C-03) has to ask about host directories before
 // it binds them into a container. They are OS questions, so they live here
@@ -34,6 +44,13 @@ type HostFS interface {
 	// junction, symbolic link and short name, in the on-disk spelling. A
 	// bind source is accepted only when FinalPath returns it unchanged.
 	FinalPath(p string) (string, error)
+	// CaseAliased reports whether another case of p's last element (the
+	// case-swapped, all-upper and all-lower forms) opens the same entry in
+	// the same directory. It asks the directory itself, so it catches what
+	// the per-OS case answer cannot see: a zfs dataset with
+	// casesensitivity=insensitive, an overlay over a case-insensitive
+	// layer, XFS ascii-ci. The same on every OS.
+	CaseAliased(p string) (bool, error)
 }
 
 // NewHostFS returns the HostFS of this OS.
@@ -42,3 +59,62 @@ func NewHostFS() HostFS { return hostFS{} }
 // hostFS is the real implementation; its methods are per OS
 // (hostfs_windows.go, hostfs_linux.go, hostfs_darwin.go, hostfs_other.go).
 type hostFS struct{}
+
+// CaseAliased uses os.Lstat and os.SameFile on every OS.
+func (hostFS) CaseAliased(p string) (bool, error) { return caseAliased(p, os.Lstat, os.SameFile) }
+
+// caseAliased is CaseAliased with the lookups injected. The entry at p must
+// exist (Build asks only about entries it found on disk). A missing other
+// case is not an alias; any other lookup error is returned, so the caller
+// refuses (fail closed).
+func caseAliased(p string, lstat func(string) (fs.FileInfo, error), same func(a, b fs.FileInfo) bool) (bool, error) {
+	orig, err := lstat(p)
+	if err != nil {
+		return false, fmt.Errorf("case alias of %s: %w", p, err)
+	}
+	dir, base := filepath.Split(p)
+	for _, v := range caseVariants(base) {
+		fi, err := lstat(filepath.Join(dir, v))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			continue
+		case err != nil:
+			return false, fmt.Errorf("case alias of %s as %s: %w", p, v, err)
+		}
+		if same(orig, fi) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// caseVariants are the other spellings of name tried as aliases: every
+// cased letter swapped, all upper, all lower; without name itself or
+// repeats, so a name without a cased letter has none.
+func caseVariants(name string) []string {
+	swapped := strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsUpper(r):
+			return unicode.ToLower(r)
+		case unicode.IsLower(r):
+			return unicode.ToUpper(r)
+		}
+		return r
+	}, name)
+	var out []string
+	for _, v := range []string{swapped, strings.ToUpper(name), strings.ToLower(name)} {
+		if v != name && !containsString(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}

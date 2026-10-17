@@ -100,6 +100,8 @@ type fakeFS struct {
 	insensitive   map[string]bool
 	shortCreation bool
 	aliases       map[string]bool
+	caseAliases   map[string]bool
+	caseAliasErr  error
 	final         map[string]string
 	err           error
 	asked         []string
@@ -116,6 +118,10 @@ func (f *fakeFS) ShortNameCreation(dir string) (bool, error) {
 func (f *fakeFS) HasShortAlias(p string) (bool, error) {
 	f.asked = append(f.asked, "alias "+p)
 	return f.aliases[p], nil
+}
+func (f *fakeFS) CaseAliased(p string) (bool, error) {
+	f.asked = append(f.asked, "casealias "+p)
+	return f.caseAliases[p], f.caseAliasErr
 }
 func (f *fakeFS) FinalPath(p string) (string, error) {
 	if r, ok := f.final[p]; ok {
@@ -331,6 +337,7 @@ func TestBuild_AsksAboutEveryMaskPath(t *testing.T) {
 		"case " + wt, "case " + j("config"), "case " + j("config", "prod"),
 		"8dot3 " + wt,
 		"alias " + j(".env"), "alias " + j(".aws"), "alias " + j("config"), "alias " + j("config", "prod"), "alias " + j("config", "prod", ".env"),
+		"casealias " + j(".env"), "casealias " + j(".aws"), "casealias " + j("config"), "casealias " + j("config", "prod"), "casealias " + j("config", "prod", ".env"),
 	} {
 		if !slices.Contains(fs.asked, want) {
 			t.Errorf("Build did not ask %q; asked %q", want, fs.asked)
@@ -374,6 +381,23 @@ func TestBuild_Refuses(t *testing.T) {
 		{"sidecar host is localhost", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "localhost:3128" }, false},
 		{"sidecar host is an IP literal", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "172.18.0.2:3128" }, false},
 		{"sidecar host is a loopback literal", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "127.0.0.1:3128" }, false},
+		// Round 2: inet_aton short forms, which net.ParseIP rejects but
+		// glibc resolves (127.1 and 0x7f.1 are 127.0.0.1).
+		{"sidecar host 127.1", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "127.1:3128" }, false},
+		{"sidecar host 0x7f.1", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "0x7f.1:3128" }, false},
+		{"sidecar host 2130706433", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "2130706433:3128" }, false},
+		{"sidecar host 0x7f000001", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "0x7f000001:3128" }, false},
+		{"sidecar host 0177.0.0.1", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "0177.0.0.1:3128" }, false},
+		{"sidecar host 0x", func(s *sandbox.Spec, _ *Options, _ *fakeFS) { s.Proxy.Sidecar = "0x:3128" }, false},
+		// Round 2: the lookup probe catches what the case answer cannot see
+		// (zfs casesensitivity=insensitive, overlay over drvfs, XFS ascii-ci).
+		{"masked file case-aliased", func(_ *sandbox.Spec, _ *Options, f *fakeFS) {
+			f.caseAliases = map[string]bool{filepath.Join(wt, ".env"): true}
+		}, true},
+		{"mask ancestor case-aliased", func(_ *sandbox.Spec, _ *Options, f *fakeFS) {
+			f.caseAliases = map[string]bool{filepath.Join(wt, "config", "prod"): true}
+		}, true},
+		{"case alias lookup fails", func(_ *sandbox.Spec, _ *Options, f *fakeFS) { f.caseAliasErr = errors.New("io error") }, true},
 		{"worktree case-insensitive", func(_ *sandbox.Spec, _ *Options, f *fakeFS) { f.insensitive = map[string]bool{wt: true} }, true},
 		{"mask parent case-insensitive", func(_ *sandbox.Spec, _ *Options, f *fakeFS) {
 			f.insensitive = map[string]bool{filepath.Join(wt, "config", "prod"): true}
@@ -492,5 +516,17 @@ func TestGolden_Plan(t *testing.T) {
 	want = bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))
 	if !bytes.Equal(got, want) {
 		t.Errorf("%s differs from Build()\n--- got\n%s", golden, got)
+	}
+}
+
+// A sidecar host name that merely contains digits or "0x" is still a name.
+func TestBuild_SidecarNamesWithDigits(t *testing.T) {
+	l := layout()
+	for _, host := range []string{"proxy-0x1", "0x7f-proxy", "p1.example", "123abc", "a.0x1g"} {
+		s := validSpec(l)
+		s.Proxy.Sidecar = host + ":3128"
+		if _, err := Build(s, validOptions(l, &fakeFS{})); err != nil {
+			t.Errorf("sidecar %q refused: %v", host, err)
+		}
 	}
 }

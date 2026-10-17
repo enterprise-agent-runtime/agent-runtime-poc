@@ -232,14 +232,15 @@ func labels(s *sandbox.Spec, role string) map[string]string {
 // sidecar on the internal network: the sandbox's own hostname and
 // localhost resolve inside the sandbox, so HTTP_PROXY would point back at
 // it, and an IP literal pins an address the engine assigns (D-056 accepts
-// both shapes; the L2 backend does not).
+// both shapes, and the inet_aton forms of numericHost; the L2 backend
+// does not).
 func checkSidecarHost(host string) error {
 	switch {
 	case host == sandboxHostname:
 		return fmt.Errorf("%w: proxy sidecar host %q is the sandbox's own hostname", sandbox.ErrInvalidSpec, host)
 	case host == "localhost" || strings.HasSuffix(host, ".localhost"):
 		return fmt.Errorf("%w: proxy sidecar host %q is loopback", sandbox.ErrInvalidSpec, host)
-	case net.ParseIP(host) != nil:
+	case net.ParseIP(host) != nil, numericHost(host):
 		return fmt.Errorf("%w: proxy sidecar host %q is an IP literal; use its name on the internal network", sandbox.ErrInvalidSpec, host)
 	}
 	return nil
@@ -329,6 +330,20 @@ func checkWorktree(s *sandbox.Spec, o Options) error {
 			return unavailable("worktree_case_insensitive", "%q is case-insensitive, so a mask on .env would not cover .ENV; %s", d, caseHint(o.HostOS, s.Worktree))
 		}
 	}
+	// The lookup probe (M2-18 review round 2): the directory answer above
+	// cannot see every folding file system (zfs casesensitivity=insensitive,
+	// an overlay over a case-insensitive layer, XFS ascii-ci), so each
+	// element from the worktree down to every masked entry is also looked up
+	// in another case; the same entry under another name is refused.
+	for _, e := range elems {
+		aliased, err := o.FS.CaseAliased(e)
+		if err != nil {
+			return unavailable("worktree_case_unknown", "%v", err)
+		}
+		if aliased {
+			return unavailable("worktree_case_insensitive", "another case of %q opens the same entry, so its mask would not cover that spelling; %s", e, caseHint(o.HostOS, s.Worktree))
+		}
+	}
 	on, err := o.FS.ShortNameCreation(s.Worktree)
 	if err != nil {
 		return unavailable("short_names_unknown", "%v", err)
@@ -365,4 +380,32 @@ func caseHint(hostOS, worktree string) string {
 		return "the Warden home must be on a case-sensitive APFS volume"
 	}
 	return "the worktree must not be casefolded (chattr -F) or on a case-folding file system (vfat, exfat, ntfs3, SMB, WSL drvfs)"
+}
+
+// numericHost reports whether every label of host is decimal or 0x
+// hexadecimal (an empty 0x included): the inet_aton forms glibc resolves
+// as IPv4 addresses (127.1, 0x7f.1, 2130706433, 0177.0.0.1), which
+// net.ParseIP does not accept (M2-18 review round 2).
+func numericHost(host string) bool {
+	for _, label := range strings.Split(host, ".") {
+		digits := label
+		if strings.HasPrefix(label, "0x") {
+			digits = label[2:]
+			for _, c := range digits {
+				if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+					return false
+				}
+			}
+			continue
+		}
+		if digits == "" {
+			return false
+		}
+		for _, c := range digits {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }

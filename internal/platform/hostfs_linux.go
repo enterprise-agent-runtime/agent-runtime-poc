@@ -11,14 +11,13 @@ import (
 )
 
 // The magic numbers of hostfs_decide.go must be the kernel's: a compile
-// error here if one drifts from x/sys/unix (ZFS is not in x/sys).
+// error here if one drifts from x/sys/unix.
 // One array per constant, so two errors cannot cancel out.
 var (
 	_ = [1]struct{}{}[magicExt-unix.EXT4_SUPER_MAGIC]
 	_ = [1]struct{}{}[magicXFS-unix.XFS_SUPER_MAGIC]
 	_ = [1]struct{}{}[magicBtrfs-unix.BTRFS_SUPER_MAGIC]
 	_ = [1]struct{}{}[magicTmpfs-unix.TMPFS_MAGIC]
-	_ = [1]struct{}{}[magicOverlay-unix.OVERLAYFS_SUPER_MAGIC]
 	_ = [1]struct{}{}[magicF2FS-unix.F2FS_SUPER_MAGIC]
 	_ = [1]struct{}{}[magicBcachefs-unix.BCACHEFS_SUPER_MAGIC]
 )

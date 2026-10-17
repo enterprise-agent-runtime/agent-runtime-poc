@@ -35,14 +35,12 @@ func (r ioctlResult) String() string {
 }
 
 // Linux statfs f_type values (linux/magic.h; checked against x/sys/unix in
-// hostfs_linux.go where it defines them; ZFS is OpenZFS's ZFS_SUPER_MAGIC).
+// hostfs_linux.go).
 const (
 	magicExt       = 0xef53 // ext2, ext3, ext4
 	magicXFS       = 0x58465342
 	magicBtrfs     = 0x9123683e
 	magicTmpfs     = 0x01021994
-	magicOverlay   = 0x794c7630
-	magicZFS       = 0x2fc12fc1
 	magicF2FS      = 0xf2f52010
 	magicBcachefs  = 0xca451a4e
 	fsCasefoldFlag = 0x40000000 // FS_CASEFOLD_FL (chattr +F)
@@ -56,9 +54,15 @@ const (
 // case rules), 9p (WSL drvfs), vfat, exfat, ntfs3, SMB. Unknown is refused,
 // because a denylist failed open on exactly these (CWE-178). NTFS mounts
 // being refused is also why HasShortAlias may answer false on Linux.
+// zfs and overlay are left out too (M2-18 review round 2): a zfs dataset
+// with casesensitivity=insensitive, and an overlay whose lower layer folds
+// case (measured over drvfs: .ENV and ENV~1 read the masked file), fold
+// case without a casefold flag. XFS can be formatted ascii-ci, which this
+// table cannot see either; for that the spec builder also runs the lookup
+// probe CaseAliased on every mask path.
 var caseSensitiveLocalFS = map[int64]string{
 	magicExt: "ext2/3/4", magicXFS: "xfs", magicBtrfs: "btrfs", magicTmpfs: "tmpfs",
-	magicOverlay: "overlay", magicZFS: "zfs", magicF2FS: "f2fs", magicBcachefs: "bcachefs",
+	magicF2FS: "f2fs", magicBcachefs: "bcachefs",
 }
 
 // caseSensitiveFS decides CaseSensitiveDir on Linux from the directory's
