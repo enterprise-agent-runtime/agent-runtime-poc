@@ -31,6 +31,10 @@ type Plan struct {
 	Argv    []string `json:"argv"`
 	Fds     []Fd     `json:"fds"`
 	Missing []string `json:"missing_flags,omitempty"`
+	// SandboxID and WardenHome name the sandbox the argv was built for;
+	// a scope unit must be that sandbox's (ScopedCommand).
+	SandboxID  string `json:"-"`
+	WardenHome string `json:"-"`
 }
 
 // fdPlan is the A06 §11.1 fd list, in ExtraFiles order.

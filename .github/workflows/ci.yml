@@ -103,6 +103,23 @@ jobs:
           fi
           bwrap --unshare-all --die-with-parent --ro-bind / / true
           echo "bwrap --unshare-all works"
+      # The cgroup path of an L1 launch (A06 §11.6, M2-15) runs bwrap under
+      # systemd-run --user --scope. A hosted runner has no login session, so
+      # no user manager runs until lingering is enabled for the runner
+      # account; the bus variables then go to the test steps through
+      # GITHUB_ENV (systemd-run needs them; the launcher passes only these).
+      # Like the AppArmor step, this configures this throwaway VM only.
+      - name: start a systemd user manager for the runner (scope tests)
+        run: |
+          uid=$(id -u)
+          sudo loginctl enable-linger "$(id -un)"
+          for _ in $(seq 1 100); do [ -S "/run/user/$uid/bus" ] && break; sleep 0.1; done
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
+          XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+            systemd-run --user --scope --quiet --collect -- /bin/true
+          echo "systemd-run --user --scope works"
+          cat "/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/cgroup.controllers" || true
       # -json implies -v; the JSON goes to go-test.json for the check below
       # and its Output text to the log (jq ships with the runner image).
       - name: go test -race (Linux integration packages)
@@ -184,5 +201,15 @@ jobs:
             TestIOBeforeWait_RealProcesses
             TestShutdown_KillsEverything
             TestHarness_CwdAndRelativeArgv0
+            # M2-15: the L1 launch, directly and under the systemd-run scope
+            # (the scope ones skip without a user manager; the step above
+            # starts one), the manager lifecycle and the orphan sweep.
+            TestBwrap_RunsTheBuiltArgvInScope
+            TestManager_CreateDestroy
+            TestManager_CreateInScope
+            TestManager_FailureClosesTheProxy
+            TestManager_ExecutorExitWatchdog
+            TestManager_RecoverOrphans_OnlyThisHome
+            TestProbeCgroup_ReadsTheUserManagersDelegation
           )
           bash scripts/ci-require-tests.sh go-test.json -- "${required[@]}"

@@ -3,7 +3,8 @@
 package sandbox
 
 // sandboxed: runs only the fixed probes "bwrap --version" and an empty
-// bwrap sandbox ("/bin/true") for system.doctor; never agent input.
+// bwrap sandbox ("/bin/true") for system.doctor, and (through ProbeCgroup)
+// the fixed probe scope of cgroup_linux.go; never agent input.
 import (
 	"context"
 	"os"
@@ -69,7 +70,9 @@ func probeOS(ctx context.Context, o Options) []Check {
 		in.SandboxTried = true
 		in.SandboxErr = exec.CommandContext(ctx, "bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/", "/", "true").Run()
 	}
-	return l1Checks(o, in)
+	// The cgroup check (A06 §11.6) shares the probe deadline; it is a
+	// warning at worst, whatever the default level.
+	return append(l1Checks(o, in), CgroupCheck(ProbeCgroup(ctx)))
 }
 
 // l1Checks is the pure L1 verdict (design A05 §8.1 sandbox.backend and

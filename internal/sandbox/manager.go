@@ -22,13 +22,16 @@ const (
 	ReasonHelloMismatch DestroyReason = "hello_mismatch"
 	ReasonDaemonStop    DestroyReason = "daemon_stop"
 	ReasonOrphan        DestroyReason = "orphan"
+	// ReasonStoreUnavailable (events schema; not in A06 §13.3): the
+	// sandbox was torn down because sandbox.create could not be written.
+	ReasonStoreUnavailable DestroyReason = "store_unavailable"
 )
 
 // Valid reports whether r is one of the A06 §13.3 reasons.
 func (r DestroyReason) Valid() bool {
 	switch r {
 	case ReasonTaskEnd, ReasonCancel, ReasonTimeout, ReasonResource, ReasonExecutorExit,
-		ReasonHelloMismatch, ReasonDaemonStop, ReasonOrphan:
+		ReasonHelloMismatch, ReasonDaemonStop, ReasonOrphan, ReasonStoreUnavailable:
 		return true
 	}
 	return false
@@ -49,10 +52,10 @@ type Handle struct {
 // (CLAUDE.md §7); Create returns only once the sandbox is ready, and every
 // Create that returned a Handle is matched by exactly one Destroy.
 //
-// Events: the real backends (M2-13..M2-21) are to emit sandbox.create after
-// exec.hello and sandbox.destroy at the end of teardown (A06 §13.2, §13.3).
-// The interface itself carries no event sink yet, and
-// sandboxtest.FakeSandbox emits no events.
+// Events: the real backends emit sandbox.create after exec.hello and
+// sandbox.destroy at the end of teardown (A06 §13.2, §13.3) through the
+// EventSink they are configured with (events.go; the L1 backend is
+// linux_bwrap.Manager). sandboxtest.FakeSandbox emits no events.
 type Manager interface {
 	// Create validates the Spec, builds and launches the sandbox and
 	// returns it ready.
