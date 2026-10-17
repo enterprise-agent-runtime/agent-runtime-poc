@@ -22,6 +22,16 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-030 · 2026-10-16 · M2-13b: inherited descriptors never reach a sandbox
+
+- **Asked:** a fix for what the new linux-integration CI job (M2-23) found on its first run. Delivered under "merge each task when its review passes".
+- **Task:** Make sure no descriptor the daemon inherited follows bwrap into a sandbox.
+- **How:** `platform.CloseOnExecInherited` flags every descriptor >= 3 close-on-exec; `Plan.Command` calls it before every launch and wardend once at start (D-070). Commit `6ae5cc5`.
+- **Rules kept:** typed x/sys only (`unix.CloseRange`, `fcntl`), no archtest allowlist entry; test first (the CI failure now reproduces locally); 8 mutants caught; `make check` green; `-race` in WSL2.
+- **Rules changed or bent:** none. The fix was small, focused and fully red-to-green, so I reviewed the diff myself instead of a separate review round.
+- **Why it matters for the process:** the bwrap integration test had passed in WSL for every M2-13 round and both of its reviews, because the shell there leaks nothing. Only a different machine, a CI runner whose processes start with stray descriptors, could show it. That is what M2-23 is for.
+- **Left:** `warden-exec` does the same for its own descriptors (M2-10).
+
 ## W-029 · 2026-10-16 · M2-13: the bwrap argv for L1 sandboxes
 
 - **Asked:** M2 plan task M2-13, with the follow-ups M2-12 and M2-14 assigned to it. Delivered under "merge each task when its review passes".
