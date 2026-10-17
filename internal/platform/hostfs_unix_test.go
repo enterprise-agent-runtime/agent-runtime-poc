@@ -86,21 +86,31 @@ func TestHostFS_FinalPathResolvesLinks(t *testing.T) {
 // probe must find the alias there.
 func TestHostFS_CaseAliased(t *testing.T) {
 	h := NewHostFS()
-	check := func(dir string, want bool) {
+	// check asks the probe about dir/.env and compares it with a direct
+	// lookup of .ENV, the answer the probe must agree with. mustFold, when
+	// set, skips a directory that turns out not to fold.
+	//
+	// The temp-dir row asserts agreement whatever the file system does: on
+	// Linux /tmp is case-sensitive, but on macOS it is a default APFS volume,
+	// which folds case, so the probe must report the alias there (macOS CI,
+	// 2026-10-17: the row first assumed every Unix temp dir is sensitive, and
+	// it skipped through the parent test from inside a subtest).
+	check := func(t *testing.T, dir string, mustFold bool) {
 		t.Helper()
 		env := filepath.Join(dir, ".env")
 		if err := os.WriteFile(env, []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		_, err := os.Stat(filepath.Join(dir, ".ENV"))
-		if folds := err == nil; folds != want {
-			t.Skipf("%s: .ENV opens .env = %v, not the file system this row is for", dir, folds)
+		folds := err == nil
+		if mustFold && !folds {
+			t.Skipf("%s: .ENV does not open .env; not a folding file system", dir)
 		}
-		if got, err := h.CaseAliased(env); err != nil || got != want {
-			t.Fatalf("CaseAliased(%s) = %v, %v; want %v", env, got, err, want)
+		if got, err := h.CaseAliased(env); err != nil || got != folds {
+			t.Fatalf("CaseAliased(%s) = %v, %v; a direct lookup of .ENV says %v", env, got, err, folds)
 		}
 	}
-	t.Run("temp dir", func(t *testing.T) { check(t.TempDir(), false) })
+	t.Run("temp dir", func(t *testing.T) { check(t, t.TempDir(), false) })
 	t.Run("folding dir", func(t *testing.T) {
 		base := os.Getenv("WARDEN_TEST_FOLDING_DIR")
 		if base == "" {
@@ -111,6 +121,6 @@ func TestHostFS_CaseAliased(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { os.RemoveAll(dir) })
-		check(dir, true)
+		check(t, dir, true)
 	})
 }
