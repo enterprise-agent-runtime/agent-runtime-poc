@@ -1,0 +1,254 @@
+{
+  "internal_network": {
+    "name": "warden-int-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+    "internal": true,
+    "labels": {
+      "warden.home": "e1bdb554",
+      "warden.role": "internal_network",
+      "warden.sandbox": "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+      "warden.session": "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB"
+    }
+  },
+  "egress_network": {
+    "name": "warden-egress-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+    "internal": false,
+    "labels": {
+      "warden.home": "e1bdb554",
+      "warden.role": "egress_network",
+      "warden.sandbox": "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+      "warden.session": "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB"
+    }
+  },
+  "sidecar": {
+    "name": "warden-proxy-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+    "hostname": "warden-proxy-01jaxs2q",
+    "image": "warden/proxy@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "user": "65532:65532",
+    "entrypoint": null,
+    "cmd": null,
+    "env": null,
+    "working_dir": "",
+    "labels": {
+      "warden.home": "e1bdb554",
+      "warden.role": "proxy",
+      "warden.sandbox": "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+      "warden.session": "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB"
+    },
+    "readonly_rootfs": true,
+    "privileged": false,
+    "cap_drop": [
+      "ALL"
+    ],
+    "no_new_privileges": true,
+    "seccomp": "/home/ana/.warden/sessions/01jaxr8q7m2v9ktc3f6yh5n0pb/sandbox/sb_01JAXS2Q7M2V9KTC3F6YH5N0PB/seccomp.json",
+    "resources": {
+      "memory_bytes": 0,
+      "memory_swap_bytes": 0,
+      "nano_cpus": 0,
+      "pids_limit": 0,
+      "ulimits": null
+    },
+    "tmpfs": null,
+    "binds": null,
+    "networks": [
+      {
+        "network": "warden-int-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+        "aliases": [
+          "warden-proxy-01jaxs2q"
+        ]
+      },
+      {
+        "network": "warden-egress-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB"
+      }
+    ],
+    "open_stdin": true,
+    "stdin_once": true,
+    "auto_remove": true
+  },
+  "sandbox": {
+    "name": "warden-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+    "hostname": "warden",
+    "image": "warden/sandbox-go@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "user": "0:0",
+    "entrypoint": [
+      "/warden/bin/warden-exec"
+    ],
+    "cmd": [
+      "serve",
+      "--protocol",
+      "warden.exec/1",
+      "--mode",
+      "tool",
+      "--rpc-stdio",
+      "--roots",
+      "worktree=/work:rw,scratch=/scratch:rw,cache=/cache:rw,git=/git:rw",
+      "--allow-profiles",
+      "/warden/etc/profiles.json",
+      "--git-dir",
+      "/git",
+      "--session-branch",
+      "warden/01jaxr8q7m2v9ktc3f6yh5n0pb",
+      "--base-commit",
+      "3f9c2e1a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e",
+      "--hooks-dir",
+      "/warden/empty",
+      "--child-limits",
+      "fsize=1073741824,nofile=4096,core=0",
+      "--max-procs",
+      "8"
+    ],
+    "env": [
+      "HOME=/scratch/home",
+      "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin",
+      "LANG=C.UTF-8",
+      "TERM=dumb",
+      "TMPDIR=/tmp",
+      "HTTP_PROXY=http://warden-proxy-01jaxs2q:3128",
+      "HTTPS_PROXY=http://warden-proxy-01jaxs2q:3128",
+      "http_proxy=http://warden-proxy-01jaxs2q:3128",
+      "https_proxy=http://warden-proxy-01jaxs2q:3128",
+      "NO_PROXY=",
+      "npm_config_cache=/cache/npm",
+      "GOPATH=/cache/go/path",
+      "GOMODCACHE=/cache/go/mod",
+      "GOCACHE=/cache/go/build",
+      "PIP_CACHE_DIR=/cache/pip",
+      "GIT_CONFIG_GLOBAL=/dev/null",
+      "GIT_CONFIG_SYSTEM=/dev/null",
+      "GIT_CONFIG_NOSYSTEM=1",
+      "GIT_TERMINAL_PROMPT=0",
+      "GIT_CEILING_DIRECTORIES=/",
+      "GIT_CONFIG_COUNT=3",
+      "GIT_CONFIG_KEY_0=core.hooksPath",
+      "GIT_CONFIG_VALUE_0=/warden/empty",
+      "GIT_CONFIG_KEY_1=core.fsmonitor",
+      "GIT_CONFIG_VALUE_1=false",
+      "GIT_CONFIG_KEY_2=safe.directory",
+      "GIT_CONFIG_VALUE_2=/work"
+    ],
+    "working_dir": "/work",
+    "labels": {
+      "warden.home": "e1bdb554",
+      "warden.role": "sandbox",
+      "warden.sandbox": "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB",
+      "warden.session": "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB"
+    },
+    "readonly_rootfs": true,
+    "privileged": false,
+    "cap_drop": [
+      "ALL"
+    ],
+    "no_new_privileges": true,
+    "seccomp": "/home/ana/.warden/sessions/01jaxr8q7m2v9ktc3f6yh5n0pb/sandbox/sb_01JAXS2Q7M2V9KTC3F6YH5N0PB/seccomp.json",
+    "resources": {
+      "memory_bytes": 3221225472,
+      "memory_swap_bytes": 3221225472,
+      "nano_cpus": 2000000000,
+      "pids_limit": 512,
+      "ulimits": [
+        {
+          "name": "nofile",
+          "soft": 4096,
+          "hard": 4096
+        },
+        {
+          "name": "fsize",
+          "soft": 1073741824,
+          "hard": 1073741824
+        },
+        {
+          "name": "core",
+          "soft": 0,
+          "hard": 0
+        }
+      ]
+    },
+    "tmpfs": [
+      {
+        "kind": "tmp",
+        "target": "/tmp",
+        "options": "rw,nosuid,nodev,size=1073741824"
+      },
+      {
+        "kind": "hooks_dir",
+        "target": "/warden/empty",
+        "options": "ro,nosuid,nodev,noexec,size=1k"
+      },
+      {
+        "kind": "mask",
+        "target": "/work/.aws",
+        "options": "ro,nosuid,nodev,noexec,size=1k"
+      }
+    ],
+    "binds": [
+      {
+        "kind": "worktree",
+        "source": "/home/ana/.warden/sessions/01jaxr8q7m2v9ktc3f6yh5n0pb/worktree",
+        "target": "/work",
+        "read_only": false
+      },
+      {
+        "kind": "mask",
+        "source": "/dev/null",
+        "engine_source": true,
+        "target": "/work/.env",
+        "read_only": true
+      },
+      {
+        "kind": "mask",
+        "source": "/dev/null",
+        "engine_source": true,
+        "target": "/work/config/prod/.env",
+        "read_only": true
+      },
+      {
+        "kind": "scratch",
+        "source": "/home/ana/.warden/sessions/01jaxr8q7m2v9ktc3f6yh5n0pb/scratch/implement",
+        "target": "/scratch",
+        "read_only": false
+      },
+      {
+        "kind": "cache",
+        "source": "/home/ana/.warden/cache/wsp_01jaxr",
+        "target": "/cache",
+        "read_only": false
+      },
+      {
+        "kind": "git",
+        "source": "/home/ana/.warden/sessions/01jaxr8q7m2v9ktc3f6yh5n0pb/git",
+        "target": "/git",
+        "read_only": false
+      },
+      {
+        "kind": "git_objects",
+        "source": "/home/ana/src/my project/.git/objects",
+        "target": "/git-alt/objects",
+        "read_only": true
+      },
+      {
+        "kind": "executor",
+        "source": "/opt/warden/lib/linux-amd64/warden-exec",
+        "target": "/warden/bin/warden-exec",
+        "read_only": true
+      },
+      {
+        "kind": "generated",
+        "source": "/home/ana/.warden/sessions/01jaxr8q7m2v9ktc3f6yh5n0pb/sandbox/sb_01JAXS2Q7M2V9KTC3F6YH5N0PB/profiles.json",
+        "target": "/warden/etc/profiles.json",
+        "read_only": true
+      }
+    ],
+    "networks": [
+      {
+        "network": "warden-int-sb_01JAXS2Q7M2V9KTC3F6YH5N0PB"
+      }
+    ],
+    "open_stdin": true,
+    "stdin_once": true,
+    "auto_remove": true
+  },
+  "seccomp_profile": {
+    "path": "/home/ana/.warden/sessions/01jaxr8q7m2v9ktc3f6yh5n0pb/sandbox/sb_01JAXS2Q7M2V9KTC3F6YH5N0PB/seccomp.json",
+    "sha256": "sha256:0c4a60c0d00b06aa5ad534d6783ad6a71d3a1cdea9e649e91b873c9824277251"
+  }
+}

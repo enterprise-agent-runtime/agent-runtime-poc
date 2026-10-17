@@ -1,8 +1,6 @@
 package platform
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -39,8 +37,7 @@ func homeSuffix(home, defaultHome string) string {
 	if defaultHome != "" && sameHome(home, defaultHome) {
 		return ""
 	}
-	h := sha256.Sum256([]byte(homeKey(home)))
-	return "-" + hex.EncodeToString(h[:])[:8]
+	return "-" + HomeHash(home)
 }
 
 // homeKey normalizes a home for comparison and hashing; Windows paths are
