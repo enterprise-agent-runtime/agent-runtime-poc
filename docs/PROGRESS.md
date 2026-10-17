@@ -133,7 +133,16 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 **Group E** (L2 sandbox):
 
 - [ ] **M2-17** [Docker] engine gate at creation (CWE-636), plus `sandbox.default_level` normalisation (CWE-178)
-- [ ] **M2-18** container spec and Windows path mapping
+- [x] **M2-18** container spec and Windows path mapping (D-071, D-072, D-073, C-77).
+  - **Pieces:** `internal/sandbox/oci` (`Build`, `Plan`, `MapHostPath`, `CheckImageRef`); `internal/platform` `HostFS` (case sensitivity, 8.3 creation and aliases, final paths) for Windows, Linux and macOS; the Windows doctor check `sandbox.short_names`; `platform.HomeHash`.
+  - **Commits:** `05e2ce9`, `eb41bda`, `94a1660`, `ce037b4`.
+  - **Review:** three rounds. They found host checks that passed unknown file systems (NFS, FUSE) and then overlay and zfs as case-sensitive, the value-3 meaning of `NtfsDisable8dot3NameCreation`, a hint citing a doctor check that did not exist yet, and small sidecar-host and label gaps. Measured on this machine: the case flag needs full control of the directory (not elevation) and does not stop 8.3 aliasing; 8.3 is on for C: and off for D:.
+  - **The two M2-12 must-fix items** (case-insensitive masks, 8.3 aliases) are closed for L2 by refusing such hosts; the mitigation that sets the case flag on `S/worktree` before checkout is M2-21's.
+  - **Left for M2-17:** the engine gate (rootless or Desktop, refuse a rootful native engine) and the engine version: refuse Moby older than 26.0.0, 25.0.5, 23.0.11 (CVE-2024-29018, the embedded resolver forwarding external names from internal networks); check Podman's aardvark-dns.
+  - **Left for M2-20:** the sidecar's command, port, resources and limits (C-03 asks for pids, memory and cpu limits on it too).
+  - **Left for M2-21:** map the Plan to the Engine API with `HostConfig.Mounts` (never `Binds` strings: mask names may contain `:` or `,`); NetworkMode internal at create and inspect `Internal=true`; seccomp bytes inline with their sha256; write the artefact owner-only; re-run the final-path and worktree checks and re-verify the engine immediately before create; resolve host paths to their long form before the Spec; set the case flag on the empty `S/worktree` before checkout; ExecBin must be the static Linux ELF; verify Docker Desktop's WSL2 backend reads the engine `/dev/null` and behaves as drvfs did.
+  - **Left for M2-22 (escape check):** `.ENV`, `ENV~1`, rename a mask ancestor then read through `<NAME>~1`, `.env.`, `.env `, `.env::$DATA`; resolving an external name from the sandbox fails; the bridge gateway, `host.docker.internal` and 192.168.65.x are unreachable; runc's libseccomp version and bad-arch action.
+  - **Left for M2-10:** with no `--init`, `warden-exec` is PID 1 and must reap zombies.
 - [ ] **M2-19** images and `make images`
 - [ ] **M2-20** [Docker] proxy sidecar
 - [ ] **M2-21** [Docker] launch over container stdio, orphan cleanup
