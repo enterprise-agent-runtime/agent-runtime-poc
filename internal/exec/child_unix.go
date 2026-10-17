@@ -72,6 +72,14 @@ func RunChild(args []string) error {
 	if err := closeOnExecAbove2(); err != nil {
 		return err
 	}
+	// A script keeps fd 4 open across the execve: with execveat on a
+	// script the kernel starts the interpreter with /dev/fd/4 as the
+	// script path, and with fd 4 closed on exec the interpreter could not
+	// open it (ENOENT). The interpreter never closes it, so fd 4 reaches
+	// everything the script runs. That is acceptable: it is read-only, it
+	// is the script itself, and the script is a file every process of the
+	// handle can already read, so it gives a child nothing it lacks. A
+	// binary does not need it and does not get it.
 	if isScript(exe) {
 		if _, err := unix.FcntlInt(uintptr(exe), unix.F_SETFD, 0); err != nil {
 			return fmt.Errorf("cannot keep the script open for its interpreter: %w", errno(err))

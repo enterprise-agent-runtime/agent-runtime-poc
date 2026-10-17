@@ -109,6 +109,14 @@ const execByFD = true
 // file open on fd, whatever its name now names (CWE-367). x/sys v0.48 has
 // no typed Execveat, so this is the raw system call, with argv and envv
 // built by syscall.SlicePtrFromStrings exactly as syscall.Exec does.
+//
+// Unlike syscall.Exec it does not take the Go runtime's exec lock
+// (runtime_BeforeExec), which keeps the runtime from starting a thread or
+// forking while another goroutine is in execve. That is fine here: execFD
+// is called only by the shim, a single-purpose process whose one goroutine
+// of work calls it last, after which nothing in it forks or execs; a
+// thread the runtime starts concurrently dies with the rest of the
+// process image at the execve.
 func execFD(fd int, argv, envv []string) error {
 	argvp, err := syscall.SlicePtrFromStrings(argv)
 	if err != nil {
