@@ -31,6 +31,7 @@ type Git struct {
 	cfg  GitConfig
 	args gitArgs
 	path string // the child PATH (A06 §8), where git is looked up
+	byFD bool   // execByFD; a field so the Linux tests can take the macOS path
 }
 
 // RegisterGit registers exec.git.run on s, running git through p's process
@@ -53,7 +54,7 @@ func RegisterGit(s *Server, p *Procs, cfg GitConfig) error {
 		return errors.New("exec: RegisterGit needs a worktree root")
 	}
 	pathv, _ := envValue(p.env, "PATH")
-	g := &Git{p: p, cfg: cfg, args: gitArgs{gitDir: cfg.GitDir, work: work, hooks: cfg.HooksDir}, path: pathv}
+	g := &Git{p: p, cfg: cfg, args: gitArgs{gitDir: cfg.GitDir, work: work, hooks: cfg.HooksDir}, path: pathv, byFD: execByFD}
 	return Handle(s, execproto.MethodGitRun, g.Run)
 }
 
@@ -96,6 +97,10 @@ func (c *collector) sink(n execproto.IONotification) error {
 // it; email adds the commit identity. The handle is forgotten once it has
 // ended. A cancelled call kills the process group.
 func (g *Git) git(ctx context.Context, deadline time.Time, argv []string, email string) (gitOut, error) {
+	if !g.byFD {
+		// As Spawn: the shim executes only the checked file, by descriptor.
+		return gitOut{}, noExecByFD()
+	}
 	left := deadline.Sub(g.p.cfg.Clock.Now())
 	if left <= 0 {
 		return gitOut{}, execproto.NewError(execproto.ErrTimeout, "git timed out")
@@ -118,7 +123,7 @@ func (g *Git) git(ctx context.Context, deadline time.Time, argv []string, email 
 	defer dir.Close()
 	var c collector
 	h, err := g.p.start(startSpec{
-		argv: argv, env: gitEnv(g.path, g.cfg.HooksDir, email), dir: dir, exe: exe,
+		argv: argv, env: gitEnv(g.path, g.cfg.HooksDir, email), dir: dir, exe: exe, internal: true,
 		timeout: left, cap: defaultOutput, sink: c.sink,
 	})
 	if err != nil {

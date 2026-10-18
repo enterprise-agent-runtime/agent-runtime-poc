@@ -239,6 +239,14 @@ func Argv(argv []string, cwdRel string) (string, bool) {
 			if pat, ok := match(after, false); ok && after != "" {
 				return pat, true
 			}
+			// HEAD:./x names x relative to the current directory, so
+			// the text after a colon is joined with cwd like any other
+			// argument (review of 41a3818).
+			if cwdRel != "" && after != "" {
+				if pat, ok := match(path.Join(cwdRel, strings.ReplaceAll(after, "\\", "/")), false); ok {
+					return pat, true
+				}
+			}
 			rest = after
 		}
 		if cwdRel != "" {

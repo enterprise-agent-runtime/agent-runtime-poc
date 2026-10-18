@@ -273,10 +273,19 @@ func (g gitArgs) verifyCommit(rev string) []string {
 	return g.with([]string{"rev-parse", "--verify", "--quiet", "--end-of-options", rev + "^{commit}"})
 }
 
+// statWidths are --stat's total and name widths: wide enough that git
+// never abbreviates a name to ".../x" (a path is at most 4096 bytes, and
+// C-quoting at most quadruples it), so checkStatOutput sees every name.
+const statWidths = "--stat=65535,65535"
+
+// diff is the A14 §6 diff. With stat_only it is the stat alone: A14 writes
+// -U<n> [--stat], but -U implies the patch, so the two are exclusive here.
 func (g gitArgs) diff(commit string, r gitRequest, rels []string) []string {
-	a := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=all", "--src-prefix=a/", "--dst-prefix=b/", "-U" + strconv.Itoa(r.contextLines)}
+	a := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=all", "--src-prefix=a/", "--dst-prefix=b/"}
 	if r.statOnly {
-		a = append(a, "--stat")
+		a = append(a, statWidths)
+	} else {
+		a = append(a, "-U"+strconv.Itoa(r.contextLines))
 	}
 	a = append(a, commit, "--")
 	return g.with(a, literalPathspecs(rels), denyPathspecs())
@@ -295,9 +304,11 @@ func (g gitArgs) add(rels []string) []string {
 }
 
 // staged lists every path whose staged content differs from HEAD, NUL
-// separated: what a commit would record.
+// separated: what a commit would record, gitlinks included
+// (--ignore-submodules=none also beats an "ignore = all" in .gitmodules).
+// A cached diff compares object ids only and starts no git in a submodule.
 func (g gitArgs) staged() []string {
-	return g.with([]string{"diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD", "--"})
+	return g.with([]string{"diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "HEAD", "--"})
 }
 
 func (g gitArgs) commit(message string) []string {
@@ -573,4 +584,89 @@ func isOctal(c byte) bool { return c >= '0' && c <= '7' }
 // and returned only up to its last whole line (or -z record).
 func completeLines(out []byte, sep byte) []byte {
 	return out[:bytes.LastIndexByte(out, sep)+1]
+}
+
+// statCount is the right side of a --stat file line: "<n>", "<n> <graph>"
+// with a graph of + and - only, or "Bin" with an optional size change.
+func statCount(s string) bool {
+	if rest, ok := strings.CutPrefix(s, "Bin"); ok {
+		if rest == "" {
+			return true
+		}
+		from, to, ok := strings.Cut(strings.TrimPrefix(rest, " "), " -> ")
+		return ok && strings.HasPrefix(rest, " ") && digits(from) && digits(strings.TrimSuffix(to, " bytes")) && strings.HasSuffix(to, " bytes")
+	}
+	n, graph, hasGraph := strings.Cut(s, " ")
+	if !digits(n) {
+		return false
+	}
+	return !hasGraph || (graph != "" && strings.Trim(graph, "+-") == "")
+}
+
+func digits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// statSummary is the last line of --stat: " N file(s) changed", then
+// optionally ", N insertion(s)(+)" and ", N deletion(s)(-)".
+func statSummary(line string) bool {
+	parts := strings.Split(strings.TrimPrefix(line, " "), ", ")
+	if !strings.HasPrefix(line, " ") || len(parts) > 3 {
+		return false
+	}
+	for i, p := range parts {
+		n, what, ok := strings.Cut(p, " ")
+		if !ok || !digits(n) {
+			return false
+		}
+		switch {
+		case i == 0 && (what == "file changed" || what == "files changed"):
+		case i > 0 && (what == "insertion(+)" || what == "insertions(+)" || what == "deletion(-)" || what == "deletions(-)"):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// checkStatOutput checks --stat output (whole lines only, completeLines):
+// every file line's name goes through the deny-list like a status record,
+// so an 8.3 alias no pathspec expresses is refused by name (review of
+// 41a3818). A file line is " <name> | <count>", the name padded with
+// spaces and C-quoted when git quotes it; the name is everything before
+// the last " | ", since the right side holds none. A name git abbreviated
+// (".../x", which the explicit widths prevent) or a line of any other
+// shape is uncheckable and refused.
+func checkStatOutput(out []byte) error {
+	for _, line := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
+		if line == "" && len(out) == 0 {
+			return nil
+		}
+		i := strings.LastIndex(line, " | ")
+		if i < 0 {
+			if statSummary(line) {
+				continue
+			}
+			return uncheckable()
+		}
+		if !strings.HasPrefix(line, " ") || !statCount(line[i+3:]) {
+			return uncheckable()
+		}
+		name, ok := headerName(strings.TrimRight(line[1:i], " "))
+		if !ok || strings.HasPrefix(name, "...") {
+			return uncheckable()
+		}
+		if deniedPath(name) {
+			return deniedOutput()
+		}
+	}
+	return nil
 }

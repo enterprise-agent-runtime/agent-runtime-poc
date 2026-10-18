@@ -181,7 +181,11 @@ func (g *Git) diff(ctx context.Context, deadline time.Time, r gitRequest, rels [
 		return execproto.GitRunResult{}, gitFailed("diff")
 	}
 	stdout := completeLines(out.stdout, '\n')
-	if err := checkDiffOutput(stdout); err != nil {
+	check := checkDiffOutput
+	if r.statOnly {
+		check = checkStatOutput
+	}
+	if err := check(stdout); err != nil {
 		return execproto.GitRunResult{}, err
 	}
 	return result(stdout, out.truncated), nil

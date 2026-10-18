@@ -78,6 +78,7 @@ type handle struct {
 	cpuLimit   uint64
 	pipes      [2]*os.File // read ends; the monitor closes them if the drain bound passes
 	pumpsDone  chan struct{}
+	internal   bool // started by the executor itself (exec.git.run): not the daemon's to wait for or signal
 
 	// Guarded by Procs.mu.
 	exitSeen bool // the leader has exited: no signal may go to its pgid any more
@@ -119,6 +120,13 @@ func NewProcs(ctx context.Context, cfg ProcConfig, notify func(execproto.IONotif
 	}, nil
 }
 
+// noExecByFD is the refusal where the shim cannot execute the checked
+// file by descriptor (execByFD false: macOS L1 until M7). Spawn and
+// exec.git.run both start processes only that way.
+func noExecByFD() error {
+	return execproto.NewError(execproto.ErrIOError, "spawn needs execution by descriptor, which this OS lacks (macOS L1: M7)")
+}
+
 func shellString() error {
 	return execproto.NewError(execproto.ErrShellString, "shell interpreter with a command string (CF-19)")
 }
@@ -138,7 +146,7 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 		return execproto.SpawnResult{}, shellString()
 	}
 	if !execByFD {
-		return execproto.SpawnResult{}, execproto.NewError(execproto.ErrIOError, "spawn needs execution by descriptor, which this OS lacks (macOS L1: M7)")
+		return execproto.SpawnResult{}, noExecByFD()
 	}
 	harness := p.cfg.Mode == execproto.ModeHarness
 	if harness && sp.Cwd != "" {
@@ -199,6 +207,9 @@ type startSpec struct {
 	timeout  time.Duration
 	cap      int64
 	sink     func(execproto.IONotification) error
+	// internal marks a process the executor runs for its own method
+	// (exec.git.run): exec.proc.wait and exec.proc.signal do not know it.
+	internal bool
 }
 
 // start is A06 §7.1 steps 1, 3 and 5 for a process whose checks are done:
@@ -269,6 +280,7 @@ func (p *Procs) start(st startSpec) (*handle, error) {
 		started: p.cfg.Clock.Now(), cpuLimit: limits.CPU, pipes: rd,
 		pumpsDone: make(chan struct{}), done: make(chan struct{}),
 	}
+	h.internal = st.internal
 	h.out = newOutput(id, st.callID, st.cap, st.sink)
 	h.timers = append(h.timers, p.cfg.Clock.AfterFunc(st.timeout, func() { p.kill(h, killTimeout, unix.SIGTERM) }))
 	p.handles[id] = h
@@ -684,7 +696,7 @@ func (p *Procs) Wait(ctx context.Context, wp execproto.WaitParams) (execproto.Wa
 	p.mu.Lock()
 	h := p.handles[wp.Handle]
 	p.mu.Unlock()
-	if h == nil {
+	if h == nil || h.internal { // an exec.git.run process is not a handle the daemon was given
 		return execproto.WaitResult{}, unknownHandle()
 	}
 	var expired chan struct{}
@@ -732,7 +744,7 @@ func (p *Procs) Signal(_ context.Context, sp execproto.SignalParams) (execproto.
 	p.mu.Lock()
 	h := p.handles[sp.Handle]
 	p.mu.Unlock()
-	if h == nil {
+	if h == nil || h.internal {
 		return execproto.SignalResult{}, unknownHandle()
 	}
 	return execproto.SignalResult{Delivered: p.kill(h, killCancel, sig), PGID: h.pgid}, nil

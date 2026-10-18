@@ -202,5 +202,12 @@ jobs:
             TestGitRun_ErrorDetailsAreFixed
             TestGitRun_PathsGoToGitResolved
             TestGitRun_StderrNeverForwarded
+            # M2-9 review fixes: stat names, gitlinks, a nested gitdir, git's
+            # handles hidden from wait/signal, and the macOS refusal path.
+            TestGitRun_StatPassesLongNames
+            TestGitRun_StagedGitlinkAtDenyListedPath
+            TestGitRun_NestedGitdirRunsNoDriver
+            TestGitRun_HandlesAreNotTheModelsToSignal
+            TestGit_NoExecByFDIsUnsupported
           )
           bash scripts/ci-require-tests.sh go-test.json -- "${required[@]}"

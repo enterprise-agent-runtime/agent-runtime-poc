@@ -19,8 +19,12 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"warden.dev/warden/internal/exec"
 	"warden.dev/warden/internal/exec/exectest"
@@ -383,7 +387,45 @@ func TestGitRun_OutputCheckCatchesWhatPathspecsMiss(t *testing.T) {
 	if _, err := r.run(statusOp); !errors.Is(err, execproto.ErrDenyList) {
 		t.Errorf("status: %v, want deny_list", err)
 	}
+	// --stat lists names too (review of 41a3818). The alias also sits under
+	// a directory long enough that git's default stat width would print it
+	// as ".../ENV~1"; the explicit name widths keep it whole, so it is
+	// refused as deny_list, not merely as uncheckable.
+	if _, err := r.run(diffOp(execproto.GitDiffOptions{StatOnly: true})); !errors.Is(err, execproto.ErrDenyList) {
+		t.Errorf("diff --stat: %v, want deny_list", err)
+	}
+	long := strings.Repeat("d", 120)
+	r.write(long+"/ENV~1", fakeSecret+"\n")
+	r.fixture("add", long+"/ENV~1")
+	r.fixture("commit", "-q", "-m", "long")
+	if err := os.Remove(filepath.Join(r.work, "ENV~1")); err != nil {
+		t.Fatal(err)
+	}
+	r.fixture("commit", "-q", "-a", "-m", "drop the short one")
+	r.appendTo(long+"/ENV~1", fakeNew+"\n")
+	if _, err := r.run(diffOp(execproto.GitDiffOptions{Against: "HEAD", StatOnly: true})); !errors.Is(err, execproto.ErrDenyList) {
+		t.Errorf("diff --stat of a long path: %v, want deny_list", err)
+	}
 	r.noSecretOnWire()
+}
+
+// TestGitRun_StatPassesLongNames: the stat check must not refuse a long
+// name that is not deny-listed (git would abbreviate it without the
+// explicit widths, and the check refuses abbreviated names).
+func TestGitRun_StatPassesLongNames(t *testing.T) {
+	long := strings.Repeat("d", 120)
+	r := newGitRig(t, gitRigOpts{setup: func(r *gitRig) { r.write(long+"/app.txt", "x\n") }})
+	r.appendTo(long+"/app.txt", "y\n")
+	three := 3
+	res := r.mustRun(diffOp(execproto.GitDiffOptions{StatOnly: true, ContextLines: &three}))
+	if !strings.Contains(res.Stdout, long+"/app.txt") {
+		t.Errorf("stat: %q", res.Stdout)
+	}
+	// stat_only is the stat alone: -U<n> would make git print the patch
+	// as well (it implies -p), content the caller did not ask for.
+	if strings.Contains(res.Stdout, "diff --git") || strings.Contains(res.Stdout, "@@") || strings.Contains(res.Stdout, "+y") {
+		t.Errorf("stat_only returned the patch: %q", res.Stdout)
+	}
 }
 
 // TestGitRun_ObjectReadsAndOptionsRefused: show HEAD:.env, cat-file -p
@@ -810,5 +852,165 @@ func TestGitRun_StderrNeverForwarded(t *testing.T) {
 		if !strings.Contains(res.Stdout, "src/app.txt") {
 			t.Errorf("%s: %q", op.Op, res.Stdout)
 		}
+	}
+}
+
+// TestGitRun_StagedGitlinkAtDenyListedPath (review of 41a3818): a gitlink
+// (mode 160000) staged at a deny-listed path is a change a commit would
+// record there. The staged-names check runs with --ignore-submodules=none,
+// so neither the default nor a .gitmodules "ignore = all" hides it.
+func TestGitRun_StagedGitlinkAtDenyListedPath(t *testing.T) {
+	r := newGitRig(t, gitRigOpts{})
+	r.appendTo("src/app.txt", "more\n")
+	tip := r.fixture("rev-parse", "HEAD")
+	for _, p := range []string{".env", "keys/id_rsa"} {
+		r.fixture("update-index", "--add", "--cacheinfo", "160000,"+tip+","+p)
+		for _, gm := range []bool{false, true} {
+			if gm {
+				r.write(".gitmodules", "[submodule \"x\"]\n\tpath = "+p+"\n\tignore = all\n")
+			}
+			if _, err := r.run(commitOp("gitlink at " + p)); !errors.Is(err, execproto.ErrDenyList) {
+				t.Errorf("gitlink at %s (.gitmodules %v): %v, want deny_list", p, gm, err)
+			}
+			if got := r.fixture("rev-parse", "HEAD"); got != tip {
+				t.Fatalf("gitlink at %s was committed", p)
+			}
+		}
+		if err := os.Remove(filepath.Join(r.work, ".gitmodules")); err != nil {
+			t.Fatal(err)
+		}
+		r.fixture("reset", "-q", "--", p, ".gitmodules")
+	}
+	if res := r.mustRun(commitOp("clean")); res.ExitCode != 0 {
+		t.Errorf("commit after the gitlinks are gone: %+v", res)
+	}
+}
+
+// fixtureGitIn runs one fixed fixture git command in dir, with the same
+// environment as gitRig.fixture.
+func fixtureGitIn(t *testing.T, base, dir string, args ...string) {
+	t.Helper()
+	cmd := osexec.Command(gitPath(t), append([]string{"-c", "core.hooksPath=/dev/null"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = []string{
+		"HOME=" + base + "/fixture-home", "PATH=/usr/bin:/bin", "LC_ALL=C",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=" + fixtureName, "GIT_AUTHOR_EMAIL=fixture@example.invalid",
+		"GIT_COMMITTER_NAME=" + fixtureName, "GIT_COMMITTER_EMAIL=fixture@example.invalid",
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fixture git %q: %v: %s", args, err, out)
+	}
+}
+
+// TestGitRun_NestedGitdirRunsNoDriver (review evidence): a subdirectory of
+// the worktree holds a .git file pointing at a gitdir outside, whose own
+// configuration defines a filter, a textconv driver, an fsmonitor and a
+// hooks path, and a .gitattributes there uses them. exec.git.run never
+// starts a git in that repository (status and diff ignore submodules, add
+// records the nested repository as a gitlink by reading its HEAD), so
+// nothing it names runs: not on status, diff or commit, before or after
+// the gitlink is committed.
+func TestGitRun_NestedGitdirRunsNoDriver(t *testing.T) {
+	r := newGitRig(t, gitRigOpts{})
+	out := filepath.Join(r.base, "outside")
+	evil := filepath.Join(out, "evil.sh")
+	marker := filepath.Join(out, "marker")
+	if err := os.WriteFile(evil, []byte("#!/bin/sh\ntouch "+marker+"\ncat\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(r.work, "sub")
+	fixtureGitIn(t, r.base, r.base, "init", "-q", "--template="+r.base+"/tmpl", "--separate-git-dir="+out+"/evilgit", sub)
+	r.write("sub/file.txt", "inner\n")
+	fixtureGitIn(t, r.base, sub, "add", "file.txt")
+	fixtureGitIn(t, r.base, sub, "commit", "-q", "-m", "inner")
+	hooks := filepath.Join(out, "evilhooks")
+	if err := os.MkdirAll(hooks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"pre-commit", "post-commit", "post-index-change", "reference-transaction"} {
+		if err := os.WriteFile(filepath.Join(hooks, n), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f, err := os.OpenFile(filepath.Join(out, "evilgit", "config"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString("[filter \"x\"]\n\tclean = " + evil + "\n\tsmudge = " + evil + "\n\tprocess = " + evil + "\n" +
+		"[diff \"x\"]\n\ttextconv = " + evil + "\n\tcommand = " + evil + "\n" +
+		"[core]\n\tfsmonitor = " + evil + "\n\thooksPath = " + hooks + "\n\tpager = " + evil + "\n")
+	_ = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.write("sub/.gitattributes", "* filter=x diff=x\n")
+	r.appendTo("sub/file.txt", "changed\n")
+	r.appendTo("src/app.txt", "more\n")
+
+	for round := 0; round < 2; round++ {
+		r.mustRun(statusOp)
+		r.mustRun(diffOp(execproto.GitDiffOptions{}))
+		r.mustRun(diffOp(execproto.GitDiffOptions{Paths: []string{"sub"}}))
+		r.mustRun(commitOp("with a nested repository"))
+		r.appendTo("sub/file.txt", "again\n")
+		r.appendTo("src/app.txt", "again\n")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a program named by the nested repository ran")
+	}
+	if got := r.fixture("ls-files", "-s", "sub"); !strings.HasPrefix(got, "160000 ") {
+		t.Errorf("sub is not a gitlink: %q", got)
+	}
+}
+
+// TestGitRun_HandlesAreNotTheModelsToSignal (review, optional): git's
+// processes are handles of the table, but not handles the daemon was
+// given: exec.proc.signal and exec.proc.wait treat them as unknown, so a
+// model-driven signal cannot cut a git call short (and leave index.lock
+// behind). A FIFO at objects/info/alternates holds git while the test
+// signals every handle id it could have.
+func TestGitRun_HandlesAreNotTheModelsToSignal(t *testing.T) {
+	r := newGitRig(t, gitRigOpts{})
+	fifo := filepath.Join(r.gitDir, "objects", "info", "alternates")
+	if err := os.MkdirAll(filepath.Dir(fifo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		res execproto.GitRunResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := r.run(statusOp)
+		done <- outcome{res, err}
+	}()
+	var w *os.File
+	for until := time.Now().Add(hangGuard); w == nil; {
+		fd, err := unix.Open(fifo, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		switch {
+		case err == nil:
+			w = os.NewFile(uintptr(fd), fifo)
+		case time.Now().After(until):
+			t.Fatal("git never opened objects/info/alternates")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hangGuard)
+	defer cancel()
+	for i := 1; i <= 8; i++ {
+		h := "ph_" + strconv.Itoa(i)
+		if _, err := r.c.Signal(ctx, execproto.SignalParams{Handle: h, Signal: execproto.SignalKILL}); !errors.Is(err, execproto.ErrInvalidState) {
+			t.Errorf("signal %s during a git run: %v, want invalid_state (unknown handle)", h, err)
+		}
+	}
+	_ = w.Close() // git reads an empty alternates file and goes on
+	o := <-done
+	if o.err != nil || !strings.Contains(o.res.Stdout, "# branch.head") {
+		t.Errorf("status after the signals: %v %+v", o.err, o.res)
 	}
 }

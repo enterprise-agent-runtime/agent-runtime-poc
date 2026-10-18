@@ -79,12 +79,12 @@ func TestGitArgv_Exact(t *testing.T) {
 		{"status", g.status(), cat(wantGlobal, []string{"status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--ignore-submodules=all", "--no-renames", "--", "."}, deny)},
 		{"verify", g.verifyCommit(base), cat(wantGlobal, []string{"rev-parse", "--verify", "--quiet", "--end-of-options", base + "^{commit}"})},
 		{"diff all", g.diff(base, gitRequest{contextLines: 3}, nil), cat(wantGlobal, []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=all", "--src-prefix=a/", "--dst-prefix=b/", "-U3", base, "--", "."}, deny)},
-		{"diff stat paths", g.diff(base, gitRequest{contextLines: 0, statOnly: true}, []string{"src/a.go", ""}), cat(wantGlobal, []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=all", "--src-prefix=a/", "--dst-prefix=b/", "-U0", "--stat", base, "--", ":(literal)src/a.go", "."}, deny)},
+		{"diff stat paths", g.diff(base, gitRequest{contextLines: 0, statOnly: true}, []string{"src/a.go", ""}), cat(wantGlobal, []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=all", "--src-prefix=a/", "--dst-prefix=b/", "--stat=65535,65535", base, "--", ":(literal)src/a.go", "."}, deny)},
 		{"head ref", g.symbolicRef(), cat(wantGlobal, []string{"symbolic-ref", "-q", "HEAD"})},
 		{"head commit", g.revParseHead(), cat(wantGlobal, []string{"rev-parse", "--verify", "--quiet", "HEAD"})},
 		{"add", g.add([]string{"-c", "x y"}), cat(wantGlobal, []string{"add", "-A", "--", ":(literal)-c", ":(literal)x y"}, deny)},
 		{"add all", g.add(nil), cat(wantGlobal, []string{"add", "-A", "--", "."}, deny)},
-		{"staged", g.staged(), cat(wantGlobal, []string{"diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "HEAD", "--"})},
+		{"staged", g.staged(), cat(wantGlobal, []string{"diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "HEAD", "--"})},
 		{"commit", g.commit("--exec-path=/x"), cat(wantGlobal, []string{"commit", "--no-verify", "--no-gpg-sign", "--quiet", "-m", "--exec-path=/x"})},
 		{"config", g.configList(), cat(wantGlobal, []string{"config", "--file", "/git/config", "--no-includes", "--list", "--name-only", "-z"})},
 	}
@@ -416,5 +416,54 @@ func TestCompleteLines(t *testing.T) {
 	}
 	if got := string(completeLines([]byte("? a\x00? .e"), 0)); got != "? a\x00" {
 		t.Errorf("NUL records: %q", got)
+	}
+}
+
+// TestCheckStatOutput (review of 41a3818): --stat lists names too, and an
+// 8.3 alias (ENV~1) is in no pathspec exclude, so stat lines are checked
+// like status records. The diff runs with explicit name widths, so git
+// never abbreviates a name to ".../x"; a name that is abbreviated anyway,
+// or a line of another shape, is uncheckable and refused.
+func TestCheckStatOutput(t *testing.T) {
+	ok := " src/app.txt     | 2 +-\n" +
+		" sp | ace.txt    | 1 +\n" +
+		" \"n\303\251\"     | 1 +\n" +
+		" bin.dat         | Bin 100 -> 150 bytes\n" +
+		" empty.txt       | 0\n" +
+		" 5 files changed, 4 insertions(+), 1 deletion(-)\n"
+	if err := checkStatOutput([]byte(ok)); err != nil {
+		t.Fatalf("clean stat: %v", err)
+	}
+	if err := checkStatOutput(nil); err != nil {
+		t.Errorf("empty: %v", err)
+	}
+	for name, out := range map[string]string{
+		"8.3 alias":  " ENV~1 | 1 +\n 1 file changed, 1 insertion(+)\n",
+		"nested 8.3": " deep/dir/ENV~1 | 1 +\n",
+		"quoted key": " \"k\\\".pem\" | 1 +\n",
+		"env":        " .env | 1 +\n",
+		// The name is everything before the last " | " (the right side
+		// holds none), so "a | .env" is one name, and "dir | x/.env" a
+		// .env under the directory "dir | x".
+		"bar in name": " dir | x/.env | 1 +\n",
+	} {
+		if err := checkStatOutput([]byte(out)); codeOf(err) != execproto.ErrDenyList {
+			t.Errorf("%s: %v, want deny_list", name, err)
+		}
+	}
+	for name, out := range map[string]string{
+		"abbreviated":  " .../ENV~1 | 1 +\n",
+		"no bar":       " src/app.txt 2 +-\n",
+		"bad count":    " src/app.txt | x\n",
+		"no lead":      "src/app.txt | 1 +\n",
+		"bad summary":  " 1 file changed, lots\n",
+		"bad quote":    " \"a | 1 +\n",
+		"graph junk":   " a | 1 +*\n",
+		"empty name":   "  | 1 +\n",
+		"content line": "+SECRET\n",
+	} {
+		if err := checkStatOutput([]byte(out)); codeOf(err) != execproto.ErrIOError {
+			t.Errorf("%s: %v, want io_error", name, err)
+		}
 	}
 }

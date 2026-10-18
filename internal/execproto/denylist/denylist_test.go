@@ -200,3 +200,25 @@ func TestMatch_ShortNames8dot3(t *testing.T) {
 		t.Error("MatchUnder: notes.txt inside the worktree denied")
 	}
 }
+
+// TestArgv_GitObjectPathsFromCwd (review of 41a3818): the path after the
+// colon is joined with cwd like every other argument, so HEAD:./gcloud/x
+// run from .config names .config/gcloud/x. (git resolves "./" in
+// <rev>:<path> against the current directory.)
+func TestArgv_GitObjectPathsFromCwd(t *testing.T) {
+	for _, c := range []struct {
+		argv []string
+		cwd  string
+	}{
+		{[]string{"git", "show", "HEAD:./gcloud/credentials.db"}, ".config"},
+		{[]string{"git", "cat-file", "-p", "HEAD:./known_hosts"}, "home/.ssh"},
+		{[]string{"git", "show", "HEAD:./config.json"}, ".docker"},
+	} {
+		if _, ok := Argv(c.argv, c.cwd); !ok {
+			t.Errorf("Argv(%q, %q) allowed", c.argv, c.cwd)
+		}
+	}
+	if _, ok := Argv([]string{"git", "show", "HEAD:./app.ts"}, "src"); ok {
+		t.Error("HEAD:./app.ts from src denied")
+	}
+}
