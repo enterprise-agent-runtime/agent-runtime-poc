@@ -58,23 +58,23 @@ func TestProbe_ReportsEveryCheckHonestly(t *testing.T) {
 func TestL2Check_StatusFollowsBlocking(t *testing.T) {
 	engines := []struct {
 		name   string
-		ping   func(context.Context) (string, string, error)
+		fetch  func(context.Context) (EngineFacts, error)
 		usable bool
 		hint   string
 		detail string // must appear in Detail: what was seen, so the user knows why
 	}{
-		{"reachable linux", func(context.Context) (string, string, error) { return "27.0.1", "linux", nil }, true, "", "27.0.1"},
-		{"reachable windows", func(context.Context) (string, string, error) { return "27.0.1", "windows", nil }, false, "Switch Docker Desktop to Linux containers", "Linux containers are required"},
+		{"reachable linux", facts(t, "27.0.1", "linux", nil), true, "", "27.0.1"},
+		{"reachable windows", facts(t, "27.0.1", "windows", nil), false, "Switch Docker Desktop to Linux containers", "Linux containers are required"},
 		// Only "linux" is usable; an engine that reports no OS type is not
 		// (mutation audit of FX-2: os == "windows" in place of os != "linux"
 		// survived the two real OS types).
-		{"reachable, OS type empty", func(context.Context) (string, string, error) { return "27.0.1", "", nil }, false, "Switch Docker Desktop to Linux containers", "Linux containers are required"},
-		{"unreachable", func(context.Context) (string, string, error) { return "", "", errors.New("connection refused") }, false, "Start Docker Desktop", "connection refused"},
+		{"reachable, OS type empty", facts(t, "27.0.1", "", nil), false, "Switch Docker Desktop to Linux containers", "Linux containers are required"},
+		{"unreachable", facts(t, "", "", errors.New("connection refused")), false, "Start Docker Desktop", "connection refused"},
 	}
 	for _, e := range engines {
 		for _, level := range []string{"L1", "L2"} {
 			t.Run(e.name+"/"+level, func(t *testing.T) {
-				c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, e.ping)
+				c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, "linux", e.fetch)
 				if c.ID != "sandbox.l2" {
 					t.Fatalf("id %q", c.ID)
 				}
@@ -135,14 +135,14 @@ func TestL2Check_RejectsMalformedEngineFields(t *testing.T) {
 		{"os unknown", "27.0.1", "plan9", false},
 		{"os with escape", "27.0.1", "linux\x1b[2J", false},
 		// Boundaries that must stay usable: 64 characters, distro suffixes.
-		{"version of 64 characters", long[:64], "linux", true},
+		{"version of 64 characters", "27.0.1+" + strings.Repeat("a", 57), "linux", true},
 		{"version with distro suffix", "27.0.1+dfsg-1ubuntu1", "linux", true},
 	}
 	for _, e := range engines {
 		for _, level := range []string{"L1", "L2"} {
 			t.Run(e.name+"/"+level, func(t *testing.T) {
-				ping := func(context.Context) (string, string, error) { return e.ver, e.os, nil }
-				c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, ping)
+				fetch := facts(t, e.ver, e.os, nil)
+				c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, "linux", fetch)
 				for _, r := range c.Detail {
 					if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
 						t.Fatalf("detail %q contains control character %U", c.Detail, r)
@@ -180,6 +180,88 @@ func TestL2Check_RejectsMalformedEngineFields(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// facts is a fetcher answering as Docker Desktop with the given version and
+// OS type (or failing with err), so the doctor tests above do not depend on
+// the host: Desktop is accepted on every host OS.
+func facts(t *testing.T, ver, osType string, err error) func(context.Context) (EngineFacts, error) {
+	f := loadSample(t, "desktop-windows")
+	f.Version, f.ServerVersion, f.Os, f.OSType = ver, ver, osType, osType
+	return func(context.Context) (EngineFacts, error) { return f, err }
+}
+
+// TestL2Check_SameVerdictAsGate guards CWE-636 from the doctor side: doctor
+// reports exactly the gate's verdict and code (one shared function), keeps
+// D-026's blocking rule (an unusable engine is fail when L2 is the default,
+// warn otherwise), and names the fix for each code. Before M2-17 doctor
+// called a rootful native engine, Podman and an engine with the
+// CVE-2024-29018 resolver "ok".
+func TestL2Check_SameVerdictAsGate(t *testing.T) {
+	hints := map[string]string{
+		EngineUnreachableCode: "Start Docker Desktop",
+		EngineOSCode:          "Switch Docker Desktop to Linux containers",
+		EngineRootfulCode:     "rootless Docker or Docker Desktop",
+		EngineVersionCode:     "Upgrade Docker",
+		EnginePodmanCode:      "rootless Docker or Docker Desktop",
+		EngineUnknownCode:     "genuine Docker engine",
+	}
+	type row struct {
+		name, host string
+		fetch      func(context.Context) (EngineFacts, error)
+	}
+	var rows []row
+	for _, s := range []string{"rootless-linux", "rootful-linux", "desktop-windows", "desktop-macos", "desktop-windows-containers", "podman-rootless"} {
+		f := loadSample(t, s)
+		for _, host := range []string{"linux", "windows", "darwin"} {
+			rows = append(rows, row{s, host, func(context.Context) (EngineFacts, error) { return f, nil }})
+		}
+	}
+	old := withVersion(loadSample(t, "rootless-linux"), "25.0.4")
+	rows = append(rows,
+		row{"rootless 25.0.4", "linux", func(context.Context) (EngineFacts, error) { return old, nil }},
+		row{"unreachable", "linux", func(context.Context) (EngineFacts, error) { return EngineFacts{}, errors.New("connection refused") }},
+		row{"not an engine", "linux", func(context.Context) (EngineFacts, error) {
+			return EngineFacts{}, &engineAnswerError{"engine answered HTTP 404 to GET /info"}
+		}},
+	)
+	seen := map[string]bool{}
+	for _, r := range rows {
+		for _, level := range []string{"L1", "L2"} {
+			t.Run(r.name+"/"+r.host+"/"+level, func(t *testing.T) {
+				gate := engineVerdict(context.Background(), r.host, r.fetch)
+				c := l2CheckWith(context.Background(), Options{DefaultLevel: level}, r.host, r.fetch)
+				if c.Blocking != (level == "L2") {
+					t.Errorf("blocking = %v", c.Blocking)
+				}
+				if gate.Code == "" {
+					if c.Status != "ok" || c.FixHint != nil || c.Data["kind"] != string(gate.Kind) {
+						t.Fatalf("gate accepts %s, doctor says %s (%q, data %v)", gate.Kind, c.Status, c.Detail, c.Data)
+					}
+					return
+				}
+				seen[gate.Code] = true
+				want := "warn"
+				if level == "L2" {
+					want = "fail"
+				}
+				if c.Status != want || c.Data["code"] != gate.Code {
+					t.Fatalf("gate refuses %s, doctor says %s with code %v (%q)", gate.Code, c.Status, c.Data["code"], c.Detail)
+				}
+				if !strings.Contains(c.Detail, gate.Code) {
+					t.Errorf("detail %q does not name the code %s", c.Detail, gate.Code)
+				}
+				if c.FixHint == nil || !strings.Contains(*c.FixHint, hints[gate.Code]) {
+					t.Errorf("code %s: hint %v, want containing %q", gate.Code, c.FixHint, hints[gate.Code])
+				}
+			})
+		}
+	}
+	for code := range hints {
+		if !seen[code] {
+			t.Errorf("no row produced %s", code)
 		}
 	}
 }

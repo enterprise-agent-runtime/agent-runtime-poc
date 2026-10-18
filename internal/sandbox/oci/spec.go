@@ -13,19 +13,22 @@ const (
 	HostDarwin  = "darwin"
 )
 
-// Engine is the kind of Docker engine the Plan is for (M2-17 checks which
-// one is running before a Plan is used).
-type Engine string
+// Engine is the kind of Docker engine the Plan is for. It is the kind the
+// L2 engine gate returns: the backend (M2-21) calls sandbox.CheckEngine
+// immediately before it creates anything and passes the result here;
+// Build trusts it (D-071, CWE-636).
+type Engine = sandbox.EngineKind
 
 // Engines.
 const (
-	// EngineRootless is rootless Docker or Podman on a Linux host: the
-	// container's uid 0 is the host user, without capabilities (A06 §15).
-	EngineRootless Engine = "rootless"
+	// EngineRootless is rootless Docker on a Linux host: the container's
+	// uid 0 is the host user, without capabilities (A06 §15). Podman is
+	// refused by the gate (engine_podman).
+	EngineRootless = sandbox.EngineRootless
 	// EngineDesktop is Docker Desktop (Windows, macOS, or Linux with
 	// Desktop): a rootful engine inside a VM, so the container runs as a
 	// non-root user (C-03).
-	EngineDesktop Engine = "desktop"
+	EngineDesktop = sandbox.EngineDesktop
 )
 
 // Options are the inputs of Build that do not come from the Spec.
