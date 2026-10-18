@@ -48,55 +48,59 @@ func Probe(ctx context.Context, o Options) []Check {
 	return checks
 }
 
-// l2Check pings the Docker engine. L2 is first-class on every OS. It is
-// blocking exactly when L2 is the configured default; on Windows that is
-// always the case, because the platform default level there is L2 and L2 is
-// the only level offered (CONFLICTS C-02).
+// l2Check asks the Docker engine what it is. L2 is first-class on every
+// OS. It is blocking exactly when L2 is the configured default; on Windows
+// that is always the case, because the platform default level there is L2
+// and L2 is the only level offered (CONFLICTS C-02).
 func l2Check(ctx context.Context, o Options) Check {
-	return l2CheckWith(ctx, o, dockerPing)
+	return l2CheckWith(ctx, o, platform.OS(), func(ctx context.Context) (EngineFacts, error) { return fetchEngineVia(ctx, dialDocker) })
 }
 
-// l2CheckWith is l2Check with the engine ping injected. An unusable engine
-// (unreachable, or not serving Linux containers) is "fail" when L2 is
-// blocking and "warn" otherwise (design A05 §8.1).
-func l2CheckWith(ctx context.Context, o Options, ping func(context.Context) (ver, osType string, err error)) Check {
+// l2CheckWith is l2Check with the host OS and the engine fetch injected.
+// It reports the verdict of the L2 engine gate (engineVerdict, shared with
+// CheckEngine), so doctor and sandbox creation cannot disagree; doctor only
+// reports, the gate refuses (CWE-636). Any refusal is "fail" when L2 is
+// blocking and "warn" otherwise (D-026, design A05 §8.1).
+func l2CheckWith(ctx context.Context, o Options, hostOS string, fetch func(context.Context) (EngineFacts, error)) Check {
 	blocking := o.DefaultLevel == "L2"
 	c := Check{ID: "sandbox.l2", Group: "sandbox", Title: "L2 container sandbox (Docker engine)", Blocking: blocking}
-	ver, os, err := ping(ctx)
-	unusable := "warn"
+	v := engineVerdict(ctx, hostOS, fetch)
+	// Only fields that passed the gate's shape checks are kept (CWE-150,
+	// M2-3); the reason never carries anything else the endpoint chose.
+	data := map[string]any{}
+	if v.Version != "" {
+		data["version"] = v.Version
+	}
+	if v.APIVersion != "" {
+		data["api_version"] = v.APIVersion
+	}
+	if v.OSType != "" {
+		data["os_type"] = v.OSType
+	}
+	if v.Code == "" {
+		data["kind"] = string(v.Kind)
+		c.Status, c.Detail, c.Data = "ok", "Docker engine usable for L2: "+v.Reason, data
+		return c
+	}
+	data["code"] = v.Code
+	c.Status = "warn"
 	if blocking {
-		unusable = "fail"
+		c.Status = "fail"
 	}
-	if err != nil {
-		c.Status = unusable
-		c.Detail = "Docker engine not reachable: " + err.Error()
-		c.FixHint = hint("Start Docker Desktop (Windows, with the WSL2 backend) or Docker Engine (Linux), then run warden doctor again.")
-		return c
-	}
-	// Version and Os are chosen by whatever answers on the Docker endpoint,
-	// a genuine engine or a process squatting on it. Neither is shown or
-	// stored unless it has the shape a Docker engine reports (CWE-150, M2-3).
-	if !engineVersion.MatchString(ver) {
-		c.Status = unusable
-		c.Detail = "Docker engine answered with a malformed version (not shown); the endpoint may not be a Docker engine"
-		c.FixHint = hint("Check that the Docker socket or pipe (and DOCKER_HOST, if set) belongs to a genuine Docker engine, then run warden doctor again.")
-		return c
-	}
-	if os != "linux" && os != "windows" {
-		c.Status = unusable
-		c.Detail = fmt.Sprintf("Docker engine %s reachable, OS type unrecognised (not shown); Linux containers are required", ver)
-		c.Data = map[string]any{"version": ver}
-		c.FixHint = hint("Switch Docker Desktop to Linux containers (WSL2 backend), and check that the Docker endpoint belongs to a genuine Docker engine.")
-		return c
-	}
-	c.Status, c.Detail = "ok", fmt.Sprintf("Docker engine %s reachable (%s containers)", ver, os)
-	c.Data = map[string]any{"version": ver, "os_type": os}
-	if os != "linux" {
-		c.Status = unusable
-		c.Detail += "; Linux containers are required"
-		c.FixHint = hint("Switch Docker Desktop to Linux containers (WSL2 backend).")
-	}
+	c.Detail = capRunes(fmt.Sprintf("L2 sandboxes are refused (%s): %s", v.Code, v.Reason), maxDoctorText)
+	c.Data = data
+	c.FixHint = hint(engineFix[v.Code])
 	return c
+}
+
+// engineFix is the remedy for each refusal code of the engine gate.
+var engineFix = map[string]string{
+	EngineUnreachableCode: "Start Docker Desktop (Windows or macOS; on Windows with the WSL2 backend) or rootless Docker (Linux, with DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock), then run warden doctor again.",
+	EngineOSCode:          "Switch Docker Desktop to Linux containers (WSL2 backend), and check that the Docker endpoint (and DOCKER_HOST, if set) belongs to a genuine Docker engine.",
+	EngineRootfulCode:     "Use rootless Docker or Docker Desktop: install rootless Docker with dockerd-rootless-setuptool.sh install and set DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock, then run warden doctor again. A rootful native engine is refused for L2.",
+	EngineVersionCode:     "Upgrade Docker to 26.0.0 or later (or at least 25.0.5 or 23.0.11 on those lines); update Docker Desktop to a release with such an engine. Older engines leak DNS from internal networks (CVE-2024-29018).",
+	EnginePodmanCode:      "Podman is not supported for L2 yet: use rootless Docker or Docker Desktop, and point DOCKER_HOST at it.",
+	EngineUnknownCode:     "Check that the Docker socket or pipe (and DOCKER_HOST, if set) belongs to a genuine Docker engine, rootless Docker on Linux or Docker Desktop, then run warden doctor again.",
 }
 
 // engineVersion is the shape of a Docker engine version ("27.0.1",

@@ -22,6 +22,19 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-034 · 2026-10-18 · M2-17: the L2 engine gate and a strict config.yaml
+
+- **Asked:** M2 plan task M2-17 and the two M1 follow-ups it carries (the gate at creation, CWE-636; `default_level` normalisation, CWE-178). Delivered under "merge each task when its review passes".
+- **Task:** Refuse an unsafe or unidentifiable Docker engine right before an L2 sandbox is made, and read the daemon's configuration so that nothing misspelt or ambiguous silently becomes a default.
+- **How:** the gate and its endpoint selection (D-077), the strict config reader (D-078), doctor reporting the gate's own verdict. Commits `899eaa3`, `b187f51`.
+- **Rules kept:** no Docker started and no new dependency (the existing ping over an injected dialer carried it); fakes over `net.Pipe` (INV-J); test first and mutation checks in both rounds.
+- **Rules changed or bent:**
+  - **Podman refused** (C-79), against WRD-13's "rootless Docker or Podman"; decided by me under R3 with the reviewer's agreement, open for the owner to revisit.
+  - **Engine samples written from memory**, not captured: no engine was available. Recorded; to be replaced when Docker Desktop runs.
+  - **Two existing doctor test rows** were moved onto the new fetch; their intent kept.
+- **Verified:** one review round with fixes; adversarial responses (non-HTTP answers, escape sequences, oversized and slow endpoints, redirects, trailing JSON) and YAML inputs (multiple documents, merge keys, aliases, tags, duplicates, BOM); `make check` green; `-race` in WSL2.
+- **Left:** see the M2-17 entry in PROGRESS, above all the endpoint authentication that must land before M2-21.
+
 ## W-033 · 2026-10-17 · M2-8: the executor's process methods
 
 - **Asked:** M2 plan task M2-8, the task that wires `IsShellStringResolved` into spawn. Delivered under "merge each task when its review passes".

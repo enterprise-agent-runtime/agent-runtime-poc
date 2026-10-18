@@ -141,7 +141,13 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
 
 **Group E** (L2 sandbox):
 
-- [ ] **M2-17** [Docker] engine gate at creation (CWE-636), plus `sandbox.default_level` normalisation (CWE-178)
+- [x] **M2-17** engine gate at creation (CWE-636), plus `sandbox.default_level` normalisation (CWE-178) (D-077, D-078, C-79).
+  - **Pieces:** `internal/sandbox` `CheckEngine`, `decideEngine`, `engineVerdict` (shared with doctor), `dockerEndpoint`; `internal/config` `SandboxLevel`, `LoadDaemon`; wardend reads `config.yaml`.
+  - **Commits:** `899eaa3`, `b187f51`.
+  - **Review:** one round plus fixes: endpoint bytes in error text after a non-HTTP answer, only the first YAML document read, error messages naming Go types, `DOCKER_HOST` silently falling back. 47 + 23 mutants caught.
+  - **Must land before M2-21 merges:** authenticate the Docker endpoint as D-049 does for wardend: on Windows the pipe server's token user and the pipe owner must be the user, SYSTEM or Administrators; on Unix `SO_PEERCRED`, and rootless or Desktop-on-Linux need the peer uid to be ours (a uid 0 peer claiming rootless is refused). Until then every signal the gate reads is self-reported; a squatter on `\\.\pipe\docker_engine` could claim to be Desktop. A strict JSON decoder (no case-variant or duplicate keys, CWE-436) is a small addition once the endpoint is authenticated.
+  - **When Docker Desktop runs:** replace `testdata/engine/*.json` (written from memory, not captured) with real `/version` and `/info` captures from Desktop on Windows and rootless Docker on Linux; then consider second identity signals (Desktop's `Platform.Name` prefix; rootless via the rootlesskit component or the peer uid).
+  - **Low, left:** Docker Desktop for Linux's socket is reached only through `DOCKER_HOST` (docker contexts are not read); a version with `~` gives `engine_unknown` instead of `engine_version` (fail closed).
 - [x] **M2-18** container spec and Windows path mapping (D-071, D-072, D-073, C-77).
   - **Pieces:** `internal/sandbox/oci` (`Build`, `Plan`, `MapHostPath`, `CheckImageRef`); `internal/platform` `HostFS` (case sensitivity, 8.3 creation and aliases, final paths) for Windows, Linux and macOS; the Windows doctor check `sandbox.short_names`; `platform.HomeHash`.
   - **Commits:** `05e2ce9`, `eb41bda`, `94a1660`, `ce037b4`.
