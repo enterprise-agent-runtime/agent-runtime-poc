@@ -214,6 +214,12 @@ func matchSegs(pat, segs []string) bool {
 // a spawned process defeats anyway (it can build any path at run time); the
 // defence against 8.3 aliases of paths is Match and MatchUnder, which the
 // executor applies to every path it opens and the mask layer to every mount.
+//
+// Git names a file in the objects as <rev>:<path> (HEAD:.env, :0:.env for
+// the index), which reads a committed deny-listed file that no mask hides
+// (the M2-12 follow-up), so the text after every colon is matched as well.
+// A blob given by its id names no path; stopping that is the policy
+// engine's command rules, not this heuristic.
 func Argv(argv []string, cwdRel string) (string, bool) {
 	for _, a := range argv[min(1, len(argv)):] {
 		if _, v, ok := strings.Cut(a, "="); ok && strings.HasPrefix(a, "-") {
@@ -224,6 +230,16 @@ func Argv(argv []string, cwdRel string) (string, bool) {
 		}
 		if pat, ok := match(a, false); ok {
 			return pat, true
+		}
+		for rest := a; ; {
+			_, after, ok := strings.Cut(rest, ":")
+			if !ok {
+				break
+			}
+			if pat, ok := match(after, false); ok && after != "" {
+				return pat, true
+			}
+			rest = after
 		}
 		if cwdRel != "" {
 			if pat, ok := match(path.Join(cwdRel, strings.ReplaceAll(a, "\\", "/")), false); ok {

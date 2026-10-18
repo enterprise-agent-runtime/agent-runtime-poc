@@ -9,7 +9,8 @@
 // io.ReadWriteCloser, so the same code runs over the inherited socketpair
 // of L1 (--rpc-fd 3) and the container stdio of L2 (--rpc-stdio). The
 // file methods are registered by RegisterFS (fsserver.go, fs_unix.go);
-// proc and git come in later milestones.
+// the process methods by RegisterProc (proc.go, proc_unix.go), and
+// exec.git.run by RegisterGit (git.go, git_unix.go, git_ops_unix.go).
 //
 // What the loop guarantees:
 //

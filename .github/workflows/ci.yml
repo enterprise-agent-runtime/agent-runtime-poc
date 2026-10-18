@@ -184,5 +184,23 @@ jobs:
             TestIOBeforeWait_RealProcesses
             TestShutdown_KillsEverything
             TestHarness_CwdAndRelativeArgv0
+            # M2-9: exec.git.run against a real git in a temporary
+            # repository (skips only where no git binary exists).
+            TestGitRun_StatusLeavesOutDenyListed
+            TestGitRun_DiffNeverCarriesDenyListedContent
+            TestGitRun_OutputCheckCatchesWhatPathspecsMiss
+            TestGitRun_ObjectReadsAndOptionsRefused
+            TestGitRun_AgainstMustBeACommit
+            TestGitRun_CommitOnlyOnTheSessionBranch
+            TestGitRun_CommitMessage
+            TestGitRun_NoHookRuns
+            TestGitRun_RepositoryConfigCannotRunPrograms
+            TestGitRun_EnvironmentIsFixed
+            TestGitRun_ChildrenAreHandles
+            TestGitRun_HarnessModeForbidden
+            TestGitRun_Head
+            TestGitRun_ErrorDetailsAreFixed
+            TestGitRun_PathsGoToGitResolved
+            TestGitRun_StderrNeverForwarded
           )
           bash scripts/ci-require-tests.sh go-test.json -- "${required[@]}"
