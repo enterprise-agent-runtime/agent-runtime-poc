@@ -22,6 +22,17 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-035 · 2026-10-18 · M2-8c: four timing races in the M2-8 process tests
+
+- **Asked:** CI's ubuntu `make check` failed in two M2-8 tests on a branch that does not touch `internal/exec` (PR #27, twice for the SIGSYS test). A flaky test of "no process survives its call" is either a test bug or a real escape, so it was reproduced and explained before anything was changed.
+- **Found:** races in the tests, not in the product. Under load (2 x nproc busy loops), before and after: SIGSYS 31/500 → 0/500; survivor 44/500 → 0/500; two more found on the way, IOBeforeWait (about half the runs at `-cpu=1,4`) and OutputCap on both streams (9/120), both → 0/500.
+  - **SIGSYS:** the signal sometimes reached the shim before it executed `sleep`; Go handles SIGSYS and the process exited normally. The test now waits until `/proc/<pid>/exe` is the target.
+  - **Survivor:** no grandchild escaped. Each "alive" one was in state R with SIGKILL pending and gone 2-6 ms later: the kernel closes a dying process's descriptors before it becomes a zombie, so the wait returns first. The test asserts what the product guarantees at that moment (gone, zombie, or SIGKILL pending), then waits under the hang guard.
+  - **IOBeforeWait:** the test read the wire record before the server had finished writing; it now stops the server first. The environment and secret leak checks use the same helper, closing a false negative where their last frame went unchecked.
+  - **Both streams:** A06 promises no order across stdout and stderr; each stream's head and tail are now checked separately.
+- **Commit:** `dafa18f` (test files only).
+- **Rules kept:** product code unchanged; every mutation the changed tests guard is still caught; no wall-clock assertions (bounded waits only); `make check` green; `-race` passes.
+
 ## W-034 · 2026-10-18 · M2-17: the L2 engine gate and a strict config.yaml
 
 - **Asked:** M2 plan task M2-17 and the two M1 follow-ups it carries (the gate at creation, CWE-636; `default_level` normalisation, CWE-178). Delivered under "merge each task when its review passes".
