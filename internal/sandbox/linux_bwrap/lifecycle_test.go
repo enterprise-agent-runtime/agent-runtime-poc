@@ -226,11 +226,10 @@ func TestReadCgroupCounters(t *testing.T) {
 // A06 §7.4 rows it owns: memory (oom_kill rose), pids (pids max rose),
 // disk (the free-space watchdog), and seccomp_kill (bwrap, PID 1 of the
 // namespace, exits 128+SIGSYS = 159 when warden-exec died of the filter,
-// or bwrap itself died of SIGSYS). tmp_full is not among them: the /tmp
-// tmpfs exists only in the sandbox's mount namespace, and the daemon
-// could reach it only through /proc/<pid>/root, which needs ptrace access
-// that warden-exec's PR_SET_DUMPABLE 0 (D-062, M2-10) removes on purpose;
-// the executor reports it from inside.
+// or bwrap itself died of SIGSYS). tmp_full is not among them: its A06
+// §7.4 row is per process exit, which the executor sees and can check
+// with a statfs of /tmp, so the executor reports it (M2-10; see
+// ClassifyEnd).
 func TestClassifyEnd(t *testing.T) {
 	base := CgroupCounters{OOMKill: 1, PidsMax: 4}
 	exit0 := &RootExit{Exited: true, Code: 0}

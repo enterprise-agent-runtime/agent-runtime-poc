@@ -342,8 +342,11 @@ type End struct {
 // owns: memory when the scope's oom_kill rose since before, pids when its
 // pids max rose, disk when the free-space watchdog fired (that order when
 // several hold), and seccomp_kill when bwrap exited 159 or died of SIGSYS
-// (root nil: still running). tmp_full is the executor's to report: the
-// sandbox's /tmp is visible only inside its mount namespace.
+// (root nil: still running). tmp_full is the executor's to report (M2-10):
+// A06 §7.4's tmp_full row is per process exit, which the executor sees as
+// it happens, and a statfs of /tmp is trivial for it there. (The daemon
+// can reach that tmpfs too, through /proc/<pid>/root/tmp, since it owns
+// the sandbox's user namespace; that is not why the row is split.)
 func ClassifyEnd(before, after CgroupCounters, root *RootExit, diskLow bool) End {
 	var e End
 	switch {
