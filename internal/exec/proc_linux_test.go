@@ -62,6 +62,7 @@ type rig struct {
 	procs *exec.Procs
 	c     *tools.Client
 	conn  *recordConn
+	stop  func() error // stops the server (idempotent)
 
 	mu  sync.Mutex
 	ios []execproto.IONotification
@@ -122,6 +123,7 @@ func newRig(t *testing.T, mutate ...func(*exec.ProcConfig)) *rig {
 		t.Fatal(err)
 	}
 	stop := startServer(t, s, r.conn)
+	r.stop = stop
 	r.c = tools.New(context.Background(), b, func(n execproto.IONotification) {
 		r.mu.Lock()
 		r.ios = append(r.ios, n)
@@ -380,7 +382,7 @@ func TestSpawn_EnvironmentIsTheAllowlist(t *testing.T) {
 	if got != want {
 		t.Errorf("child environment:\n%s\nwant exactly:\n%s", got, want)
 	}
-	if bytes.Contains(r.conn.written(), []byte(canary)) {
+	if bytes.Contains(r.wire(), []byte(canary)) {
 		t.Error("the launch environment's key reached the wire")
 	}
 }
@@ -399,7 +401,7 @@ func TestSpawn_SecretEnv(t *testing.T) {
 	if _, err := tool.spawn(p); !errors.Is(err, execproto.ErrInvalidArgument) {
 		t.Errorf("secret_env in tool mode: %v, want invalid_argument", err)
 	}
-	if bytes.Contains(tool.conn.written(), []byte(secret)) {
+	if bytes.Contains(tool.wire(), []byte(secret)) {
 		t.Error("tool mode: the secret reached the wire")
 	}
 
@@ -416,9 +418,6 @@ func TestSpawn_SecretEnv(t *testing.T) {
 	if got := hr.output(h.Handle)[execproto.StreamStdout]; got != "set, "+strconv.Itoa(len(secret))+" bytes" {
 		t.Errorf("engine sees %q, want the secret set", got)
 	}
-	if bytes.Contains(hr.conn.written(), []byte(secret)) {
-		t.Error("harness mode: the secret reached the wire")
-	}
 	if bytes.Contains(cmdline, []byte(secret)) {
 		t.Error("the secret is on the shim's command line")
 	}
@@ -427,6 +426,9 @@ func TestSpawn_SecretEnv(t *testing.T) {
 	other.Authz = execproto.Authz{DecisionID: "dec_1", Kind: execproto.AuthzHarness}
 	if _, err := hr.spawn(other); !errors.Is(err, execproto.ErrModeForbidden) {
 		t.Errorf("non-spec argv in harness mode: %v, want mode_forbidden", err)
+	}
+	if bytes.Contains(hr.wire(), []byte(secret)) {
+		t.Error("harness mode: the secret reached the wire")
 	}
 }
 
@@ -484,6 +486,18 @@ func TestWait_SIGSYSIsSeccompKill(t *testing.T) {
 	p := spawnParams([]string{"sleep", "60"})
 	p.Authz.Profile, p.Authz.Approved = "sleep", false
 	h := r.mustSpawn(p)
+	// The handle's pid is the shim until it has executed sleep. A signal
+	// that lands before that hits the Go shim, whose runtime handles
+	// SIGSYS and exits normally (M2-8c: reason exit, seen in CI and under
+	// load), so the test waits until the pid is running sleep.
+	sleepBin, err := filepath.EvalSymlinks("/bin/sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the shim to execute sleep", func() bool {
+		exe, err := os.Readlink("/proc/" + strconv.Itoa(h.PID) + "/exe")
+		return err == nil && exe == sleepBin
+	})
 	if err := unix.Kill(h.PID, unix.SIGSYS); err != nil {
 		t.Fatal(err)
 	}
@@ -564,10 +578,17 @@ func TestNoProcessSurvivesItsCall(t *testing.T) {
 	if err != nil || exitCode(w) != 0 {
 		t.Fatalf("helper: %q, %+v", r.output(h.Handle), w)
 	}
-	if alive(pid) {
+	// When the wait returns, the grandchild has closed the pipe, which it
+	// does early in its exit, before it becomes a zombie: it may still be
+	// running its exit for a few milliseconds (M2-8c, seen in CI and under
+	// load: state R with SIGKILL pending). What the product guarantees at
+	// this point is that it has been killed, so that is asserted at once;
+	// that it is then gone is waited for under the hang guard.
+	if !killedOrGone(pid) {
 		_ = unix.Kill(pid, unix.SIGKILL)
-		t.Error("a grandchild in the leader's group survived the call")
+		t.Fatal("a grandchild in the leader's group survived the call: not killed")
 	}
+	waitFor(t, "the killed grandchild to be gone", func() bool { return !alive(pid) })
 	if w.StraysKilled != 0 {
 		t.Errorf("strays_killed %d: the leader's own group is killed as the group, not counted as strays", w.StraysKilled)
 	}
@@ -653,7 +674,7 @@ func TestIOBeforeWait_RealProcesses(t *testing.T) {
 	_, _ = r.procs.Shutdown(ctx, 0, "")
 	r.procs.Close()
 
-	fr := execproto.NewFrameReader(bytes.NewReader(r.conn.written()))
+	fr := execproto.NewFrameReader(bytes.NewReader(r.wire()))
 	waited := map[string]bool{}
 	ios := map[string]int{}
 	for {
@@ -925,4 +946,34 @@ func TestWaitSignal_Handles(t *testing.T) {
 	if _, err := r.c.Signal(ctx, execproto.SignalParams{Handle: h.Handle, Signal: execproto.SignalKILL}); !errors.Is(err, execproto.ErrInvalidState) {
 		t.Errorf("signal after the exit was reported: %v, want invalid_state", err)
 	}
+}
+
+// killedOrGone reports whether pid is gone, a zombie, or has SIGKILL
+// pending (it has been killed and is still running its exit). It reads
+// SigPnd and ShdPnd from /proc/<pid>/status; SIGKILL is bit 8 (signal 9).
+func killedOrGone(pid int) bool {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
+	if err != nil || !alive(pid) {
+		return true
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(l, ":")
+		if !ok || (k != "SigPnd" && k != "ShdPnd") {
+			continue
+		}
+		if mask, err := strconv.ParseUint(strings.TrimSpace(v), 16, 64); err == nil && mask&(1<<(uint(unix.SIGKILL)-1)) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// wire stops the server and returns every byte it wrote. The client has a
+// frame as soon as it has read it, which can be before the server's Write
+// has returned and the recorder has added the frame; once Serve has
+// returned, its handlers are done and the record is complete (M2-8c: the
+// last wait response was missing under load). Calls on r.c fail after it.
+func (r *rig) wire() []byte {
+	_ = r.stop()
+	return r.conn.written()
 }
