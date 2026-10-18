@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -28,19 +29,24 @@ type DaemonSandbox struct {
 	DefaultLevel string
 }
 
-// rawDaemon is config.yaml as written. default_level is a node, so a key
-// that is present but null, empty or not a string is told apart from an
-// absent key: only the absent key takes the platform default.
-type rawDaemon struct {
-	Sandbox struct {
-		DefaultLevel yaml.Node `yaml:"default_level"`
-	} `yaml:"sandbox"`
+// daemonKeys is every key config.yaml may hold, by section. A key outside
+// it is refused at load and named, with its line (CLAUDE.md §7).
+var daemonKeys = map[string][]string{
+	"sandbox": {"default_level"},
 }
 
 // LoadDaemon reads config.yaml at path. A missing file or an absent
 // sandbox.default_level gives def (platform.DefaultSandboxLevel()); a
 // present value is normalised against levels (platform.SandboxLevels())
 // by SandboxLevel, and anything it refuses stops the load.
+//
+// The file is walked as YAML nodes rather than decoded into a struct, so
+// that a key the daemon does not read is named as the user wrote it
+// ("sandbox.backend", not a Go type), a merge key cannot bring keys in
+// unseen, and a key that is present but null, empty or not a string is
+// told apart from an absent one: only the absent key takes the default.
+// The file must hold exactly one YAML document: a second one, or a first
+// one that is empty, would otherwise go unread (CWE-178, review of M2-17).
 func LoadDaemon(path string, levels []string, def string) (Daemon, error) {
 	d := Daemon{Sandbox: DaemonSandbox{DefaultLevel: def}}
 	b, err := os.ReadFile(path)
@@ -50,19 +56,39 @@ func LoadDaemon(path string, levels []string, def string) (Daemon, error) {
 	if err != nil {
 		return Daemon{}, fmt.Errorf("config.yaml: %w", err)
 	}
-	var raw rawDaemon
 	dec := yaml.NewDecoder(bytes.NewReader(b))
-	dec.KnownFields(true)
-	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) { // an empty file sets nothing
+	var doc yaml.Node
+	if err := dec.Decode(&doc); err != nil {
+		if errors.Is(err, io.EOF) { // an empty file sets nothing
+			return d, nil
+		}
 		return Daemon{}, fmt.Errorf("config.yaml: %w", err)
 	}
-	n := raw.Sandbox.DefaultLevel
-	if n.Kind == 0 { // the key is absent
+	var next yaml.Node
+	if err := dec.Decode(&next); !errors.Is(err, io.EOF) {
+		return Daemon{}, errors.New("config.yaml must contain exactly one YAML document")
+	}
+	root := &doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return d, nil
+		}
+		root = root.Content[0]
+	}
+	if root.Kind == yaml.ScalarNode && root.Tag == "!!null" { // "---" or "~" alone
+		return d, nil
+	}
+	values, err := daemonValues(root)
+	if err != nil {
+		return Daemon{}, err
+	}
+	n, ok := values["sandbox.default_level"]
+	if !ok { // the key is absent
 		return d, nil
 	}
 	if n.Kind != yaml.ScalarNode || n.Tag != "!!str" {
 		return Daemon{}, fmt.Errorf("config.yaml line %d: sandbox.default_level must be one of %s, as a string (got %s)",
-			n.Line, strings.Join(levels, ", "), describeNode(n))
+			n.Line, strings.Join(levels, ", "), describeNode(*n))
 	}
 	lvl, err := SandboxLevel(n.Value, levels)
 	if err != nil {
@@ -70,6 +96,60 @@ func LoadDaemon(path string, levels []string, def string) (Daemon, error) {
 	}
 	d.Sandbox.DefaultLevel = lvl
 	return d, nil
+}
+
+// daemonValues walks the top-level mapping and returns the value node of
+// every known key by its dotted name, refusing unknown, repeated and
+// non-scalar keys and sections that are not mappings.
+func daemonValues(root *yaml.Node) (map[string]*yaml.Node, error) {
+	if root.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("config.yaml line %d: the top level must be a mapping of sections (got %s)", root.Line, describeNode(*root))
+	}
+	out := map[string]*yaml.Node{}
+	err := eachKey(root, "", func(section string, k, v *yaml.Node) error {
+		keys, known := daemonKeys[section]
+		if !known {
+			return notRead(k, section)
+		}
+		if v.Kind == yaml.ScalarNode && v.Tag == "!!null" { // "sandbox:" with nothing under it
+			return nil
+		}
+		if v.Kind != yaml.MappingNode {
+			return fmt.Errorf("config.yaml line %d: %+q must be a mapping (got %s)", v.Line, section, describeNode(*v))
+		}
+		return eachKey(v, section+".", func(name string, k, v *yaml.Node) error {
+			if !slices.Contains(keys, name) {
+				return notRead(k, section+"."+name)
+			}
+			out[section+"."+name] = v
+			return nil
+		})
+	})
+	return out, err
+}
+
+// eachKey calls f for every key of mapping m, refusing a key that is not
+// a plain string or that appears twice. prefix is only for messages.
+func eachKey(m *yaml.Node, prefix string, f func(name string, k, v *yaml.Node) error) error {
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		k, v := m.Content[i], m.Content[i+1]
+		if k.Kind != yaml.ScalarNode || (k.Tag != "!!str" && k.Tag != "!!merge") {
+			return fmt.Errorf("config.yaml line %d: keys must be plain names (got %s)", k.Line, describeNode(*k))
+		}
+		if seen[k.Value] {
+			return fmt.Errorf("config.yaml line %d: key %+q appears twice", k.Line, prefix+k.Value)
+		}
+		seen[k.Value] = true
+		if err := f(k.Value, k, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func notRead(k *yaml.Node, name string) error {
+	return fmt.Errorf("config.yaml line %d: key %+q is not read by this version of wardend; remove it", k.Line, name)
 }
 
 func describeNode(n yaml.Node) string {

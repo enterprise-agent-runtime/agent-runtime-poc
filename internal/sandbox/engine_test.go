@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The samples in testdata/engine are GET /version and GET /info answers of
@@ -353,6 +354,18 @@ func TestEngineVerdict_OverDialer(t *testing.T) {
 		// parsed from its first MiB.
 		{"valid version padded past 1 MiB", first(fakeEngineRoutes(t, map[string]string{"/version": okJSON(append(append([]byte{}, rootless.Version...), []byte(strings.Repeat(" ", 1<<20))...)), "/info": okJSON(rootless.Info)})), EngineUnknownCode, "more than 1 MiB"},
 		{"accepted", first(fakeEngineRoutes(t, map[string]string{"/version": okJSON(rootless.Version), "/info": okJSON(rootless.Info)})), "", "27.3.1"},
+		// Review of M2-17 (CWE-150/209): once the dial succeeded, a transport
+		// error is the endpoint's doing, and net/http quotes the offending
+		// bytes into it (the status line, a header line). It was reported as
+		// engine_unreachable with those bytes in the reason. Now it is
+		// engine_unknown with fixed text.
+		{"status line with escape", first(fakeEngineRoutes(t, map[string]string{"/version": "HTTP/1.1 2\x1b[31m00 pwn\r\n\r\n"})), EngineUnknownCode, "the endpoint answered, but not with HTTP"},
+		{"header without a colon", first(fakeEngineRoutes(t, map[string]string{"/version": "HTTP/1.1 200 OK\r\nX\x1b]0;pwn\x07\r\n\r\n"})), EngineUnknownCode, "the endpoint answered, but not with HTTP"},
+		{"not HTTP at all", first(fakeEngineRoutes(t, map[string]string{"/version": "\x1b[2J\x1b]8;;http://pwn\x07 hello\r\n\r\n"})), EngineUnknownCode, "the endpoint answered, but not with HTTP"},
+		{"bad chunked body", first(fakeEngineRoutes(t, map[string]string{"/version": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\x1b[31mpwn\r\n"})), EngineUnknownCode, "the endpoint answered, but not with HTTP"},
+		// A redirect is not followed (it would name another endpoint); it is
+		// a non-200 answer like any other.
+		{"redirect", first(fakeEngineRoutes(t, map[string]string{"/version": "HTTP/1.1 302 Found\r\nLocation: http://pwn/version\r\nContent-Length: 0\r\n\r\n"})), EngineUnknownCode, "HTTP 302"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -360,7 +373,7 @@ func TestEngineVerdict_OverDialer(t *testing.T) {
 			if v.Code != c.code {
 				t.Fatalf("code = %q (reason %.200q), want %q", v.Code, v.Reason, c.code)
 			}
-			if strings.Contains(v.Reason, "pwn") || len(v.Reason) > 500 {
+			if strings.Contains(v.Reason, "pwn") || strings.ContainsAny(v.Reason, "\x1b\x07") || strings.Contains(v.Reason, "31m") || len(v.Reason) > 500 {
 				t.Errorf("reason carries what the endpoint chose: %.200q", v.Reason)
 			}
 			if !strings.Contains(v.Reason, c.detail) {
@@ -401,5 +414,48 @@ func TestCheckEngine_GateRefusesWithCode(t *testing.T) {
 	var ee *EngineError
 	if kind != "" || !errors.As(err, &ee) || ee.Code != EngineUnreachableCode {
 		t.Errorf("unreachable: kind %q err %v", kind, err)
+	}
+}
+
+// TestEngineVerdict_DialFlagIsPerRequest: the "dial succeeded" mark that
+// turns a transport error into engine_unknown belongs to one request. When
+// GET /version is answered and the dial for GET /info then fails, nothing
+// answered that request: engine_unreachable with the dial error.
+func TestEngineVerdict_DialFlagIsPerRequest(t *testing.T) {
+	rootless := readSample(t, "rootless-linux")
+	serve, _ := fakeEngineRoutes(t, map[string]string{"/version": okJSON(rootless.Version), "/info": okJSON(rootless.Info)})
+	n := 0
+	dial := func(ctx context.Context) (net.Conn, error) {
+		n++
+		if n > 1 {
+			return nil, errors.New("connect: connection refused")
+		}
+		return serve(ctx)
+	}
+	v := engineVerdictVia(context.Background(), "linux", dial)
+	if v.Code != EngineUnreachableCode || !strings.Contains(v.Reason, "connection refused") {
+		t.Fatalf("verdict %+v, want engine_unreachable with the dial error", v)
+	}
+}
+
+// TestEngineVerdict_SilentEndpoint: an endpoint that accepts the
+// connection and never answers was reached; it is engine_unknown, with
+// fixed text. The deadline comes from the caller's context, so the test
+// asserts no duration.
+func TestEngineVerdict_SilentEndpoint(t *testing.T) {
+	dial := func(ctx context.Context) (net.Conn, error) {
+		c, s := net.Pipe()
+		go func() {
+			defer s.Close()
+			_, _ = http.ReadRequest(bufio.NewReader(s))
+			<-ctx.Done()
+		}()
+		return c, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	v := engineVerdictVia(ctx, "linux", dial)
+	if v.Code != EngineUnknownCode || !strings.Contains(v.Reason, "did not answer in time") {
+		t.Fatalf("verdict %+v, want engine_unknown, did not answer in time", v)
 	}
 }

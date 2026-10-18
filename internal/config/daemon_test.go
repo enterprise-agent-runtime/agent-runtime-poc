@@ -137,7 +137,7 @@ func TestLoadDaemon_DefaultLevel(t *testing.T) {
 		// Unknown fields are rejected (CLAUDE.md §7): config.yaml holds only
 		// what the daemon reads, so a section it would ignore is refused
 		// rather than silently doing nothing.
-		{"section the daemon does not read", writeConfig(t, "runtime: {}\n"), unixLevels, "L1", "", "runtime"},
+		{"section the daemon does not read", writeConfig(t, "runtime: {}\n"), unixLevels, "L1", "", `config.yaml line 1: key "runtime" is not read by this version of wardend; remove it`},
 		{"sandbox without the key", writeConfig(t, "sandbox: {}\n"), unixLevels, "L1", "L1", ""},
 		{"canonical", writeConfig(t, "sandbox:\n  default_level: L2\n"), unixLevels, "L1", "L2", ""},
 		{"lower case", writeConfig(t, "sandbox:\n  default_level: l2\n"), unixLevels, "L1", "L2", ""},
@@ -151,9 +151,19 @@ func TestLoadDaemon_DefaultLevel(t *testing.T) {
 		{"list", writeConfig(t, "sandbox:\n  default_level: [L2]\n"), unixLevels, "L1", "", "as a string (got a list)"},
 		{"L3", writeConfig(t, "sandbox:\n  default_level: L3\n"), unixLevels, "L1", "", "sandbox.default_level"},
 		{"fullwidth", writeConfig(t, "sandbox:\n  default_level: "+fullwidthL+"2\n"), unixLevels, "L1", "", escFullwidthL},
-		{"misspelt key", writeConfig(t, "sandbox:\n  default_levle: L2\n"), unixLevels, "L1", "", "default_levle"},
-		{"key in another case", writeConfig(t, "sandbox:\n  Default_Level: L2\n"), unixLevels, "L1", "", "Default_Level"},
+		{"misspelt key", writeConfig(t, "sandbox:\n  default_levle: L2\n"), unixLevels, "L1", "", `config.yaml line 2: key "sandbox.default_levle" is not read by this version of wardend; remove it`},
+		{"key in another case", writeConfig(t, "sandbox:\n  Default_Level: L2\n"), unixLevels, "L1", "", `key "sandbox.Default_Level" is not read`},
 		{"duplicate key", writeConfig(t, "sandbox:\n  default_level: L1\n  default_level: L2\n"), unixLevels, "L1", "", "default_level"},
+		{"duplicate section", writeConfig(t, "sandbox:\n  default_level: L2\nsandbox:\n  default_level: L1\n"), unixLevels, "L1", "", "sandbox"},
+		// Review of M2-17 (CWE-178): only the first YAML document was decoded,
+		// so a second one (or a first that is empty) went unread and the
+		// default was used.
+		{"two documents", writeConfig(t, "sandbox:\n  default_level: L2\n---\nsandbox:\n  default_level: L9\n"), unixLevels, "L1", "", "config.yaml must contain exactly one YAML document"},
+		{"empty documents first", writeConfig(t, "---\n---\nsandbox:\n  default_level: L9\n"), unixLevels, "L1", "", "config.yaml must contain exactly one YAML document"},
+		{"one document with a marker", writeConfig(t, "---\nsandbox:\n  default_level: l2\n"), unixLevels, "L1", "L2", ""},
+		{"top level a list", writeConfig(t, "- sandbox\n"), unixLevels, "L1", "", "config.yaml line 1"},
+		{"sandbox a list", writeConfig(t, "sandbox: [L2]\n"), unixLevels, "L1", "", "config.yaml line 1"},
+		{"merge key", writeConfig(t, "sandbox:\n  <<: {default_level: L2}\n"), unixLevels, "L1", "", `key "sandbox.<<" is not read`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -174,5 +184,30 @@ func TestLoadDaemon_DefaultLevel(t *testing.T) {
 				t.Fatalf("LoadDaemon = %+v, %v; want default level %q", d, err, c.want)
 			}
 		})
+	}
+}
+
+// TestLoadDaemon_UnknownKeysNamed: review of M2-17. A key the daemon does
+// not read was refused with yaml.v3's text, "field runtime not found in
+// type config.rawDaemon", which names a Go type and not the key the user
+// wrote. The refusal stays (CLAUDE.md §7) and now names the dotted key and
+// its line. The file is WRD-13 §3's example, shortened.
+func TestLoadDaemon_UnknownKeysNamed(t *testing.T) {
+	cases := []struct{ body, want string }{
+		{"runtime:\n  log_level: info\nsandbox:\n  default_level: L2\n  backend: auto\n",
+			`config.yaml line 1: key "runtime" is not read by this version of wardend; remove it`},
+		{"sandbox:\n  default_level: L2\n  backend: auto\n  images: { node: x }\n",
+			`config.yaml line 3: key "sandbox.backend" is not read by this version of wardend; remove it`},
+		{"sandbox:\n  default_level: L2\nproxy:\n  dns_over_proxy: true\n",
+			`config.yaml line 3: key "proxy" is not read by this version of wardend; remove it`},
+	}
+	for _, c := range cases {
+		_, err := LoadDaemon(writeConfig(t, c.body), unixLevels, "L1")
+		if err == nil || err.Error() != c.want {
+			t.Errorf("LoadDaemon(%q) error = %v\nwant %s", c.body, err, c.want)
+		}
+		if err != nil && (strings.Contains(err.Error(), "rawDaemon") || strings.Contains(err.Error(), "not found in type")) {
+			t.Errorf("error names a Go type: %v", err)
+		}
 	}
 }

@@ -51,6 +51,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"warden.dev/warden/internal/platform"
@@ -157,6 +158,11 @@ func engineVerdictVia(ctx context.Context, hostOS string, dial func(context.Cont
 func engineVerdict(ctx context.Context, hostOS string, fetch func(context.Context) (EngineFacts, error)) EngineVerdict {
 	f, err := fetch(ctx)
 	if err != nil {
+		// The endpoint itself was refused (dockerEndpoint): its reason, as is.
+		var ee *EngineError
+		if errors.As(err, &ee) {
+			return EngineVerdict{Code: ee.Code, Reason: ee.Reason}
+		}
 		var ae *engineAnswerError
 		if errors.As(err, &ae) {
 			return EngineVerdict{Code: EngineUnknownCode, Reason: ae.msg + "; the endpoint may not be a Docker engine"}
@@ -183,19 +189,41 @@ const maxEngineAnswer = 1 << 20
 func fetchEngineVia(ctx context.Context, dial func(context.Context) (net.Conn, error)) (EngineFacts, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	// dialed records that the dial of the current request succeeded. After
+	// that, a transport error is the endpoint's doing, and net/http quotes
+	// the offending bytes (a status line, a header line) into it, so it
+	// becomes engine_unknown with fixed text (CWE-150, CWE-209; review of
+	// M2-17). Requests are sequential and each dials anew (no keep-alive).
+	var dialed atomic.Bool
 	tr := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return dial(ctx)
+		c, err := dial(ctx)
+		if err == nil {
+			dialed.Store(true)
+		}
+		return c, err
 	}}
 	defer tr.CloseIdleConnections()
-	hc := &http.Client{Transport: tr}
+	// A redirect is not followed: it would name another endpoint. It is a
+	// non-200 answer like any other.
+	hc := &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	notAnswer := func(err error) error {
+		if !dialed.Load() {
+			return err
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return &engineAnswerError{"the endpoint accepted the connection but did not answer in time"}
+		}
+		return &engineAnswerError{"the endpoint answered, but not with HTTP"}
+	}
 	get := func(path string) ([]byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+path, nil)
 		if err != nil {
 			return nil, err
 		}
+		dialed.Store(false)
 		resp, err := hc.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, notAnswer(err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
@@ -205,7 +233,7 @@ func fetchEngineVia(ctx context.Context, dial func(context.Context) (net.Conn, e
 		}
 		b, err := io.ReadAll(io.LimitReader(resp.Body, maxEngineAnswer+1))
 		if err != nil {
-			return nil, err
+			return nil, notAnswer(err)
 		}
 		if len(b) > maxEngineAnswer {
 			return nil, &engineAnswerError{fmt.Sprintf("GET %s answered more than 1 MiB, not a Docker engine answer", path)}
