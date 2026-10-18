@@ -155,8 +155,8 @@ func TestNoProcessSurvives_OrphanAndExecutorGroup(t *testing.T) {
 
 // TestOutputCap_BothStreams (review probe P5): many small interleaved
 // writes on both streams, with invalid UTF-8, are capped together: the
-// daemon receives max_output_bytes in all, the tail ends with what the
-// process wrote last, and the marker counts the rest.
+// daemon receives max_output_bytes in all, the head and tail chunks of
+// each stream are its start and its end, and the marker counts the rest.
 func TestOutputCap_BothStreams(t *testing.T) {
 	r := newRig(t)
 	writeScript(t, r.work+"/c", "i=0; while [ $i -lt 3000 ]; do printf 'ab\\377' ; printf 'zz' >&2; i=$((i+1)); done; echo END >&2\n")
@@ -171,8 +171,41 @@ func TestOutputCap_BothStreams(t *testing.T) {
 	if n := len(o[execproto.StreamStdout]) + len(o[execproto.StreamStderr]); n != 4096 {
 		t.Errorf("forwarded %d bytes on the two streams, want 4096", n)
 	}
-	if !strings.HasSuffix(o[execproto.StreamStderr], "zzEND\n") || !strings.Contains(o[execproto.StreamMarker], strconv.Itoa(15004-4096)+" bytes omitted") {
-		t.Errorf("tail ends %q, marker %q", o[execproto.StreamStderr][max(0, len(o[execproto.StreamStderr])-8):], o[execproto.StreamMarker])
+	if !strings.Contains(o[execproto.StreamMarker], strconv.Itoa(15004-4096)+" bytes omitted") {
+		t.Errorf("marker %q", o[execproto.StreamMarker])
+	}
+	// Each stream's head chunks are the start of what it wrote and its tail
+	// chunks the end. Which stream the last tail bytes come from depends on
+	// which pipe was read last, not on the order the process wrote them:
+	// the two streams are separate pipes read by separate pumps, so under
+	// load a burst of stdout can arrive after stderr's final line (M2-8c).
+	full := map[execproto.Stream]string{execproto.StreamStdout: strings.Repeat("ab\xff", 3000), execproto.StreamStderr: strings.Repeat("zz", 3000) + "END\n"}
+	seg := map[execproto.Segment]map[execproto.Stream]string{execproto.SegmentHead: {}, execproto.SegmentTail: {}}
+	r.mu.Lock()
+	for _, n := range r.ios {
+		if n.Handle != h.Handle || n.Stream == execproto.StreamMarker {
+			continue
+		}
+		d := n.Data
+		if n.Encoding == execproto.EncodingBase64 {
+			b, _ := base64Decode(d)
+			d = string(b)
+		}
+		seg[n.Segment][n.Stream] += d
+	}
+	r.mu.Unlock()
+	tail := 0
+	for s, all := range full {
+		if !strings.HasPrefix(all, seg[execproto.SegmentHead][s]) {
+			t.Errorf("%s head chunks are not the start of what the process wrote", s)
+		}
+		if !strings.HasSuffix(all, seg[execproto.SegmentTail][s]) {
+			t.Errorf("%s tail chunks are not the end of what the process wrote", s)
+		}
+		tail += len(seg[execproto.SegmentTail][s])
+	}
+	if tail != 1024 {
+		t.Errorf("tail has %d bytes, want min(64 KiB, 4096/4) = 1024", tail)
 	}
 }
 
