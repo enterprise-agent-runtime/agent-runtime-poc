@@ -78,7 +78,16 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Left for M2-10:** `warden-exec` calls `Tree.SweepTemps` at start-up; a concurrency cap on fs calls (N searches cost N x 31 s of CPU).
   - **Left for M3:** the daemon rejects `Resolved.Root != worktree` for model-originated calls (an absolute link in the worktree resolves read and stat into scratch).
   - **Low, left:** list and search fail `too_large` instead of truncating when hostile long names push the result over the frame; reads under a directory named `.env` are allowed while writes refuse such prefixes; U+017F and HFS+ ignorable code points (carried from M2-6).
-- [ ] **M2-8** proc operations, rlimits and output cap
+- [x] **M2-8** proc operations, rlimits and output cap (D-075, D-076, C-78).
+  - **Pieces:** `internal/exec` `RegisterProc` (spawn, wait, signal, shutdown), the process table, the `warden-exec child` shim, the A06 §8 environment filter, the §7.4 exit classification, chunking and the output cap; `IsShellStringResolved` wired into spawn; archtest also names `Execveat` and `Fexecve` as process starters.
+  - **Commits:** `12d4732`, `09af2a5`, `c2a92c4`.
+  - **Review:** two rounds plus a small fix. Round 1 found the shim executing by path (a concurrent swap ran `/bin/sh` for an approved `./x -c ...`; reproduced), coverage under the floor, and untested CPU-limit and drain paths. Round 2 reran the race 800 times on the system path without a shell running. Coverage 90.3%%; every mutant caught.
+  - **Left for M2-9:** `exec.git.run` must register its children with the process table, or the stray sweep kills and reaps them.
+  - **Left for M2-10:** wire `child` to `RunChild`; `SetChildSubreaper` at start; `PR_SET_DUMPABLE 0`; flag inherited descriptors above the planned ones close-on-exec (D-070); `procs.Close()` when Serve returns; `PIDNamespace` from the hello; splice the harness stdio; call `Tree.SweepTemps`.
+  - **Left for M2-15:** the cgroup rows of A06 §7.4 (memory, pids, tmp_full, disk) and bwrap's exit 159.
+  - **Owner decision 2026-10-17 (task M2-8b):** a copy of a shell binary under another name (`./x -c ...`) still passes the name-based CF-19 rule when some approved process made the copy. Close it with a content check at spawn: compare the executed file with the known shells, by device and inode and then by hash, and refuse a match whatever its name. Scripts that `eval "$1"` and interpreters (R3, D-047) stay the policy engine's concern (M3).
+  - **Open:** A06 §6 step 7 (the A15 secret-pattern scan of argv) and the §3.3 scan of harness spec env values wait for a pattern set in `execproto`; the PDP's INV-6 check is authoritative.
+  - **Low, accepted:** a script's descriptor reaches what the script runs (read-only, the script itself); a process of one handle can join another live handle's group and outlive its call until that handle ends (A06 §7.7); the raw `execveat` skips the Go runtime's exec lock in the single-purpose shim.
 - [ ] **M2-9** git.run
 - [ ] **M2-10** the `cmd/warden-exec` binary and the forwarder
 
