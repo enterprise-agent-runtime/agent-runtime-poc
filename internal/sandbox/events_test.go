@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"warden.dev/warden/internal/execproto"
 )
 
 func sha(p string) string {
@@ -122,5 +125,40 @@ func TestDestroyEvent_JSON(t *testing.T) {
 	want := `{"sandbox_id":"` + testID + `","reason":"orphan","killed_pids":2,"duration_ms":7}`
 	if string(b) != want {
 		t.Errorf("sandbox.destroy = %s, want %s", b, want)
+	}
+}
+
+// TestViolationEvent_JSON pins sandbox.violation (A06 §13.3 step 3,
+// §11.5; events schema): kind and detail, the session id only routes it.
+func TestViolationEvent_JSON(t *testing.T) {
+	b, err := json.Marshal(ViolationEvent{SessionID: "ses_X", SandboxID: testID, Kind: ViolationRootCheck, Detail: "processes survived teardown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"sandbox_id":"` + testID + `","kind":"root_check","detail":"processes survived teardown"}`
+	if string(b) != want {
+		t.Errorf("sandbox.violation = %s, want %s", b, want)
+	}
+}
+
+// TestDestroyEvent_CarriesTheEnd: a sandbox that ended on a resource
+// limit or a seccomp kill says so on sandbox.destroy (A06 §7.4 rows read
+// by the daemon: memory.events, pids.events, the disk watchdog, bwrap's
+// exit 159); an ordinary end adds nothing.
+func TestDestroyEvent_CarriesTheEnd(t *testing.T) {
+	b, err := json.Marshal(DestroyEvent{SandboxID: testID, Reason: ReasonResource, Resource: &execproto.WaitResource{Kind: execproto.ResourceMemory, Detail: "oom_kill"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"resource":{"kind":"memory","detail":"oom_kill"}`) {
+		t.Errorf("sandbox.destroy = %s, want the resource kind", b)
+	}
+	b, _ = json.Marshal(DestroyEvent{SandboxID: testID, Reason: ReasonExecutorExit, SeccompKill: true})
+	if !strings.Contains(string(b), `"seccomp_kill":true`) {
+		t.Errorf("sandbox.destroy = %s, want seccomp_kill", b)
+	}
+	b, _ = json.Marshal(DestroyEvent{SandboxID: testID, Reason: ReasonTaskEnd})
+	if strings.Contains(string(b), "resource") || strings.Contains(string(b), "seccomp") {
+		t.Errorf("ordinary sandbox.destroy = %s carries an end detail", b)
 	}
 }

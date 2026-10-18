@@ -8,6 +8,7 @@ package sandbox
 
 import (
 	"context"
+
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"warden.dev/warden/internal/execproto"
 )
 
 // CreateLimits is sandbox.create.limits (A06 §13.2). Cgroup records
@@ -64,22 +66,48 @@ type CreateEvent struct {
 }
 
 // DestroyEvent is the sandbox.destroy payload (A06 §13.3 step 6).
-// KilledPIDs counts the processes the teardown had to kill.
+// KilledPIDs counts the processes the teardown killed, bounded by the
+// sandbox's pids limit. Resource and SeccompKill (NEW, optional) carry
+// the A06 §7.4 rows only the daemon can observe for the sandbox as a
+// whole: the scope's memory.events oom_kill and pids.events max, the disk
+// watchdog, and bwrap's exit 159 (warden-exec killed by SIGSYS).
 type DestroyEvent struct {
-	SessionID  string        `json:"-"`
-	SandboxID  string        `json:"sandbox_id"`
-	Reason     DestroyReason `json:"reason"`
-	KilledPIDs int           `json:"killed_pids"`
-	DurationMS int64         `json:"duration_ms"`
+	SessionID   string                  `json:"-"`
+	SandboxID   string                  `json:"sandbox_id"`
+	Reason      DestroyReason           `json:"reason"`
+	KilledPIDs  int                     `json:"killed_pids"`
+	DurationMS  int64                   `json:"duration_ms"`
+	Resource    *execproto.WaitResource `json:"resource,omitempty"`
+	SeccompKill bool                    `json:"seccomp_kill,omitempty"`
+}
+
+// ViolationKind is sandbox.violation kind (events schema).
+type ViolationKind string
+
+// The kinds the L1 backend emits.
+const (
+	ViolationRootCheck ViolationKind = "root_check" // processes survived teardown (A06 §13.3 step 3)
+	ViolationSeccomp   ViolationKind = "seccomp"    // warden-exec killed by the filter (A06 §11.5)
+)
+
+// ViolationEvent is the sandbox.violation payload.
+type ViolationEvent struct {
+	SessionID string        `json:"-"`
+	SandboxID string        `json:"sandbox_id"`
+	Kind      ViolationKind `json:"kind"`
+	Detail    string        `json:"detail"`
 }
 
 // EventSink writes sandbox events to the session chain. A backend calls
-// SandboxCreate only after exec.hello succeeded (A06 §13.1) and
+// SandboxCreate only after exec.hello succeeded (A06 §13.1),
 // SandboxDestroy once per sandbox whose process was started, after its
-// proxy listener has been closed (A06 §13.3 step 4 before step 6).
+// proxy listener has been closed (A06 §13.3 step 4 before step 6), and
+// SandboxViolation for what the sandbox did that it must not (processes
+// that survived teardown, a seccomp kill).
 type EventSink interface {
 	SandboxCreate(ctx context.Context, ev CreateEvent) error
 	SandboxDestroy(ctx context.Context, ev DestroyEvent) error
+	SandboxViolation(ctx context.Context, ev ViolationEvent) error
 }
 
 // PathHash is the event form of a host path: "sha256:" and the hex digest

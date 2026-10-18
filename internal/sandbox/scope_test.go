@@ -43,6 +43,13 @@ func TestScopeEnv_OnlyTheBusVariables(t *testing.T) {
 		"relative runtime dir": {"XDG_RUNTIME_DIR": "run/user/1000"},
 		"newline":              {"XDG_RUNTIME_DIR": "/run/user/1000\nFAKE=1"},
 		"nul in bus":           {"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/x\x00y"},
+		// Only a socket path (round 1, item 9): no TCP bus, no abstract
+		// socket, no relative path, no extra keys, no second address.
+		"tcp bus":         {"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "tcp:host=10.0.0.1,port=1234"},
+		"abstract bus":    {"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:abstract=/tmp/dbus-x"},
+		"relative bus":    {"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:path=run/bus"},
+		"bus with keys":   {"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus,guid=abc"},
+		"two bus entries": {"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus;unix:path=/x"},
 	} {
 		if got, err := ScopeEnv(func(k string) string { return bad[k] }); err == nil || !errors.Is(err, ErrUnavailable) {
 			t.Errorf("%s: ScopeEnv = %q, %v; want sandbox_unavailable", name, got, err)

@@ -49,14 +49,24 @@ type State struct {
 	RootStartTime uint64 `json:"root_start_time"` // /proc/<pid>/stat field 22
 	ChildPID      int    `json:"child_pid"`       // warden-exec, as bwrap reported it (info fd)
 	ScopeUnit     string `json:"scope_unit,omitempty"`
+	// BootID is /proc/sys/kernel/random/boot_id when the root started: a
+	// pid and start time are unique only within one boot, so a state file
+	// from an earlier boot never gets a process killed (round 1, item 7).
+	BootID string `json:"boot_id"`
 }
 
-// Check verifies that a state file read from wardenHome's sandbox
-// directory dirID describes a sandbox of this home and this backend: a
-// file copied from another home, or naming another sandbox's scope, is
-// refused rather than acted on.
-func (s State) Check(wardenHome, dirID string) error {
+// Check verifies that a state file read from
+// <wardenHome>/sessions/<sessionDir>/sandbox/<dirID> describes a sandbox
+// of this home, of this session and of this backend: a file copied from
+// another home or session, or naming another sandbox's scope, is refused
+// rather than acted on. Session directories are the session ulid, in
+// either case (D-056).
+func (s State) Check(wardenHome, sessionDir, dirID string) error {
 	switch {
+	case !strings.EqualFold("ses_"+sessionDir, s.SessionID) || !strings.HasPrefix(s.SessionID, "ses_"):
+		return fmt.Errorf("state of session %q found in session directory %q", s.SessionID, sessionDir)
+	case s.BootID == "" || len(s.BootID) > 64:
+		return fmt.Errorf("state has no boot id")
 	case s.SandboxID != dirID || !validSandboxID(s.SandboxID):
 		return fmt.Errorf("state names sandbox %q in the directory of %q", s.SandboxID, dirID)
 	case s.HomeHash != platform.HomeHash(wardenHome):
@@ -260,4 +270,98 @@ func cgroupProcs(dir string) ([]int, error) {
 		pids = append(pids, n)
 	}
 	return pids, nil
+}
+
+// CgroupCounters are the scope's event counters A06 §7.4 reads: oom_kill
+// of memory.events and max of pids.events.
+type CgroupCounters struct {
+	OOMKill uint64
+	PidsMax uint64
+}
+
+// ReadCgroupCounters reads them from a scope's cgroup directory. A file
+// that does not exist (no delegation, or the scope was collected) counts
+// zero; a malformed one is an error.
+func ReadCgroupCounters(dir string) (CgroupCounters, error) {
+	var c CgroupCounters
+	var err error
+	if c.OOMKill, err = readEventsKey(filepath.Join(dir, "memory.events"), "oom_kill"); err != nil {
+		return c, err
+	}
+	c.PidsMax, err = readEventsKey(filepath.Join(dir, "pids.events"), "max")
+	return c, err
+}
+
+func readEventsKey(p, key string) (uint64, error) {
+	f, err := os.Open(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 4096))
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(line, " ")
+		if !ok || k != key {
+			continue
+		}
+		n, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %s %q", p, key, v)
+		}
+		return n, nil
+	}
+	return 0, nil
+}
+
+// RootExit is how the sandbox root (bwrap) ended: Exited with Code, or
+// killed by Signal ("SIGSYS", ...).
+type RootExit struct {
+	Exited bool
+	Code   int
+	Signal string
+}
+
+// sigsysCode is bwrap's exit status when its child died of SIGSYS: as PID
+// 1 it exits 128 + the signal (bubblewrap.c propagate_exit_status).
+const sigsysCode = 128 + 31
+
+// End is what the daemon adds to sandbox.destroy about how the sandbox
+// ended (A06 §7.4).
+type End struct {
+	Resource    *execproto.WaitResource
+	SeccompKill bool
+}
+
+// ClassifyEnd maps the daemon's observations to the A06 §7.4 rows it
+// owns: memory when the scope's oom_kill rose since before, pids when its
+// pids max rose, disk when the free-space watchdog fired (that order when
+// several hold), and seccomp_kill when bwrap exited 159 or died of SIGSYS
+// (root nil: still running). tmp_full is the executor's to report: the
+// sandbox's /tmp is visible only inside its mount namespace.
+func ClassifyEnd(before, after CgroupCounters, root *RootExit, diskLow bool) End {
+	var e End
+	switch {
+	case after.OOMKill > before.OOMKill:
+		e.Resource = &execproto.WaitResource{Kind: execproto.ResourceMemory, Detail: "cgroup oom_kill"}
+	case after.PidsMax > before.PidsMax:
+		e.Resource = &execproto.WaitResource{Kind: execproto.ResourcePids, Detail: "cgroup pids.max reached"}
+	case diskLow:
+		e.Resource = &execproto.WaitResource{Kind: execproto.ResourceDisk, Detail: "free space below the disk floor"}
+	}
+	if root != nil {
+		e.SeccompKill = (root.Exited && root.Code == sigsysCode) || (!root.Exited && root.Signal == "SIGSYS")
+	}
+	return e
+}
+
+// DiskLow reports free bytes below the floor (A06 §7.3 disk row; a zero
+// floor disables the watchdog).
+func DiskLow(free uint64, floorMB int) bool {
+	return floorMB > 0 && free < uint64(floorMB)<<20
 }

@@ -371,16 +371,26 @@ func hostBwrap(t *testing.T) (string, Features) {
 func hostScope(t *testing.T) (sandbox.CgroupStatus, *Scope) {
 	t.Helper()
 	st := sandbox.ProbeCgroup(context.Background())
+	// The CI job that provides a user manager and delegation says so; there
+	// a missing scope is a red run, not a skip (round 1, item 5).
+	skip := t.Skipf
+	if requireCgroup() {
+		skip = t.Fatalf
+	}
 	switch {
 	case st.SystemdRun == "":
-		t.Skip("systemd-run --user is unavailable here: systemd-run not found")
+		skip("systemd-run --user is unavailable here: systemd-run not found")
 	case st.EnvErr != nil:
-		t.Skipf("systemd-run --user is unavailable here: %v", st.EnvErr)
+		skip("systemd-run --user is unavailable here: %v", st.EnvErr)
 	case st.ScopeErr != nil:
-		t.Skipf("systemd-run --user is unavailable here: a probe scope did not start: %v", st.ScopeErr)
+		skip("systemd-run --user is unavailable here: a probe scope did not start: %v", st.ScopeErr)
 	}
 	return st, &Scope{SystemdRun: st.SystemdRun, EnvBin: "/usr/bin/env", Env: st.Env}
 }
+
+// requireCgroup reports the CI job's promise that systemd-run --user and
+// cgroup v2 delegation of memory, pids and cpu are present.
+func requireCgroup() bool { return os.Getenv("WARDEN_CI_REQUIRE_CGROUP") == "1" }
 
 // TestBwrap_RunsTheBuiltArgvInScope repeats every assertion of
 // TestBwrap_RunsTheBuiltArgv on the cgroup path, the argv started under
@@ -409,7 +419,10 @@ func TestBwrap_RunsTheBuiltArgvInScope(t *testing.T) {
 // helperMarker starts a profiles file that turns the probe into the
 // stand-in executor of the manager tests: {"warden_test_executor": mode}
 // with mode "serve" (answer exec.hello and exec.shutdown), "mismatch"
-// (report a wrong profiles digest) or "exit" (exit right after the hello).
+// (report a wrong profiles digest), "exit" (exit right after the hello),
+// "neg" and "huge" (claim -2^62 and 2^62 killed processes at exec.shutdown,
+// round 1 item 1) or "slow" (never answer exec.hello; an exec.shutdown is
+// recorded as /scratch/got-shutdown, round 1 item 8).
 // Until M2-10 builds warden-exec, this is the only process a test sandbox
 // runs: a copy of this test binary, never anything agent-requested.
 const helperMarker = `{"warden_test_executor":`
@@ -454,10 +467,23 @@ func serveMain(profiles []byte) int {
 		var result any
 		switch m.Method {
 		case execproto.MethodHello:
+			if cfg.Mode == "slow" {
+				continue
+			}
 			result = execproto.HelloResult{Protocol: execproto.Protocol, ExecutorVersion: "stand-in", OS: "linux", Arch: runtime.GOARCH,
 				Mode: mode, Roots: roots, ProfilesDigest: digest, PID: os.Getpid(), UID: os.Getuid()}
 		case execproto.MethodShutdown:
-			result = execproto.ShutdownResult{}
+			switch cfg.Mode {
+			case "neg":
+				result = execproto.ShutdownResult{KilledPIDs: -1 << 62}
+			case "huge":
+				result = execproto.ShutdownResult{KilledPIDs: 1 << 62}
+			case "slow":
+				_ = os.WriteFile(sandbox.TargetScratch+"/got-shutdown", nil, 0o600)
+				return 0
+			default:
+				result = execproto.ShutdownResult{}
+			}
 		default:
 			return 75
 		}

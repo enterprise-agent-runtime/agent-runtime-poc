@@ -14,11 +14,15 @@ import (
 	"warden.dev/warden/internal/sandbox"
 )
 
-const lcID = "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB"
+const (
+	lcID      = "sb_01JAXS2Q7M2V9KTC3F6YH5N0PB"
+	lcSession = "01jaxr8q7m2v9ktc3f6yh5n0pb"
+)
 
 func lcState(home string) State {
 	return State{SandboxID: lcID, SessionID: "ses_01JAXR8Q7M2V9KTC3F6YH5N0PB", HomeHash: platform.HomeHash(home),
-		Backend: Backend, RootPID: 4242, RootStartTime: 987654, ChildPID: 4243, ScopeUnit: sandbox.ScopeUnit(home, lcID)}
+		Backend: Backend, RootPID: 4242, RootStartTime: 987654, ChildPID: 4243, ScopeUnit: sandbox.ScopeUnit(home, lcID),
+		BootID: "0b9e7a1c-4f1e-4a57-9d5f-3c2a7e6b1d00"}
 }
 
 // TestState_CheckRefusesForeignState: the orphan sweep (A06 §13.5) acts
@@ -28,12 +32,12 @@ func lcState(home string) State {
 // kill a process or scope of another home.
 func TestState_CheckRefusesForeignState(t *testing.T) {
 	home, other := filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")
-	if err := lcState(home).Check(home, lcID); err != nil {
+	if err := lcState(home).Check(home, lcSession, lcID); err != nil {
 		t.Fatalf("Check = %v for the home's own state", err)
 	}
 	noScope := lcState(home)
 	noScope.ScopeUnit = ""
-	if err := noScope.Check(home, lcID); err != nil {
+	if err := noScope.Check(home, lcSession, lcID); err != nil {
 		t.Errorf("Check = %v for a state without a scope (rlimit fallback)", err)
 	}
 	bad := map[string]func(*State){
@@ -49,7 +53,7 @@ func TestState_CheckRefusesForeignState(t *testing.T) {
 	for name, mod := range bad {
 		s := lcState(home)
 		mod(&s)
-		if err := s.Check(home, lcID); err == nil {
+		if err := s.Check(home, lcSession, lcID); err == nil {
 			t.Errorf("%s: Check accepted %+v", name, s)
 		}
 	}
@@ -190,5 +194,98 @@ func TestKillCgroup(t *testing.T) {
 	}
 	if n, err := KillCgroup(filepath.Join(dir, "gone"), kill); n != 0 || err != nil {
 		t.Errorf("collected scope: %d, %v", n, err)
+	}
+}
+
+// TestReadCgroupCounters reads the scope's memory.events oom_kill and
+// pids.events max (A06 §11.6, §7.4). A scope without the files (no
+// delegation, or collected) has zero counters; a malformed file is an
+// error, never a silent zero.
+func TestReadCgroupCounters(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, s string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c, err := ReadCgroupCounters(dir); err != nil || c != (CgroupCounters{}) {
+		t.Errorf("no files: %+v, %v; want zero", c, err)
+	}
+	write("memory.events", "low 0\nhigh 0\nmax 3\noom 1\noom_kill 2\noom_group_kill 0\n")
+	write("pids.events", "max 5\n")
+	if c, err := ReadCgroupCounters(dir); err != nil || c != (CgroupCounters{OOMKill: 2, PidsMax: 5}) {
+		t.Errorf("ReadCgroupCounters = %+v, %v; want oom_kill 2, pids max 5", c, err)
+	}
+	write("pids.events", "max lots\n")
+	if _, err := ReadCgroupCounters(dir); err == nil {
+		t.Error("malformed pids.events accepted")
+	}
+}
+
+// TestClassifyEnd maps what the daemon observes of a sandbox's end to the
+// A06 §7.4 rows it owns: memory (oom_kill rose), pids (pids max rose),
+// disk (the free-space watchdog), and seccomp_kill (bwrap, PID 1 of the
+// namespace, exits 128+SIGSYS = 159 when warden-exec died of the filter,
+// or bwrap itself died of SIGSYS). tmp_full is not among them: the /tmp
+// tmpfs exists only in the sandbox's mount namespace, and the daemon
+// could reach it only through /proc/<pid>/root, which needs ptrace access
+// that warden-exec's PR_SET_DUMPABLE 0 (D-062, M2-10) removes on purpose;
+// the executor reports it from inside.
+func TestClassifyEnd(t *testing.T) {
+	base := CgroupCounters{OOMKill: 1, PidsMax: 4}
+	exit0 := &RootExit{Exited: true, Code: 0}
+	cases := []struct {
+		name        string
+		after       CgroupCounters
+		root        *RootExit
+		disk        bool
+		kind        execproto.ResourceKind // "" : no resource
+		seccompKill bool
+	}{
+		{"normal exit", base, exit0, false, "", false},
+		{"still running", base, nil, false, "", false},
+		{"oom kill", CgroupCounters{OOMKill: 2, PidsMax: 4}, exit0, false, execproto.ResourceMemory, false},
+		{"pids max", CgroupCounters{OOMKill: 1, PidsMax: 9}, exit0, false, execproto.ResourcePids, false},
+		{"memory before pids", CgroupCounters{OOMKill: 2, PidsMax: 9}, exit0, false, execproto.ResourceMemory, false},
+		{"disk watchdog", base, nil, true, execproto.ResourceDisk, false},
+		{"bwrap exit 159", base, &RootExit{Exited: true, Code: 159}, false, "", true},
+		{"bwrap killed by SIGSYS", base, &RootExit{Signal: "SIGSYS"}, false, "", true},
+		{"other exit code", base, &RootExit{Exited: true, Code: 137}, false, "", false},
+		{"seccomp and oom", CgroupCounters{OOMKill: 3, PidsMax: 4}, &RootExit{Exited: true, Code: 159}, false, execproto.ResourceMemory, true},
+	}
+	for _, tc := range cases {
+		e := ClassifyEnd(base, tc.after, tc.root, tc.disk)
+		var kind execproto.ResourceKind
+		if e.Resource != nil {
+			kind = e.Resource.Kind
+		}
+		if kind != tc.kind || e.SeccompKill != tc.seccompKill {
+			t.Errorf("%s: ClassifyEnd = %+v (kind %q), want kind %q seccomp_kill %v", tc.name, e, kind, tc.kind, tc.seccompKill)
+		}
+	}
+}
+
+func TestDiskLow(t *testing.T) {
+	if !DiskLow(1023<<20, 1024) || DiskLow(1024<<20, 1024) || DiskLow(1, 0) {
+		t.Error("DiskLow does not compare free bytes with the floor in MiB (a zero floor disables it)")
+	}
+}
+
+// TestState_CheckBindsTheSession (round 1, item 6): a state file is
+// accepted only in the session directory of the session it names, so a
+// file moved into another session cannot have its destroy event written
+// to, and its files removed from, the wrong session.
+func TestState_CheckBindsTheSession(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "a")
+	s := lcState(home)
+	if err := s.Check(home, "01jaxr8q7m2v9ktc3f6yh5n0pb", lcID); err != nil {
+		t.Errorf("Check in its own session dir (lower case, as on disk) = %v", err)
+	}
+	if err := s.Check(home, "01JAXR8Q7M2V9KTC3F6YH5OTHR", lcID); err == nil {
+		t.Error("Check accepted a state file found in another session's directory")
+	}
+	s.BootID = ""
+	if err := s.Check(home, "01jaxr8q7m2v9ktc3f6yh5n0pb", lcID); err == nil {
+		t.Error("Check accepted a state file without a boot id")
 	}
 }

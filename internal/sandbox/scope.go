@@ -44,6 +44,16 @@ func ScopeEnv(getenv func(string) string) ([]string, error) {
 		if k == "XDG_RUNTIME_DIR" && !path.IsAbs(v) {
 			return nil, fmt.Errorf("%w: XDG_RUNTIME_DIR is not an absolute path", ErrUnavailable)
 		}
+		// The bus address only in the form a systemd user session sets:
+		// one unix socket by absolute path, no other keys. A TCP bus or an
+		// abstract socket would let whoever set the variable choose which
+		// "user manager" the launch asks to create the scope.
+		if k == "DBUS_SESSION_BUS_ADDRESS" {
+			p, ok := strings.CutPrefix(v, "unix:path=")
+			if !ok || !path.IsAbs(p) || strings.ContainsAny(p, ",;") {
+				return nil, fmt.Errorf("%w: DBUS_SESSION_BUS_ADDRESS is not unix:path=<absolute path>", ErrUnavailable)
+			}
+		}
 		out = append(out, k+"="+v)
 	}
 	return out, nil

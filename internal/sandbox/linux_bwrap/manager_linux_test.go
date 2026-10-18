@@ -33,13 +33,27 @@ import (
 // check the A06 §13.3 order (proxy closed, step 4, before the event, step
 // 6). destroyed receives every destroy event.
 type eventSink struct {
-	mu        sync.Mutex
-	creates   []sandbox.CreateEvent
-	destroys  []sandbox.DestroyEvent
-	atDestroy []string // per destroy: paths that still existed
-	watch     []string // paths checked at each destroy
-	createErr error
-	destroyed chan sandbox.DestroyEvent
+	mu         sync.Mutex
+	creates    []sandbox.CreateEvent
+	destroys   []sandbox.DestroyEvent
+	atDestroy  []string // per destroy: paths that still existed
+	watch      []string // paths checked at each destroy
+	createErr  error
+	destroyed  chan sandbox.DestroyEvent
+	violations []sandbox.ViolationEvent
+}
+
+func (s *eventSink) SandboxViolation(_ context.Context, ev sandbox.ViolationEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.violations = append(s.violations, ev)
+	return nil
+}
+
+func (s *eventSink) violationsSoFar() []sandbox.ViolationEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.violations)
 }
 
 func newSink(watch ...string) *eventSink {
@@ -214,7 +228,7 @@ func TestManager_CreateDestroy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Check(s.WardenHome, s.ID); err != nil || st.ScopeUnit != "" || st.ChildPID <= 1 {
+	if err := st.Check(s.WardenHome, filepath.Base(s.SessionDir), s.ID); err != nil || st.ScopeUnit != "" || st.ChildPID <= 1 {
 		t.Errorf("state.json = %+v (%v), want this sandbox, no scope, a child pid", st, err)
 	}
 	if t0, err := procStartTime(st.RootPID); err != nil || t0 != st.RootStartTime {
@@ -260,7 +274,11 @@ func TestManager_CreateDestroy(t *testing.T) {
 func TestManager_CreateInScope(t *testing.T) {
 	_, f := hostBwrap(t)
 	cg, _ := hostScope(t)
-	if !cg.Usable() {
+	delegated := cg.Usable()
+	if !delegated && requireCgroup() {
+		t.Fatalf("WARDEN_CI_REQUIRE_CGROUP=1 but cgroup v2 delegation is not usable: %s", sandbox.CgroupCheck(cg).Detail)
+	}
+	if !delegated {
 		t.Logf("cgroup v2 delegation not present here (%s); forcing it to test the wrapped launch", sandbox.CgroupCheck(cg).Detail)
 		cg.Unified, cg.Controllers, cg.ControllersErr = true, sandbox.CgroupControllers, nil
 	}
@@ -295,6 +313,24 @@ func TestManager_CreateInScope(t *testing.T) {
 	}
 	if !strings.Contains(string(cgroups), "/"+unit+"\n") {
 		t.Errorf("sandbox root is not in %s:\n%s", unit, cgroups)
+	}
+	// The limits the scope actually enforces (round 1, item 4): A06 §12
+	// memory 3 GiB with no swap, 512 tasks, 2 CPUs.
+	if delegated {
+		dir := filepath.Join(sandbox.CgroupRoot, ParseProcCgroup(string(cgroups)))
+		for file, want := range map[string]string{
+			"memory.max":      strconv.Itoa(s.Limits.MemoryMB << 20),
+			"memory.swap.max": "0",
+			"pids.max":        strconv.Itoa(s.Limits.Pids),
+			"cpu.max":         strconv.Itoa(s.Limits.CPUs*100000) + " 100000",
+		} {
+			b, err := os.ReadFile(filepath.Join(dir, file))
+			if err != nil || strings.TrimSpace(string(b)) != want {
+				t.Errorf("scope %s = %q (%v), want %q", file, strings.TrimSpace(string(b)), err, want)
+			}
+		}
+	} else {
+		t.Log("limit files not checked: delegation was forced")
 	}
 	argv, _ := os.ReadFile(sbFile(s, ArgvFile))
 	if strings.Contains(string(argv), ",data=") || strings.Contains(string(argv), ",nproc=") {
@@ -456,7 +492,7 @@ func TestManager_RecoverOrphans_OnlyThisHome(t *testing.T) {
 	staleID := "sb_01JAXS2Q7M2V9KTC3F6YH5STAL"
 	staleDir := filepath.Join(sa.WardenHome, "sessions", "01jaxr8q7m2v9ktc3f6yh5stal", "sandbox", staleID)
 	stale := State{SandboxID: staleID, SessionID: "ses_01JAXR8Q7M2V9KTC3F6YH5STAL", HomeHash: stA.HomeHash, Backend: Backend,
-		RootPID: stB.RootPID, RootStartTime: stB.RootStartTime + 1, ChildPID: stB.ChildPID}
+		RootPID: stB.RootPID, RootStartTime: stB.RootStartTime + 1, ChildPID: stB.ChildPID, BootID: stA.BootID}
 	raw, err := json.Marshal(stale)
 	if err != nil {
 		t.Fatal(err)
@@ -465,6 +501,47 @@ func TestManager_RecoverOrphans_OnlyThisHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(staleDir, StateFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Round 1, items 6 and 7: three more files of home A that name B's
+	// live root exactly (pid and start time). None may get it killed:
+	//   - one recorded in an earlier boot (pid and start time are unique
+	//     only within a boot): cleaned up as an orphan, nothing killed;
+	//   - one found in the directory of another session than it names:
+	//     skipped;
+	//   - one reached through a symlinked sessions/*/sandbox directory that
+	//     points outside the home: skipped, never read.
+	writeState := func(dir string, st State) {
+		t.Helper()
+		b, err := json.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, StateFile), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bLive := func(id, session, boot string) State {
+		return State{SandboxID: id, SessionID: session, HomeHash: stA.HomeHash, Backend: Backend,
+			RootPID: stB.RootPID, RootStartTime: stB.RootStartTime, ChildPID: stB.ChildPID, BootID: boot}
+	}
+	sessions := filepath.Join(sa.WardenHome, "sessions")
+	bootID := "sb_01JAXS2Q7M2V9KTC3F6YH5BOOT"
+	writeState(filepath.Join(sessions, "01jaxr8q7m2v9ktc3f6yh5boot", "sandbox", bootID),
+		bLive(bootID, "ses_01JAXR8Q7M2V9KTC3F6YH5BOOT", "00000000-0000-0000-0000-000000000000"))
+	mispID := "sb_01JAXS2Q7M2V9KTC3F6YH5MISP"
+	writeState(filepath.Join(sessions, "01jaxr8q7m2v9ktc3f6yh5misp", "sandbox", mispID),
+		bLive(mispID, "ses_01JAXR8Q7M2V9KTC3F6YH5OTHR", stA.BootID))
+	linkID := "sb_01JAXS2Q7M2V9KTC3F6YH5LINK"
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	writeState(filepath.Join(elsewhere, linkID), bLive(linkID, "ses_01JAXR8Q7M2V9KTC3F6YH5LINK", stA.BootID))
+	if err := os.MkdirAll(filepath.Join(sessions, "01jaxr8q7m2v9ktc3f6yh5link"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(sessions, "01jaxr8q7m2v9ktc3f6yh5link", "sandbox")); err != nil {
 		t.Fatal(err)
 	}
 	crashed := ma.abandon(sa.ID)
@@ -477,8 +554,11 @@ func TestManager_RecoverOrphans_OnlyThisHome(t *testing.T) {
 		t.Fatalf("RecoverOrphans = %v", err)
 	}
 	got := slices.Sorted(slices.Values(rec.Sandboxes))
-	if want := slices.Sorted(slices.Values([]string{sa.ID, staleID})); !slices.Equal(got, want) || len(rec.Skipped) != 0 {
-		t.Errorf("recovered %+v, want exactly A's two sandboxes", rec)
+	if want := slices.Sorted(slices.Values([]string{sa.ID, staleID, bootID})); !slices.Equal(got, want) || len(rec.Skipped) != 2 {
+		t.Errorf("recovered %+v, want A's three sandboxes, the misplaced state and the symlinked directory skipped", rec)
+	}
+	if gone(filepath.Join(elsewhere, linkID, StateFile)) {
+		t.Error("the state file behind the symlinked sandbox directory was removed")
 	}
 	select {
 	case <-crashed.run.Done():
@@ -486,7 +566,7 @@ func TestManager_RecoverOrphans_OnlyThisHome(t *testing.T) {
 		t.Fatal("the orphaned root was not killed")
 	}
 	evs := map[string]sandbox.DestroyEvent{}
-	for range 2 {
+	for range 3 {
 		ev := waitDestroy(t, sinkA2)
 		evs[ev.SandboxID] = ev
 	}
@@ -495,6 +575,9 @@ func TestManager_RecoverOrphans_OnlyThisHome(t *testing.T) {
 	}
 	if ev := evs[staleID]; ev.Reason != sandbox.ReasonOrphan || ev.SessionID != stale.SessionID || ev.KilledPIDs != 0 {
 		t.Errorf("stale sandbox.destroy = %+v, want orphan with nothing killed", ev)
+	}
+	if ev := evs[bootID]; ev.Reason != sandbox.ReasonOrphan || ev.KilledPIDs != 0 {
+		t.Errorf("earlier-boot sandbox.destroy = %+v, want orphan with nothing killed", ev)
 	}
 	if !gone(sbFile(sa, StateFile)) || !gone(sbFile(sa, EtcDir)) || !gone(filepath.Join(staleDir, StateFile)) {
 		t.Error("A's owner files left after recovery")

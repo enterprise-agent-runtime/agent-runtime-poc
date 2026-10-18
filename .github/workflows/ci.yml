@@ -119,6 +119,9 @@ jobs:
           XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
             systemd-run --user --scope --quiet --collect -- /bin/true
           echo "systemd-run --user --scope works"
+          # From here a missing scope or missing delegation fails the scope
+          # tests instead of skipping or forcing them (M2-15 round 1).
+          echo "WARDEN_CI_REQUIRE_CGROUP=1" >> "$GITHUB_ENV"
           cat "/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/cgroup.controllers" || true
       # -json implies -v; the JSON goes to go-test.json for the check below
       # and its Output text to the log (jq ships with the runner image).
@@ -210,6 +213,10 @@ jobs:
             TestManager_FailureClosesTheProxy
             TestManager_ExecutorExitWatchdog
             TestManager_RecoverOrphans_OnlyThisHome
+            TestManager_ShutdownCountIsBounded
+            TestManager_NoShutdownWithoutHello
+            TestTeardown_RootThatSurvivesIsAViolation
+            TestWatch_ClassifiesTheEnd
             TestProbeCgroup_ReadsTheUserManagersDelegation
           )
           bash scripts/ci-require-tests.sh go-test.json -- "${required[@]}"

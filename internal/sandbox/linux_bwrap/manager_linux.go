@@ -36,14 +36,24 @@ import (
 	"warden.dev/warden/internal/tools"
 )
 
-// Lifecycle bounds (A06 §13.1-§13.3).
 const (
-	helloTimeout = 5 * time.Second // launching -> failed after 5 s; covers the info fd too
-	shutdownWait = 4 * time.Second // draining -> killing
-	killVerify   = 1 * time.Second // processes left after this are a violation
-	stderrCap    = 8192            // bwrap's diagnostics kept for errors
-	defaultEnv   = "/usr/bin/env"
+	stderrCap  = 8192 // bwrap's diagnostics kept for errors
+	defaultEnv = "/usr/bin/env"
 )
+
+// timing holds the lifecycle bounds (A06 §13.1-§13.4). Tests shorten
+// them; nothing asserts on elapsed time.
+type timing struct {
+	hello      time.Duration // launching -> failed after 5 s; covers the info fd too
+	shutdown   time.Duration // draining -> killing after 4 s
+	killVerify time.Duration // processes left after this are a root_check violation
+	killRounds int           // further SIGKILL rounds after the violation before giving up
+	diskEvery  time.Duration // free-space watchdog period
+}
+
+func defaultTiming() timing {
+	return timing{hello: 5 * time.Second, shutdown: 4 * time.Second, killVerify: time.Second, killRounds: 5, diskEvery: 10 * time.Second}
+}
 
 // Config configures a Manager for one Warden home.
 type Config struct {
@@ -67,12 +77,16 @@ type Config struct {
 	MaxProcs      int // concurrent exec.proc.spawn handles
 	DaemonVersion string
 	Now           func() time.Time
+	// FreeBytes reports the free space of the file system holding a path
+	// (the disk watchdog, A06 §7.3, §13.4); nil is platform.FreeBytes.
+	FreeBytes func(path string) (uint64, error)
 }
 
 // Manager is the Linux L1 backend. It is safe for concurrent use.
 type Manager struct {
 	cfg   Config
 	scope bool
+	t     timing
 
 	mu   sync.Mutex
 	live map[string]*box // nil value: a Create in progress holds the id
@@ -80,10 +94,21 @@ type Manager struct {
 
 var _ sandbox.Manager = (*Manager)(nil)
 
+// root is the sandbox root process (bwrap) as the lifecycle sees it;
+// *Running in production.
+type root interface {
+	Pid() int
+	Done() <-chan struct{}
+	Kill() error
+	Exit() (RootExit, bool) // how it ended, once Done is closed
+}
+
 // box is one sandbox the manager owns.
 type box struct {
 	spec      sandbox.Spec
-	run       *Running
+	run       root
+	helloOK   bool           // exec.hello succeeded: the executor can be asked to shut down
+	counters  CgroupCounters // the scope's counters at launch
 	conn      net.Conn
 	client    *tools.Client
 	proxy     *sandbox.ProxyListener
@@ -115,7 +140,10 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Manager{cfg: cfg, scope: cfg.Cgroup.Usable(), live: map[string]*box{}}, nil
+	if cfg.FreeBytes == nil {
+		cfg.FreeBytes = platform.FreeBytes
+	}
+	return &Manager{cfg: cfg, scope: cfg.Cgroup.Usable(), t: defaultTiming(), live: map[string]*box{}}, nil
 }
 
 // Cgroup reports whether launches run in a systemd scope with cgroup
@@ -137,8 +165,8 @@ func (m *Manager) Client(id string) (*tools.Client, bool) {
 // opened before anything is launched and closed on every failure path;
 // once bwrap has started, a failure tears the sandbox down as Destroy
 // does and writes one sandbox.destroy (hello_mismatch for a hello that
-// does not match, store_unavailable when sandbox.create could not be
-// written, executor_exit otherwise), so every process that ran is on the
+// does not match, timeout when exec.hello never came, store_unavailable
+// when sandbox.create could not be written, executor_exit otherwise), so every process that ran is on the
 // record. sandbox.create is written only after exec.hello matched.
 func (m *Manager) Create(ctx context.Context, s *sandbox.Spec) (_ *sandbox.Handle, err error) {
 	if s == nil {
@@ -195,14 +223,23 @@ func (m *Manager) Create(ctx context.Context, s *sandbox.Spec) (_ *sandbox.Handl
 	if err := m.launch(sbCtx, b, plan); err != nil {
 		return nil, err
 	}
-	hctx, hcancel := context.WithTimeout(ctx, helloTimeout)
+	hctx, hcancel := context.WithTimeout(ctx, m.t.hello)
 	hello, err := b.client.Hello(hctx, execproto.HelloParams{Protocol: execproto.Protocol, SandboxID: s.ID, SessionID: s.SessionID, DaemonVersion: m.cfg.DaemonVersion})
+	timedOut := hctx.Err() != nil
 	hcancel()
 	if err != nil {
+		// No hello: the executor is not known to speak the protocol, so
+		// teardown does not wait on exec.shutdown (round 1, item 8). A
+		// hello that never came is a timeout (A06 §13.1 "timeout 5 s").
+		if timedOut {
+			reason = sandbox.ReasonTimeout
+		}
 		return nil, fmt.Errorf("%w: exec.hello: %w%s", sandbox.ErrUnavailable, err, b.stderr.suffix())
 	}
+	b.helloOK = true
 	if err := CheckHello(s, hello); err != nil {
 		reason = sandbox.ReasonHelloMismatch
+		b.helloOK = false // an executor that misreports itself is not asked to shut down either
 		return nil, err
 	}
 	ms, err := s.Mounts()
@@ -310,7 +347,7 @@ func (m *Manager) launch(ctx context.Context, b *box, plan *Plan) error {
 	b.run = run
 	infoW.Close()
 	child.Close()
-	if err := infoR.SetReadDeadline(time.Now().Add(helloTimeout)); err != nil {
+	if err := infoR.SetReadDeadline(time.Now().Add(m.t.hello)); err != nil {
 		return err
 	}
 	childPID, err := ParseInfo(infoR)
@@ -323,9 +360,18 @@ func (m *Manager) launch(ctx context.Context, b *box, plan *Plan) error {
 	}
 	if m.scope {
 		b.cgroupDir = m.scopeDir(run.Pid(), b.unit)
+		if b.cgroupDir != "" {
+			if b.counters, err = ReadCgroupCounters(b.cgroupDir); err != nil {
+				return fmt.Errorf("%w: scope counters: %w", sandbox.ErrUnavailable, err)
+			}
+		}
+	}
+	boot, err := bootID()
+	if err != nil {
+		return fmt.Errorf("%w: boot id: %w", sandbox.ErrUnavailable, err)
 	}
 	st := State{SandboxID: s.ID, SessionID: s.SessionID, HomeHash: platform.HomeHash(s.WardenHome), Backend: Backend,
-		RootPID: run.Pid(), RootStartTime: start, ChildPID: childPID, ScopeUnit: b.unit}
+		RootPID: run.Pid(), RootStartTime: start, ChildPID: childPID, ScopeUnit: b.unit, BootID: boot}
 	sb, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -360,21 +406,49 @@ func (m *Manager) scopeDir(pid int, unit string) string {
 	return dir
 }
 
-// watch is the executor-exit watchdog (A06 §13.4): when bwrap exits or
-// the executor channel closes, the sandbox goes to killing with reason
-// executor_exit. It ends when the box is destroyed.
+// watch holds the watchdogs of A06 §13.4 that belong to the sandbox: the
+// executor's end (bwrap exits or the channel closes), classified by the
+// A06 §7.4 rows the daemon can see (the scope's memory.events and
+// pids.events, bwrap's exit 159), and the free-disk watchdog (A06 §7.3).
+// It ends when the box is destroyed.
 func (m *Manager) watch(b *box) {
-	select {
-	case <-b.stop:
-		return
-	case <-b.run.Done():
-	case <-b.client.Done():
+	var tick <-chan time.Time
+	if b.spec.Limits.DiskFloorMB > 0 && m.t.diskEvery > 0 {
+		t := time.NewTicker(m.t.diskEvery)
+		defer t.Stop()
+		tick = t.C
 	}
-	_ = m.Destroy(context.Background(), b.spec.ID, sandbox.ReasonExecutorExit)
+	var client <-chan struct{}
+	if b.client != nil {
+		client = b.client.Done()
+	}
+	for {
+		select {
+		case <-b.stop:
+			return
+		case <-b.run.Done():
+		case <-client:
+		case <-tick:
+			free, err := m.cfg.FreeBytes(m.cfg.WardenHome)
+			if err != nil || !DiskLow(free, b.spec.Limits.DiskFloorMB) {
+				continue
+			}
+			_ = m.destroy(context.Background(), b.spec.ID, sandbox.ReasonResource, &End{Resource: ClassifyEnd(CgroupCounters{}, CgroupCounters{}, nil, true).Resource})
+			return
+		}
+		break
+	}
+	_ = m.destroy(context.Background(), b.spec.ID, sandbox.ReasonExecutorExit, nil)
 }
 
 // Destroy implements sandbox.Manager (A06 §13.3).
 func (m *Manager) Destroy(ctx context.Context, id string, reason sandbox.DestroyReason) error {
+	return m.destroy(ctx, id, reason, nil)
+}
+
+// destroy takes the box and tears it down; end, when set, is what a
+// watchdog already knows about how the sandbox ended.
+func (m *Manager) destroy(ctx context.Context, id string, reason sandbox.DestroyReason, end *End) error {
 	if !reason.Valid() {
 		return fmt.Errorf("%w: destroy reason %q is not an A06 §13.3 reason", sandbox.ErrInvalidSpec, reason)
 	}
@@ -387,33 +461,54 @@ func (m *Manager) Destroy(ctx context.Context, id string, reason sandbox.Destroy
 	delete(m.live, id)
 	m.mu.Unlock()
 	close(b.stop)
-	return m.teardown(ctx, b, reason)
+	return m.teardownEnd(ctx, b, reason, end)
 }
 
-// teardown is A06 §13.3 for a box whose process was started: shutdown,
-// kill the root (and the scope), verify, close the client and then the
-// proxy listener (its events precede sandbox.destroy), remove the owner
-// files, emit sandbox.destroy.
+// teardown is teardownEnd with nothing known in advance about the end.
 func (m *Manager) teardown(ctx context.Context, b *box, reason sandbox.DestroyReason) error {
+	return m.teardownEnd(ctx, b, reason, nil)
+}
+
+// teardownEnd is A06 §13.3 for a box whose process was started: shutdown,
+// kill the root (and the scope), verify (a sandbox.violation{root_check}
+// when processes survive, and a bounded number of further kills, so
+// sandbox.destroy is always written), close the client and then the proxy
+// listener (its events precede sandbox.destroy), remove the owner files,
+// emit sandbox.destroy with the A06 §7.4 end the daemon observed. An
+// executor-exit reason becomes resource when the scope's counters show a
+// memory or pids kill; a seccomp kill of warden-exec is also a
+// sandbox.violation{seccomp} (A06 §11.5).
+func (m *Manager) teardownEnd(ctx context.Context, b *box, reason sandbox.DestroyReason, known *End) error {
 	start := m.cfg.Now()
 	killed := 0
 	var errs []error
-	// 1. exec.shutdown, then wait for the executor (and with it bwrap,
-	// PID 1 of the namespace) to exit.
-	if b.client != nil {
+	// 1. exec.shutdown, only to an executor that completed exec.hello, then
+	// wait for it (and with it bwrap, PID 1 of the namespace) to exit. The
+	// executor's own count is its claim: it is bounded by what the sandbox
+	// may hold (pids limit), never negative (CWE-20).
+	if b.client != nil && b.helloOK {
 		grace := 3000
 		if reason == sandbox.ReasonCancel {
 			grace = 0
 		}
-		sctx, cancel := context.WithTimeout(ctx, shutdownWait)
+		sctx, cancel := context.WithTimeout(ctx, m.t.shutdown)
 		if res, err := b.client.Shutdown(sctx, execproto.ShutdownParams{GraceMS: &grace, Reason: shutdownReason(reason)}); err == nil {
-			killed += res.KilledPIDs
+			killed += clampCount(res.KilledPIDs, b.spec.Limits.Pids)
 		}
 		select {
 		case <-b.run.Done():
 		case <-sctx.Done():
 		}
 		cancel()
+	}
+	// The scope's counters, before the scope is killed (and collected).
+	var after CgroupCounters
+	if b.cgroupDir != "" {
+		var err error
+		if after, err = ReadCgroupCounters(b.cgroupDir); err != nil {
+			errs = append(errs, fmt.Errorf("scope counters: %w", err))
+			after = b.counters
+		}
 	}
 	// 2. Kill the root: the scope's cgroup.kill, then SIGKILL to bwrap.
 	if b.cgroupDir != "" {
@@ -433,15 +528,21 @@ func (m *Manager) teardown(ctx context.Context, b *box, reason sandbox.DestroyRe
 			errs = append(errs, fmt.Errorf("killing bwrap: %w", err))
 		}
 	}
-	// 3. Verify: bwrap reaped (the PID namespace died with it).
-	select {
-	case <-b.run.Done():
-	case <-time.After(killVerify):
+	// 3. Verify: bwrap reaped (the PID namespace died with it). Processes
+	// left after killVerify are a root_check violation (A06 §13.3 step 3);
+	// killing goes on for a bounded number of rounds, whatever ctx says, and
+	// sandbox.destroy is written in every case.
+	if !waitDone(b.run, m.t.killVerify) {
+		m.violation(ctx, b, sandbox.ViolationRootCheck, "processes survived teardown")
 		errs = append(errs, fmt.Errorf("%w: sandbox %s: processes survived teardown", sandbox.ErrUnavailable, b.spec.ID))
-		_ = b.run.Kill()
-		select {
-		case <-b.run.Done():
-		case <-ctx.Done():
+		for i := 0; i < m.t.killRounds; i++ {
+			if b.cgroupDir != "" {
+				_, _ = KillCgroup(b.cgroupDir, killPid)
+			}
+			_ = b.run.Kill()
+			if waitDone(b.run, m.t.killVerify) {
+				break
+			}
 		}
 	}
 	// 4. The executor channel, then the proxy listener: Close waits until
@@ -449,19 +550,88 @@ func (m *Manager) teardown(ctx context.Context, b *box, reason sandbox.DestroyRe
 	if b.client != nil {
 		b.client.Close()
 	}
-	if err := b.proxy.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("proxy listener: %w", err))
+	if b.proxy != nil {
+		if err := b.proxy.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("proxy listener: %w", err))
+		}
 	}
 	b.cancel()
 	// 5. Owner files: state.json and the generated /etc; argv.json stays.
 	errs = append(errs, removeOwnerFiles(b.sbDir, true))
-	// 6. sandbox.destroy.
-	ev := sandbox.DestroyEvent{SessionID: b.spec.SessionID, SandboxID: b.spec.ID, Reason: reason, KilledPIDs: killed,
-		DurationMS: m.cfg.Now().Sub(start).Milliseconds()}
+	// 6. sandbox.destroy, with what is known of the end (A06 §7.4).
+	var rootExit *RootExit
+	if x, ok := b.run.Exit(); ok {
+		rootExit = &x
+	}
+	end := ClassifyEnd(b.counters, after, rootExit, false)
+	if known != nil && known.Resource != nil {
+		end.Resource = known.Resource
+	}
+	if end.Resource != nil && reason == sandbox.ReasonExecutorExit {
+		reason = sandbox.ReasonResource
+	}
+	if end.SeccompKill {
+		m.violation(ctx, b, sandbox.ViolationSeccomp, "warden-exec was killed by the seccomp filter (SIGSYS)")
+	}
+	ev := sandbox.DestroyEvent{SessionID: b.spec.SessionID, SandboxID: b.spec.ID, Reason: reason, KilledPIDs: clampCount(killed, b.spec.Limits.Pids+1),
+		DurationMS: max(0, m.cfg.Now().Sub(start).Milliseconds()), Resource: end.Resource, SeccompKill: end.SeccompKill}
 	if err := m.cfg.Events.SandboxDestroy(context.WithoutCancel(ctx), ev); err != nil {
 		errs = append(errs, fmt.Errorf("sandbox.destroy: %w", err))
 	}
 	return errors.Join(errs...)
+}
+
+// waitDone waits up to d for the root to be reaped.
+func waitDone(r root, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-r.Done():
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+// violation writes sandbox.violation; a failed write is not fatal to the
+// teardown that reports it.
+func (m *Manager) violation(ctx context.Context, b *box, kind sandbox.ViolationKind, detail string) {
+	_ = m.cfg.Events.SandboxViolation(context.WithoutCancel(ctx), sandbox.ViolationEvent{SessionID: b.spec.SessionID, SandboxID: b.spec.ID, Kind: kind, Detail: detail})
+}
+
+// clampCount bounds a process count to [0, limit] (sandbox.destroy
+// killed_pids has minimum 0; no sandbox holds more than its pids limit).
+func clampCount(n, limit int) int {
+	return min(max(n, 0), max(limit, 0))
+}
+
+// Exit reports how bwrap ended, once it has been reaped.
+func (r *Running) Exit() (RootExit, bool) {
+	st := r.State()
+	if st == nil {
+		return RootExit{}, false
+	}
+	ws, ok := st.Sys().(syscall.WaitStatus)
+	if !ok {
+		return RootExit{}, false
+	}
+	if ws.Signaled() {
+		return RootExit{Signal: unix.SignalName(ws.Signal())}, true
+	}
+	return RootExit{Exited: true, Code: ws.ExitStatus()}, true
+}
+
+// bootID is this boot's /proc/sys/kernel/random/boot_id.
+func bootID() (string, error) {
+	b, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(string(b))
+	if id == "" || len(id) > 64 {
+		return "", fmt.Errorf("boot_id %q", id)
+	}
+	return id, nil
 }
 
 // release undoes a Create that started nothing.
@@ -535,6 +705,14 @@ func (m *Manager) RecoverOrphans(ctx context.Context) (Recovered, error) {
 			continue
 		}
 		sbRoot := filepath.Join(sessions, se.Name(), "sandbox")
+		// A symlinked sandbox directory would lead the sweep outside this
+		// home (round 1, item 7): only a real directory is read.
+		if fi, err := os.Lstat(sbRoot); err != nil || !fi.IsDir() {
+			if err == nil {
+				rec.Skipped = append(rec.Skipped, sbRoot+": not a directory ("+fi.Mode().Type().String()+")")
+			}
+			continue
+		}
 		sbs, err := os.ReadDir(sbRoot)
 		if err != nil {
 			continue // no sandbox directory, or not a directory: nothing of ours
@@ -553,7 +731,7 @@ func (m *Manager) RecoverOrphans(ctx context.Context) (Recovered, error) {
 				st, err = ParseState(raw)
 			}
 			if err == nil {
-				err = st.Check(home, sb.Name())
+				err = st.Check(home, se.Name(), sb.Name())
 			}
 			if err != nil {
 				rec.Skipped = append(rec.Skipped, dir+": "+err.Error())
@@ -582,8 +760,8 @@ func (m *Manager) killScopes(scopes map[string]string, rec *Recovered, errs []er
 	return errors.Join(errs...)
 }
 
-// killOrphan kills a recorded root that is still the same process (pid
-// and start time), and its scope.
+// killOrphan kills a recorded root that is still the same process (same
+// boot, pid and start time), and its scope.
 func (m *Manager) killOrphan(st State, scopeDir string) (int, error) {
 	killed := 0
 	var errs []error
@@ -592,11 +770,18 @@ func (m *Manager) killOrphan(st State, scopeDir string) (int, error) {
 		killed += n
 		errs = append(errs, err)
 	}
+	boot, err := bootID()
+	if err != nil {
+		return killed, errors.Join(append(errs, fmt.Errorf("boot id: %w", err))...)
+	}
+	if boot != st.BootID {
+		return killed, errors.Join(errs...) // another boot: the pid names another process
+	}
 	if t, err := procStartTime(st.RootPID); err == nil && t == st.RootStartTime {
 		if err := killPid(st.RootPID); err == nil && scopeDir == "" {
 			killed++
 		}
-		deadline := time.Now().Add(killVerify)
+		deadline := time.Now().Add(m.t.killVerify)
 		for time.Now().Before(deadline) {
 			if t, err := procStartTime(st.RootPID); err != nil || t != st.RootStartTime || procZombie(st.RootPID) {
 				break
