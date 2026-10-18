@@ -22,6 +22,19 @@ This log is the "why" record. The other working files hold the details: `PROGRES
 
 ---
 
+## W-036 · 2026-10-18 · M2-15: launching and tearing down an L1 sandbox
+
+- **Asked:** M2 plan task M2-15, with the follow-ups M2-12a, M2-13 and M2-8 assigned to it. Delivered under "merge each task when its review passes".
+- **Task:** Start a real L1 sandbox from a Spec, apply its cgroup limits, end it cleanly, record why it ended, and clean up after a crashed daemon without touching another home's sandboxes.
+- **How:** the Manager's Create and Destroy, the systemd-run scope built inside `Plan` (D-079); bounded teardown, the A06 §7.4 classification and orphan recovery (D-080). Commits `64b8da1`, `26c5a49`, `0bb0fee`.
+- **Rules kept:** launching only through `Plan.Start` (a test fails if anything else in the package starts a process); the test stand-in executor is the test binary in a fixed mode, never anything agent-requested; temp homes only; test first and mutation checks every round.
+- **Rules changed or bent:**
+  - **A06 §13 details resolved my way** (C-80): the scope unit carries the home hash; a destroy event is written once any process ran; scratch is not emptied at create.
+  - **New `sandbox.destroy` fields** (`resource`, `seccomp_kill`) were added to the events schema with a contract test.
+- **Verified:** two review rounds with probes against real bwrap 0.9.0 and systemd 255 in WSL2; a CI run on ubuntu-24.04 with real cgroup delegation, where the applied limits were read back and compared; `make check` green.
+- **Two merge conflicts with M2-17** (wardend start-up and its tests, the Manager doc) were additive; the start order both sets of tests assert holds.
+- **Left:** see the M2-15 entry in PROGRESS, including the must-hold for registering the backend.
+
 ## W-035 · 2026-10-18 · M2-8c: four timing races in the M2-8 process tests
 
 - **Asked:** CI's ubuntu `make check` failed in two M2-8 tests on a branch that does not touch `internal/exec` (PR #27, twice for the SIGSYS test). A flaky test of "no process survives its call" is either a test bug or a real escape, so it was reproduced and explained before anything was changed.
