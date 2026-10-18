@@ -111,6 +111,14 @@ func serve(home string, tokenStdin bool, deps daemonDeps) int {
 		fmt.Fprintln(os.Stderr, "wardend:", err)
 		return 2
 	}
+	// config.yaml: sandbox.default_level, normalised against this OS's
+	// levels; a value that is not one of them stops the start rather than
+	// falling back to the default (CWE-178, CONFLICTS C-06).
+	cfg, err := config.LoadDaemon(l.Config(), platform.SandboxLevels(), platform.DefaultSandboxLevel())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wardend: refusing to start:", err)
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -169,7 +177,7 @@ func serve(home string, tokenStdin bool, deps daemonDeps) int {
 		Discover: func(ctx context.Context, pc model.ProviderConfig) ([]string, error) {
 			return openaicompat.ListModels(ctx, pc, broker)
 		},
-		Token: token, Mode: "personal", DefaultLevel: platform.DefaultSandboxLevel(), Version: buildinfo.Version, Commit: buildinfo.Commit,
+		Token: token, Mode: "personal", DefaultLevel: cfg.Sandbox.DefaultLevel, Version: buildinfo.Version, Commit: buildinfo.Commit,
 		Shutdown: func() { close(shutdown) },
 		OnUnlock: func(ctx context.Context) error {
 			sg, err := secrets.LoadSigner(ctx, broker, l.Keys())
@@ -228,7 +236,7 @@ func serve(home string, tokenStdin bool, deps daemonDeps) int {
 		slog.Error("cannot record runtime.start; the runtime fails closed", "error", err.Error())
 		return 1
 	}
-	slog.Info("wardend listening", "endpoint", platform.Endpoint(home), "version", buildinfo.Version, "secrets_backend", backend.Name(), "sandbox_default", platform.DefaultSandboxLevel())
+	slog.Info("wardend listening", "endpoint", platform.Endpoint(home), "version", buildinfo.Version, "secrets_backend", backend.Name(), "sandbox_default", cfg.Sandbox.DefaultLevel)
 	serveCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(serveCtx, ln) }()

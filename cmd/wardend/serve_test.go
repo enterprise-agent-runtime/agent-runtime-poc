@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"warden.dev/warden/internal/api"
 	"warden.dev/warden/internal/platform"
 	"warden.dev/warden/internal/secrets"
+	"warden.dev/warden/internal/store"
 )
 
 // testDeps are serve's dependencies for tests: the real daemon lock, an
@@ -171,5 +175,89 @@ func TestServe_LockedDaemonDoesNotSweep(t *testing.T) {
 	deps.sweep = func(string) ([]string, error) { t.Error("a losing daemon swept the proxy sockets"); return nil, nil }
 	if code := serve(home, false, deps); code != 3 {
 		t.Fatalf("exit %d, want 3", code)
+	}
+}
+
+// TestServe_RefusesInvalidDefaultLevel guards CWE-178 at the daemon: a
+// sandbox.default_level that is not a level of this OS (a look-alike with
+// a fullwidth L, built numerically; L3; and L1 where the OS offers only L2,
+// as on Windows) stops the start with exit 1 before runtime.start and
+// before the token is published, instead of the platform default being
+// used in its place (CONFLICTS C-06). Before M2-17 wardend never read
+// config.yaml at all.
+func TestServe_RefusesInvalidDefaultLevel(t *testing.T) {
+	bad := []string{string(rune(0xFF2C)) + "2", "L3"}
+	if !slices.Contains(platform.SandboxLevels(), "L1") {
+		bad = append(bad, "L1")
+	}
+	for _, level := range bad {
+		t.Run(fmt.Sprintf("%+q", level), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv(platform.EnvHome, home)
+			l := platform.Layout{Home: home}
+			if err := l.Ensure(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(l.Config(), []byte("sandbox:\n  default_level: "+level+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			started := false
+			code := serve(home, false, testDeps(func(context.Context, *api.Server) error {
+				started = true
+				return errors.New("stop: the daemon must not have got this far")
+			}))
+			if code != 1 || started {
+				t.Fatalf("serve with default level %+q = exit %d (runtime started %v); want exit 1", level, code, started)
+			}
+			if _, err := os.Lstat(l.Token()); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("token published although the config was refused (%v)", err)
+			}
+		})
+	}
+}
+
+// TestServe_UsesNormalisedDefaultLevel: the level the daemon runs with is
+// config.yaml's, in canonical spelling. "l2" is L2 on every OS, so
+// runtime.start records "L2" whatever the platform default is; doctor's
+// sandbox.l2 is blocking exactly for "L2" (D-026).
+func TestServe_UsesNormalisedDefaultLevel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(platform.EnvHome, home)
+	l := platform.Layout{Home: home}
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(l.Config(), []byte("sandbox:\n  default_level: \" l2 \"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stop := errors.New("stop after runtime.start")
+	code := serve(home, false, testDeps(func(ctx context.Context, srv *api.Server) error {
+		if err := srv.RuntimeStart(ctx); err != nil {
+			return err
+		}
+		return stop
+	}))
+	if code != 1 {
+		t.Fatalf("exit %d, want 1 (the injected stop)", code)
+	}
+	st, err := store.Open(context.Background(), store.Options{Dir: l.DB(), BlobsDir: l.Blobs()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	evs, err := st.Events(context.Background(), store.SysChain, 0, 100, []string{"runtime.start"})
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("runtime.start events = %d, %v", len(evs), err)
+	}
+	var ev struct {
+		Payload struct {
+			Level string `json:"default_sandbox_level"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(evs[0], &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.Payload.Level != "L2" {
+		t.Fatalf("runtime.start default_sandbox_level = %q, want L2", ev.Payload.Level)
 	}
 }

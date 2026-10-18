@@ -56,6 +56,10 @@ type Handle struct {
 // sandbox.destroy at the end of teardown (A06 §13.2, §13.3) through the
 // EventSink they are configured with (events.go; the L1 backend is
 // linux_bwrap.Manager). sandboxtest.FakeSandbox emits no events.
+//
+// The L2 manager (M2-21) calls CheckEngine immediately before it creates
+// any network or container, on every Create, and refuses with its error;
+// doctor's sandbox.l2 check only reports (CWE-636).
 type Manager interface {
 	// Create validates the Spec, builds and launches the sandbox and
 	// returns it ready.
