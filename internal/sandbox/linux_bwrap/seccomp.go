@@ -29,19 +29,10 @@ func SeccompArch(goarch string) (seccomp.Arch, error) {
 // filter's arch check kills anything else (A06 §11.5).
 func HostSeccompArch() (seccomp.Arch, error) { return SeccompArch(runtime.GOARCH) }
 
-// CreateLimits is sandbox.create.limits for an L1 sandbox (A06 §13.2).
-// MissingFlags (NEW) lists the optional bwrap flags that were dropped
-// (A06 §11.1 "recorded in sandbox.create.limits").
-type CreateLimits struct {
-	MemoryMB     int      `json:"memory_mb"`
-	Pids         int      `json:"pids"`
-	CPUs         int      `json:"cpus"`
-	FsizeMB      int      `json:"fsize_mb"`
-	TmpMB        int      `json:"tmp_mb"`
-	Cgroup       bool     `json:"cgroup"`
-	Seccomp      string   `json:"seccomp"`
-	MissingFlags []string `json:"missing_flags,omitempty"`
-}
+// CreateLimits is sandbox.create.limits (A06 §13.2), shared with the
+// event (sandbox.CreateEvent). MissingFlags (NEW) lists the optional bwrap
+// flags that were dropped (A06 §11.1 "recorded in sandbox.create.limits").
+type CreateLimits = sandbox.CreateLimits
 
 // Limits builds sandbox.create.limits: the Spec's limits, whether a cgroup
 // enforces them (A06 §11.6), seccomp.Version and the missing bwrap flags.

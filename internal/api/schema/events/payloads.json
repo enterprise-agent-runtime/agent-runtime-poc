@@ -1974,6 +1974,34 @@
         "duration_ms": {
           "type": "integer",
           "minimum": 0
+        },
+        "resource": {
+          "type": "object",
+          "description": "NEW (A06 §7.4): the resource row the daemon observed at the sandbox's end (cgroup memory.events oom_kill, pids.events max, the disk watchdog); the kinds are exec.proc.wait's",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "memory",
+                "pids",
+                "cpu",
+                "fsize",
+                "tmp_full",
+                "disk"
+              ]
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          }
+        },
+        "seccomp_kill": {
+          "type": "boolean",
+          "description": "NEW (A06 §7.4): warden-exec was killed by the seccomp filter (bwrap exited 159 or died of SIGSYS)"
         }
       }
     },

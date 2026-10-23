@@ -136,7 +136,16 @@ Acceptance: WRD-16 §16 week 2, as restated in `docs/PROMPT-Claude-Code.md` M2. 
   - **Left for M2-13:** pick the arch at run time; write `Render(arch)` to fd 5 (memfd or pipe) and pass `--add-seccomp-fd 5` (fallback `--seccomp 5`); write `DockerProfile()` to `S/sandbox/<sb_id>/seccomp.json` and pass `--security-opt`; report `Version` in `sandbox.create.limits`; map a SIGSYS exit to `seccomp_kill`.
   - **Left for M2-10:** `warden-exec` sets `PR_SET_DUMPABLE 0`; escape-check row "steal an executor descriptor".
   - **Left for L2:** runc silently skips syscall names its libseccomp does not know (`mount_setattr` needs 2.5.2); have doctor check the version or verify in the L2 escape check; verify runc's bad-arch action.
-- [ ] **M2-15** launch, rlimits, `sandbox.cgroup` doctor check
+- [x] **M2-15** launch, rlimits, `sandbox.cgroup` doctor check (D-079, D-080, C-80).
+  - **Pieces:** `internal/sandbox/linux_bwrap` `Manager` (Create, Destroy, the executor-exit watchdog, `RecoverOrphans`), `ScopedCommand` and `Plan.Start`; `internal/sandbox` `events.go`, `scope.go`, `cgroup.go` and the `sandbox.cgroup` doctor check; wardend sweeps stale proxy sockets once after Listen; the CI linger step gives the runner a user manager.
+  - **Commits:** `64b8da1`, `26c5a49`, `0bb0fee`.
+  - **Review:** two rounds plus two small items. Nothing in the brief's attack list worked (the environment on the wrapped path, descriptors, scope names, pid reuse, cross-home recovery). Round 1 found an untrusted kill count in the audit event, no violation for processes surviving teardown, the A06 §7.4 cgroup and seccomp rows missing, and no test that the limits are applied. CI on ubuntu-24.04 ran the real delegated path: `memory.max`, `memory.swap.max`, `pids.max` and `cpu.max` compared with the Spec. 23 + 20 + 4 mutants caught.
+  - **WSL:** `systemd-run --user` starts scopes, but cgroups are mounted hybrid, so there is no v2 delegation and limits fall back to rlimits; the doctor hint names `kernelCommandLine = cgroup_no_v1=all` in `.wslconfig`.
+  - **Must hold for the change that registers the L1 backend:** call `RecoverOrphans` before the first Create, in the same change.
+  - **Left for M2-10:** the real `warden-exec` replaces the test stand-in; check `exec.hello` features; the executor reports `tmp_full` (A06 §7.4 is per process exit).
+  - **Left for M2-16:** escape-check rows for an empty `/proc/1/environ` on the wrapped path, and memory/pids enforcement on a host with delegation.
+  - **Left for M3:** per-handle cgroup counters at every `exec.proc.wait` (`ReadCgroupCounters`, `ClassifyEnd` can be reused).
+  - **Low, left:** the disk watchdog ignores `statfs` errors silently; a resource row seen once is attached to every later destroy reason; scratch `home/` and `tmp/` are not emptied at create (C-80).
 - [ ] **M2-16** `make escape-check` L1
 
 **Group E** (L2 sandbox):
