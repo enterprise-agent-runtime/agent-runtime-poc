@@ -78,6 +78,7 @@ type handle struct {
 	cpuLimit   uint64
 	pipes      [2]*os.File // read ends; the monitor closes them if the drain bound passes
 	pumpsDone  chan struct{}
+	internal   bool // started by the executor itself (exec.git.run): not the daemon's to wait for or signal
 
 	// Guarded by Procs.mu.
 	exitSeen bool // the leader has exited: no signal may go to its pgid any more
@@ -119,6 +120,13 @@ func NewProcs(ctx context.Context, cfg ProcConfig, notify func(execproto.IONotif
 	}, nil
 }
 
+// noExecByFD is the refusal where the shim cannot execute the checked
+// file by descriptor (execByFD false: macOS L1 until M7). Spawn and
+// exec.git.run both start processes only that way.
+func noExecByFD() error {
+	return execproto.NewError(execproto.ErrIOError, "spawn needs execution by descriptor, which this OS lacks (macOS L1: M7)")
+}
+
 func shellString() error {
 	return execproto.NewError(execproto.ErrShellString, "shell interpreter with a command string (CF-19)")
 }
@@ -138,7 +146,7 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 		return execproto.SpawnResult{}, shellString()
 	}
 	if !execByFD {
-		return execproto.SpawnResult{}, execproto.NewError(execproto.ErrIOError, "spawn needs execution by descriptor, which this OS lacks (macOS L1: M7)")
+		return execproto.SpawnResult{}, noExecByFD()
 	}
 	harness := p.cfg.Mode == execproto.ModeHarness
 	if harness && sp.Cwd != "" {
@@ -178,15 +186,48 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 	// execproto that does not exist yet; the PDP's INV-6 check is the
 	// authoritative one.)
 
-	timeout := time.Duration(sp.TimeoutMS) * time.Millisecond
-	limits := p.cfg.Limits.ForCall(timeout)
+	h, err := p.start(startSpec{
+		callID: sp.CallID, argv: sp.Argv, env: p.childEnv(sp), dir: dir, exe: exeFile,
+		timeout: time.Duration(sp.TimeoutMS) * time.Millisecond, cap: outputCap(sp), sink: p.notify,
+	})
+	if err != nil {
+		return execproto.SpawnResult{}, err
+	}
+	return execproto.SpawnResult{Handle: h.id, PID: h.pid, PGID: h.pgid, Executable: exe, Profile: profile}, nil
+}
+
+// startSpec is one checked process for start: its argv and environment,
+// the open cwd and executable the checks were made on, the per-call
+// timeout, and where its output goes (A06 §7.2, §7.5).
+type startSpec struct {
+	callID   string
+	argv     []string
+	env      []string
+	dir, exe *os.File
+	timeout  time.Duration
+	cap      int64
+	sink     func(execproto.IONotification) error
+	// internal marks a process the executor runs for its own method
+	// (exec.git.run): exec.proc.wait and exec.proc.signal do not know it.
+	internal bool
+}
+
+// start is A06 §7.1 steps 1, 3 and 5 for a process whose checks are done:
+// a slot (--max-procs), the child shim with the --child-limits rlimits, a
+// new process group, a handle in the table, the pumps, the per-call
+// timeout and the monitor. exec.proc.spawn and exec.git.run both start
+// their processes here, so every child of the executor is a handle the
+// stray sweep sees, runs through the same shim and execveat, and is killed
+// with its call (A06 §7.7).
+func (p *Procs) start(st startSpec) (*handle, error) {
+	limits := p.cfg.Limits.ForCall(st.timeout)
 	lj, err := json.Marshal(limits)
 	if err != nil {
-		return execproto.SpawnResult{}, execproto.NewError(execproto.ErrIOError, "limits could not be encoded")
+		return nil, execproto.NewError(execproto.ErrIOError, "limits could not be encoded")
 	}
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
-		return execproto.SpawnResult{}, execproto.NewError(execproto.ErrIOError, "cannot open /dev/null")
+		return nil, execproto.NewError(execproto.ErrIOError, "cannot open /dev/null")
 	}
 	defer devnull.Close()
 	var rd, wr [2]*os.File
@@ -194,22 +235,22 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 		if rd[i], wr[i], err = os.Pipe(); err != nil {
 			closeFiles(rd[:i]...)
 			closeFiles(wr[:i]...)
-			return execproto.SpawnResult{}, execproto.NewError(execproto.ErrIOError, "cannot create a pipe")
+			return nil, execproto.NewError(execproto.ErrIOError, "cannot create a pipe")
 		}
 	}
 	// §7.1 step 3: the child shim. The command line carries the limits,
 	// the cwd descriptor (3), the executable's descriptor (4) and argv; the environment
 	// (which may hold the harness secret) travels only as the
 	// environment, never as an argument.
-	args := append([]string{"warden-exec", "child", "--limits", string(lj), "--cwd-fd", "3", "--exec-fd", "4", "--"}, sp.Argv...)
+	args := append([]string{"warden-exec", "child", "--limits", string(lj), "--cwd-fd", "3", "--exec-fd", "4", "--"}, st.argv...)
 	cmd := &osexec.Cmd{
 		Path:        p.shim,
 		Args:        args,
-		Env:         p.childEnv(sp),
+		Env:         st.env,
 		Stdin:       devnull,
 		Stdout:      wr[0],
 		Stderr:      wr[1],
-		ExtraFiles:  []*os.File{dir, exeFile},
+		ExtraFiles:  []*os.File{st.dir, st.exe},
 		SysProcAttr: sysProcAttr(),
 	}
 
@@ -218,29 +259,30 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 	case p.shutting:
 		p.mu.Unlock()
 		closeFiles(rd[0], rd[1], wr[0], wr[1])
-		return execproto.SpawnResult{}, execproto.NewError(execproto.ErrShuttingDown, "")
+		return nil, execproto.NewError(execproto.ErrShuttingDown, "")
 	case p.running >= p.cfg.MaxProcs:
 		// §7.1 step 1: acquire a slot (--max-procs).
 		p.mu.Unlock()
 		closeFiles(rd[0], rd[1], wr[0], wr[1])
-		return execproto.SpawnResult{}, execproto.NewError(execproto.ErrBusy, "--max-procs handles are running")
+		return nil, execproto.NewError(execproto.ErrBusy, "--max-procs handles are running")
 	}
 	// Start under the lock: a stray sweep, which holds it too, can never
 	// see this process before it is in the table.
 	if err := cmd.Start(); err != nil {
 		p.mu.Unlock()
 		closeFiles(rd[0], rd[1], wr[0], wr[1])
-		return execproto.SpawnResult{}, execproto.NewError(execproto.ErrIOError, "cannot start the process")
+		return nil, execproto.NewError(execproto.ErrIOError, "cannot start the process")
 	}
 	p.next++
 	id := "ph_" + strconv.Itoa(p.next)
 	h := &handle{
-		id: id, callID: sp.CallID, pid: cmd.Process.Pid, pgid: cmd.Process.Pid, proc: cmd.Process,
+		id: id, callID: st.callID, pid: cmd.Process.Pid, pgid: cmd.Process.Pid, proc: cmd.Process,
 		started: p.cfg.Clock.Now(), cpuLimit: limits.CPU, pipes: rd,
 		pumpsDone: make(chan struct{}), done: make(chan struct{}),
 	}
-	h.out = newOutput(id, sp.CallID, outputCap(sp), p.notify)
-	h.timers = append(h.timers, p.cfg.Clock.AfterFunc(timeout, func() { p.kill(h, killTimeout, unix.SIGTERM) }))
+	h.internal = st.internal
+	h.out = newOutput(id, st.callID, st.cap, st.sink)
+	h.timers = append(h.timers, p.cfg.Clock.AfterFunc(st.timeout, func() { p.kill(h, killTimeout, unix.SIGTERM) }))
 	p.handles[id] = h
 	p.running++
 	p.wg.Add(1)
@@ -249,7 +291,7 @@ func (p *Procs) Spawn(_ context.Context, sp execproto.SpawnParams) (execproto.Sp
 
 	p.startPumps(h)
 	go p.monitor(h)
-	return execproto.SpawnResult{Handle: id, PID: h.pid, PGID: h.pgid, Executable: exe, Profile: profile}, nil
+	return h, nil
 }
 
 func closeFiles(fs ...*os.File) {
@@ -654,7 +696,7 @@ func (p *Procs) Wait(ctx context.Context, wp execproto.WaitParams) (execproto.Wa
 	p.mu.Lock()
 	h := p.handles[wp.Handle]
 	p.mu.Unlock()
-	if h == nil {
+	if h == nil || h.internal { // an exec.git.run process is not a handle the daemon was given
 		return execproto.WaitResult{}, unknownHandle()
 	}
 	var expired chan struct{}
@@ -702,7 +744,7 @@ func (p *Procs) Signal(_ context.Context, sp execproto.SignalParams) (execproto.
 	p.mu.Lock()
 	h := p.handles[sp.Handle]
 	p.mu.Unlock()
-	if h == nil {
+	if h == nil || h.internal {
 		return execproto.SignalResult{}, unknownHandle()
 	}
 	return execproto.SignalResult{Delivered: p.kill(h, killCancel, sig), PGID: h.pgid}, nil

@@ -61,7 +61,7 @@ func access(method string) methodAccess {
 		return methodAccess{roots: []execproto.RootName{execproto.RootWorktree, execproto.RootScratch}, reportDeny: true}
 	case execproto.MethodFSList:
 		return methodAccess{roots: []execproto.RootName{execproto.RootWorktree}, reportDeny: true}
-	case execproto.MethodFSSearch, execproto.MethodSpawn:
+	case execproto.MethodFSSearch, execproto.MethodSpawn, methodGitPaths:
 		return methodAccess{roots: []execproto.RootName{execproto.RootWorktree}}
 	case execproto.MethodFSWrite, execproto.MethodFSPatch:
 		return methodAccess{roots: []execproto.RootName{execproto.RootWorktree}, write: true}

@@ -101,6 +101,46 @@ func TestArgv_Heuristic(t *testing.T) {
 	}
 }
 
+// TestArgv_GitObjectPaths is the M2-12 follow-up (PROGRESS, "For A14 / the
+// policy engine"): the masks hide only the working tree, and git reads a
+// committed .env from the objects through <rev>:<path> (show HEAD:.env,
+// cat-file -p HEAD:.env, :0:.env for the index). The path after a colon is
+// matched too. A heuristic only: cat-file -p <blob id> names no path, and
+// only the policy engine's command rules can stop that (exec.git.run offers
+// no object read at all, A14 §6).
+func TestArgv_GitObjectPaths(t *testing.T) {
+	deny := [][]string{
+		{"git", "show", "HEAD:.env"},
+		{"git", "cat-file", "-p", "HEAD:.env"},
+		{"git", "show", ":0:.env"},
+		{"git", "show", ":.env"},
+		{"git", "show", "main~2:config/.env.prod"},
+		{"git", "show", "HEAD:./.env"},
+		{"git", "show", "HEAD:sub/id_rsa"},
+		{"git", "show", "HEAD:.ENV"},
+		{"git", "show", "HEAD^{tree}:.aws/credentials"},
+		{"git", "--no-pager", "show", "--format=raw", "HEAD:.npmrc"},
+	}
+	for _, a := range deny {
+		if _, ok := Argv(a, ""); !ok {
+			t.Errorf("Argv(%q) allowed", a)
+		}
+	}
+	allow := [][]string{
+		{"npm", "run", "build:prod"},
+		{"git", "show", "HEAD:src/app.ts"},
+		{"git", "log", "HEAD~1"},
+		{"git", "show", "HEAD:"},
+		{"docker", "run", "node:20"},
+		{"git", "diff", "HEAD~1:src/a.go", "HEAD:src/a.go"},
+	}
+	for _, a := range allow {
+		if _, ok := Argv(a, ""); ok {
+			t.Errorf("Argv(%q) denied", a)
+		}
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	for in, want := range map[string]string{
 		"C:\\a\\b\\..\\c": "c:/a/c",
@@ -158,5 +198,27 @@ func TestMatch_ShortNames8dot3(t *testing.T) {
 	}
 	if _, got := MatchUnder(wt+`\src\notes.txt`, nil, []string{wt}); got {
 		t.Error("MatchUnder: notes.txt inside the worktree denied")
+	}
+}
+
+// TestArgv_GitObjectPathsFromCwd (review of 41a3818): the path after the
+// colon is joined with cwd like every other argument, so HEAD:./gcloud/x
+// run from .config names .config/gcloud/x. (git resolves "./" in
+// <rev>:<path> against the current directory.)
+func TestArgv_GitObjectPathsFromCwd(t *testing.T) {
+	for _, c := range []struct {
+		argv []string
+		cwd  string
+	}{
+		{[]string{"git", "show", "HEAD:./gcloud/credentials.db"}, ".config"},
+		{[]string{"git", "cat-file", "-p", "HEAD:./known_hosts"}, "home/.ssh"},
+		{[]string{"git", "show", "HEAD:./config.json"}, ".docker"},
+	} {
+		if _, ok := Argv(c.argv, c.cwd); !ok {
+			t.Errorf("Argv(%q, %q) allowed", c.argv, c.cwd)
+		}
+	}
+	if _, ok := Argv([]string{"git", "show", "HEAD:./app.ts"}, "src"); ok {
+		t.Error("HEAD:./app.ts from src denied")
 	}
 }
