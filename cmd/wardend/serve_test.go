@@ -21,6 +21,7 @@ import (
 // runtime.start.
 func testDeps(runtimeStart func(context.Context, *api.Server) error) daemonDeps {
 	return daemonDeps{
+		sweep:        func(string) ([]string, error) { return nil, nil },
 		lock:         platform.LockDaemon,
 		backend:      func(context.Context, string) secrets.Backend { return secrets.NewMemory() },
 		runtimeStart: runtimeStart,
@@ -120,6 +121,61 @@ func TestServe_FailedStartCleansUpThenUnlocks(t *testing.T) {
 		t.Fatalf("lock not released after serve returned: %v", err)
 	}
 	unlock()
+}
+
+// TestServe_SweepsProxySocketsOnceAfterListen is the M2-12a wiring left
+// for M2-15 (A07 §2, D-053, D-065): the proxy sockets an earlier run left
+// in the sessions are removed exactly once, after this daemon holds its
+// endpoint and has published its token (so a losing second daemon, which
+// exits at Listen, never deletes the live daemon's sockets), and before
+// runtime.start, after which sandboxes may be created.
+func TestServe_SweepsProxySocketsOnceAfterListen(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(platform.EnvHome, home)
+	l := platform.Layout{Home: home}
+	var calls []string
+	started := false
+	deps := testDeps(func(context.Context, *api.Server) error {
+		started = true
+		return errors.New("stop after runtime.start")
+	})
+	deps.sweep = func(h string) ([]string, error) {
+		calls = append(calls, h)
+		if _, err := os.Lstat(l.Token()); err != nil {
+			t.Errorf("sweep ran before the endpoint and token were published: %v", err)
+		}
+		if started {
+			t.Error("sweep ran after runtime.start")
+		}
+		return nil, nil
+	}
+	serve(home, false, deps)
+	if len(calls) != 1 || calls[0] != home {
+		t.Errorf("sweep calls = %q, want exactly one for %q", calls, home)
+	}
+	if !started {
+		t.Error("runtime.start did not run")
+	}
+}
+
+// TestServe_LockedDaemonDoesNotSweep: a second daemon for the same home
+// exits before the sweep, so it cannot remove the live daemon's sockets.
+func TestServe_LockedDaemonDoesNotSweep(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(platform.EnvHome, home)
+	if err := (platform.Layout{Home: home}).Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	held, err := platform.LockDaemon(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held()
+	deps := testDeps(func(context.Context, *api.Server) error { return nil })
+	deps.sweep = func(string) ([]string, error) { t.Error("a losing daemon swept the proxy sockets"); return nil, nil }
+	if code := serve(home, false, deps); code != 3 {
+		t.Fatalf("exit %d, want 3", code)
+	}
 }
 
 // TestServe_RefusesInvalidDefaultLevel guards CWE-178 at the daemon: a

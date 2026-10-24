@@ -183,3 +183,21 @@ func (r *Registry) ValidateEnvelope(raw []byte) error {
 	}
 	return s.Validate(v)
 }
+
+// ValidatePayload checks an event payload against its definition in
+// events/payloads.json (the $defs entry named after the event type).
+func (r *Registry) ValidatePayload(eventType string, payload any) error {
+	s, err := r.compiler.Compile(Base + "events/payloads.json#/$defs/" + eventType)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	v, err := instance(b)
+	if err != nil {
+		return err
+	}
+	return s.Validate(v)
+}

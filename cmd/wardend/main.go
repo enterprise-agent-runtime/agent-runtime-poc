@@ -33,6 +33,7 @@ import (
 	"warden.dev/warden/internal/platform"
 	"warden.dev/warden/internal/providers/anthropic"
 	"warden.dev/warden/internal/providers/openaicompat"
+	"warden.dev/warden/internal/sandbox"
 	"warden.dev/warden/internal/secrets"
 	"warden.dev/warden/internal/store"
 )
@@ -67,6 +68,7 @@ func run() int {
 		lock:         platform.LockDaemon,
 		backend:      func(ctx context.Context, home string) secrets.Backend { return secrets.Select(ctx, home, true) },
 		runtimeStart: func(ctx context.Context, srv *api.Server) error { return srv.RuntimeStart(ctx) },
+		sweep:        sandbox.SweepProxySockets,
 	})
 }
 
@@ -77,6 +79,7 @@ type daemonDeps struct {
 	lock         func(home string) (unlock func(), err error)
 	backend      func(ctx context.Context, home string) secrets.Backend
 	runtimeStart func(ctx context.Context, srv *api.Server) error
+	sweep        func(home string) ([]string, error)
 }
 
 // serve runs the daemon for home and returns its exit code (see the
@@ -219,6 +222,16 @@ func serve(home string, tokenStdin bool, deps daemonDeps) int {
 	}()
 	defer ln.Close()
 	_ = platform.WriteOwnerOnly(l.PID(), []byte(strconv.Itoa(os.Getpid())))
+	// The proxy sockets an earlier run left (A07 §2): removed once, now
+	// that this daemon holds the endpoint (a losing second daemon exited
+	// at Listen) and before any sandbox exists (D-053, D-065). A failed
+	// sweep only leaves stale sockets, which ListenTaskSocket refuses to
+	// reuse, so sandbox creation fails closed rather than unsafely.
+	if removed, err := deps.sweep(home); err != nil {
+		slog.Warn("proxy socket sweep incomplete", "removed", len(removed), "error", err.Error())
+	} else if len(removed) > 0 {
+		slog.Info("removed stale proxy sockets", "count", len(removed))
+	}
 	if err := deps.runtimeStart(ctx, srv); err != nil {
 		slog.Error("cannot record runtime.start; the runtime fails closed", "error", err.Error())
 		return 1
